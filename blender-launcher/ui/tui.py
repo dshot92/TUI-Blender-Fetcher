@@ -9,19 +9,13 @@ import time
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
-from rich.live import Live
-from rich.panel import Panel
-from rich import box
 
 from ..api.builder_api import fetch_builds
-from ..config.app_config import AppConfig, Colors
+from ..config.app_config import AppConfig
 from ..models.build_info import BlenderBuild, LocalBuildInfo
-from ..utils.download import download_multiple_builds
 from ..utils.input import (
     get_keypress,
     prompt_input,
-    prompt_integer,
-    prompt_confirm,
     KEY_UP,
     KEY_DOWN,
     KEY_LEFT,
@@ -29,8 +23,6 @@ from ..utils.input import (
     KEY_ENTER,
     KEY_ENTER_ALT,
     KEY_SPACE,
-    KEY_ESC,
-    prompt_select,
 )
 from ..utils.local_builds import get_local_builds, delete_local_build
 
@@ -229,15 +221,8 @@ class BlenderTUI:
                 # Set type column to show "downloading"
                 type_text = Text("downloading", style="green bold")
 
-                # Create a red background progress bar based on download percentage
-                # Use red background for the row to show download progress
-                progress_width = int((download_progress / 100) * self.console.width)
-                bg_style = f"on red"
-
-                # Set row style to use red background based on download progress
-                row_style = bg_style
-                if i == self.state.cursor_position:
-                    row_style = f"reverse bold {bg_style}"
+                # Set row style for downloading build without red background
+                row_style = "reverse bold" if i == self.state.cursor_position else ""
 
                 # Set version with indicator
                 version_col = Text(f"↓ Blender {build.version}", style="green bold")
@@ -1168,8 +1153,9 @@ class BlenderTUI:
                 )
 
     def _delete_selected_build(self) -> bool:
-        """Delete the currently selected local build.
+        """Delete the selected local build(s).
 
+        If multiple builds are selected via toggle, delete them all.
         Only works when viewing local builds (not online builds).
 
         Returns:
@@ -1178,67 +1164,99 @@ class BlenderTUI:
         if self.state.has_fetched or not self.state.local_builds:
             return True
 
-        # Get sorted list of local builds
         local_build_list = self._get_sorted_local_build_list()
 
-        # Make sure cursor position is valid
-        if self.state.cursor_position < 0 or self.state.cursor_position >= len(
-            local_build_list
-        ):
-            return True
+        if self.state.selected_builds:
+            # Delete all selected builds
+            selected_indices = sorted(self.state.selected_builds)
+            versions_to_delete = []
+            for idx in selected_indices:
+                if 0 <= idx < len(local_build_list):
+                    version, _ = local_build_list[idx]
+                    versions_to_delete.append(version)
+            if not versions_to_delete:
+                return True
 
-        # Get version of the selected build
-        version, _ = local_build_list[self.state.cursor_position]
+            self.clear_screen()
+            prompt = (
+                "Delete Blender builds: " + ", ".join(versions_to_delete) + "? (y/n)"
+            )
+            self.console.print(prompt, style="bold red")
 
-        # Use a custom input loop to handle the deletion confirmation
-        # Clear screen and show simple confirmation prompt
-        self.clear_screen()
-        self.console.print(f"Delete Blender {version}? (y/n)", style="bold red")
+            while True:
+                key = get_keypress(timeout=None)
+                if key is not None:
+                    break
 
-        # Wait for y/n without timeout to prevent main loop from refreshing
-        while True:
-            key = get_keypress(
-                timeout=None
-            )  # No timeout - will wait for actual keypress
-            if key is not None:
-                break
+            if key.lower() != "y":
+                return True
 
-        if key is None or key.lower() != "y":
-            # User cancelled, return to normal UI
-            return True
+            overall_success = True
+            for version in versions_to_delete:
+                success = delete_local_build(version)
+                if not success:
+                    overall_success = False
 
-        # Delete the build
-        success = delete_local_build(version)
+            self.clear_screen()
+            if overall_success:
+                self.console.print(
+                    "Deleted Blender builds: " + ", ".join(versions_to_delete),
+                    style="bold green",
+                )
+            else:
+                self.console.print(
+                    "Failed to delete one or more builds", style="bold red"
+                )
 
-        # Clear screen again and show result
-        self.clear_screen()
+            self.console.print("Press any key to continue...")
+            while True:
+                key = get_keypress(timeout=None)
+                if key is not None:
+                    break
 
-        if success:
-            # Remove from selected builds
-            if self.state.cursor_position in self.state.selected_builds:
-                self.state.selected_builds.remove(self.state.cursor_position)
-
-            # Refresh local builds
+            self.state.selected_builds.clear()
             self.state.local_builds = get_local_builds()
-
-            # Adjust cursor if needed
             max_index = len(self.state.local_builds) - 1
             if max_index < 0:
                 max_index = 0
             self.state.cursor_position = min(self.state.cursor_position, max_index)
-
-            self.console.print(f"Deleted Blender {version}", style="bold green")
+            return True
         else:
-            self.console.print(f"Failed to delete Blender {version}", style="bold red")
-
-        # Wait for a keypress before returning to normal UI - also without timeout
-        self.console.print("Press any key to continue...")
-        while True:
-            key = get_keypress(timeout=None)
-            if key is not None:
-                break
-
-        return True
+            # No multiple selection, delete the build at the current cursor
+            if self.state.cursor_position < 0 or self.state.cursor_position >= len(
+                local_build_list
+            ):
+                return True
+            version, _ = local_build_list[self.state.cursor_position]
+            self.clear_screen()
+            self.console.print(f"Delete Blender {version}? (y/n)", style="bold red")
+            while True:
+                key = get_keypress(timeout=None)
+                if key is not None:
+                    break
+            if key.lower() != "y":
+                return True
+            success = delete_local_build(version)
+            self.clear_screen()
+            if success:
+                if self.state.cursor_position in self.state.selected_builds:
+                    self.state.selected_builds.remove(self.state.cursor_position)
+                self.state.local_builds = get_local_builds()
+                max_index = len(self.state.local_builds) - 1
+                if max_index < 0:
+                    max_index = 0
+                self.state.cursor_position = min(self.state.cursor_position, max_index)
+                self.console.print(f"Deleted Blender {version}", style="bold green")
+            else:
+                self.console.print(
+                    f"Failed to delete Blender {version}", style="bold red"
+                )
+            self.console.print("Press any key to continue...")
+            while True:
+                key = get_keypress(timeout=None)
+                if key is not None:
+                    break
+            return True
 
     def update_build_table_only(self) -> None:
         """Update just the build table without clearing the screen.
