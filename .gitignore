@@ -1,0 +1,23 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.env/
+.venv/
+
+# IDE settings
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Project specific
+*.m4b
+chapters.txt
+input.txt
+metadata.txt
+contat.txt
