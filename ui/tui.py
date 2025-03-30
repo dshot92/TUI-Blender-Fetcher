@@ -584,6 +584,7 @@ class BlenderTUI:
             "s": self._switch_to_settings,
             "q": lambda: False,  # Return False to exit
             "d": self._handle_download,
+            "\x03": lambda: False,  # Ctrl-C (ASCII value 3) to exit
         }
 
         # Check if key is in our handlers
@@ -621,6 +622,7 @@ class BlenderTUI:
             "j": lambda: self._move_settings_cursor(1),
             "s": self._switch_to_builds_page,
             "q": lambda: False,  # Return False to exit
+            "\x03": lambda: False,  # Ctrl-C (ASCII value 3) to exit
         }
 
         # Check if key is in our handlers
