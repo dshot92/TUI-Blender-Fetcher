@@ -229,17 +229,15 @@ class BlenderTUI:
                 # Set type column to show "downloading"
                 type_text = Text("downloading", style="green bold")
 
-                # Set row style based on progress
-                if download_progress < 30:
-                    row_style = "blue" if i == self.state.cursor_position else ""
-                elif download_progress < 60:
-                    row_style = "cyan" if i == self.state.cursor_position else ""
-                elif download_progress < 100:
-                    row_style = "green" if i == self.state.cursor_position else ""
-                else:
-                    row_style = (
-                        "green bold" if i == self.state.cursor_position else "green"
-                    )
+                # Create a red background progress bar based on download percentage
+                # Use red background for the row to show download progress
+                progress_width = int((download_progress / 100) * self.console.width)
+                bg_style = f"on red"
+
+                # Set row style to use red background based on download progress
+                row_style = bg_style
+                if i == self.state.cursor_position:
+                    row_style = f"reverse bold {bg_style}"
 
                 # Set version with indicator
                 version_col = Text(f"↓ Blender {build.version}", style="green bold")

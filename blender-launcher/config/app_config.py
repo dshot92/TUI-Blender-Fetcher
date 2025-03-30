@@ -19,7 +19,7 @@ class AppConfig:
 
     # Default values
     DOWNLOAD_PATH = Path.home() / "blender/blender-build/"
-    VERSION_CUTOFF = "2.80"  # Show only builds with version >= this value
+    VERSION_CUTOFF = "3.1"  # Show only builds with version >= this value
 
     # Config file location
     CONFIG_DIR = Path.home() / ".config" / "blender-launcher"
@@ -44,6 +44,10 @@ class AppConfig:
                     cls.VERSION_CUTOFF = config_data["version_cutoff"]
 
                 # No need to validate settings now that download_tool is removed
+            else:
+                # If config file doesn't exist, create it with defaults
+                print("Config file doesn't exist, creating with defaults")
+                cls.save_config()
         except Exception as e:
             print(f"Failed to load config: {e}")
             # Ensure we create a new config file with defaults
@@ -54,23 +58,38 @@ class AppConfig:
         """Save configuration to a TOML file."""
         # Create config directory if it doesn't exist
         cls.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        print(
+            f"Debug: Config directory at {cls.CONFIG_DIR} exists: {cls.CONFIG_DIR.exists()}"
+        )
 
         # Prepare config data
         config_data = {
             "download_path": str(cls.DOWNLOAD_PATH),
             "version_cutoff": cls.VERSION_CUTOFF,
         }
+        print(f"Debug: Preparing to save config data: {config_data}")
 
         # Save config
         try:
+            print(f"Debug: Attempting to write to {cls.CONFIG_FILE}")
             with open(cls.CONFIG_FILE, "w") as f:
                 toml.dump(config_data, f)
+            print(f"Debug: Config saved successfully to {cls.CONFIG_FILE}")
         except Exception as e:
             print(f"Failed to save config: {e}")
+            # Print more detailed error information
+            import traceback
+
+            traceback.print_exc()
 
 
 # Load config on module import
+print("Loading AppConfig module")
 AppConfig.load_config()
+# Ensure config file exists even if load_config didn't create it
+if not AppConfig.CONFIG_FILE.exists():
+    print("Explicitly creating config file")
+    AppConfig.save_config()
 
 
 class Colors(str, Enum):
