@@ -139,7 +139,8 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
 
         # Get confirmation for updates
         if not Confirm.ask(
-            "This will remove existing builds and download updates. Proceed?"
+            "This will remove existing builds and download updates. Proceed?",
+            default=True,
         ):
             console.print("Download cancelled")
             return False

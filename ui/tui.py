@@ -791,12 +791,6 @@ class BlenderTUI:
             self.console.print("No builds selected for download", style="yellow")
             return True
 
-        # Confirm downloads with the user
-        versions = ", ".join(b.version for b in builds_to_download)
-        if not prompt_confirm(f"Download Blender {versions}?", default=True):
-            self.console.print("Download cancelled", style="yellow")
-            return True
-
         # Clear screen before starting download to avoid UI conflicts
         self.clear_screen()
         self.console.print(
