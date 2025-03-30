@@ -53,3 +53,7 @@ fbb
 
 - Python 3.6+
 - Rich 13.9.4 or higher 
+
+### Links
+[Rich Docs](https://rich.readthedocs.io/en/latest/#)
+[Rich GitHub](https://github.com/Textualize/rich)
