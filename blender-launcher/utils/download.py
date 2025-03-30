@@ -188,38 +188,23 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
 
     console.print(f"Files will be downloaded to: {download_dir}\n")
 
-    # Set up progress tracking for each build
-    progress = Progress(
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TextColumn(
-            "[bold cyan]{task.fields[speed]}"
-        ),  # Color the speed for better visibility
-        TimeRemainingColumn(),
-    )
-
     # Dictionary to track each download
-    download_tasks = {}
     temp_log_files = {}
     completed_versions = []
     successful_downloads = []
 
     try:
-        # Create a separate thread for each download with its own status line
+        # Create a separate thread for each download
         threads = []
         for build in builds:
-            # Create a temporary file for logging the download progress
-            temp_log = tempfile.NamedTemporaryFile(
-                delete=False, suffix=f"_{build.version}.log"
-            )
-            temp_log_files[build.version] = temp_log.name
-            temp_log.close()
+            # Get the log file path for this build
+            log_file = get_log_file_path(build)
+            temp_log_files[build.version] = log_file
 
             # Create thread for this download
             thread = threading.Thread(
                 target=_download_file_with_log,
-                args=(build, download_dir, temp_log.name, console),
+                args=(build, download_dir, log_file, console),
             )
             threads.append((thread, build))
 
@@ -227,64 +212,9 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
         for thread, _ in threads:
             thread.start()
 
-        # Add a slight delay to ensure downloads start
-        time.sleep(1)
-
         # Wait for all threads to complete
-        with progress:
-            # Add a task for each download
-            for _, build in threads:
-                # Default total as percentage
-                total = 100
-
-                # Create shorter version string (just major.minor.patch)
-                version_parts = build.version.split(".")
-                short_version = ".".join(
-                    version_parts[:3] if len(version_parts) >= 3 else version_parts
-                )
-
-                # Extract branch without the full hash
-                branch = build.branch
-                if "+" in branch:
-                    branch = branch.split("+")[0]
-
-                # Create shortened name
-                short_name = f"blender-{short_version}-{branch}"
-
-                task_id = progress.add_task(f"{short_name}", total=total, speed="")
-                download_tasks[build.version] = task_id
-
-            # Update the progress bars until all downloads are complete
-            while any(thread.is_alive() for thread, _ in threads):
-                for thread, build in threads:
-                    if thread.is_alive():
-                        # Update progress from log file
-                        log_file = temp_log_files[build.version]
-                        if os.path.exists(log_file):
-                            result = _get_progress_and_speed_from_log(log_file)
-                            if result:
-                                percentage, speed = result
-
-                                # Create shorter version string
-                                version_parts = build.version.split(".")
-                                short_version = ".".join(
-                                    version_parts[:3]
-                                    if len(version_parts) >= 3
-                                    else version_parts
-                                )
-
-                                # Extract branch without the full hash
-                                branch = build.branch
-                                if "+" in branch:
-                                    branch = branch.split("+")[0]
-
-                                progress.update(
-                                    download_tasks[build.version],
-                                    completed=percentage,
-                                    description=f"blender-{short_version}-{branch}",
-                                    speed=speed,
-                                )
-                time.sleep(0.5)
+        for thread, _ in threads:
+            thread.join()
 
         # Check results and collect successful downloads
         for _, build in threads:
@@ -293,8 +223,6 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
                 if _check_download_success(log_file):
                     download_path = download_dir / build.file_name
                     successful_downloads.append((build, download_path))
-                    # Clean up temp log file
-                    os.unlink(log_file)
                 else:
                     console.print(
                         f"Download of {build.version} failed.", style="bold red"
@@ -346,10 +274,13 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
                     f"Extraction of {build.version} failed: {e}", style="bold red"
                 )
 
-        # Clean up any remaining temp log files
+        # Clean up log files
         for log_file in temp_log_files.values():
             if os.path.exists(log_file):
-                os.unlink(log_file)
+                try:
+                    os.unlink(log_file)
+                except:
+                    pass  # Ignore cleanup errors
 
         if completed_versions:
             console.print(
@@ -384,6 +315,19 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
             if os.path.exists(log_file):
                 os.unlink(log_file)
         return False
+
+
+def get_log_file_path(build: BlenderBuild) -> str:
+    """Get the path to the log file for a build.
+
+    Args:
+        build: The build to get the log file path for
+
+    Returns:
+        Path to the log file
+    """
+    # Create a consistent temporary file name based on the build version
+    return f"/tmp/blender_download_{build.version}.log"
 
 
 def _download_file_with_log(
