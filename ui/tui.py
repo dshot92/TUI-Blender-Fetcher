@@ -7,12 +7,27 @@ from typing import Dict, List, Optional, Set, Tuple, Union, Any, Callable
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
+from rich.live import Live
+from rich.panel import Panel
 
 from ..api.builder_api import fetch_builds
 from ..config.app_config import AppConfig, Colors
 from ..models.build_info import BlenderBuild, LocalBuildInfo
 from ..utils.download import download_multiple_builds
-from ..utils.input import getch
+from ..utils.input import (
+    get_keypress,
+    prompt_input,
+    prompt_integer,
+    prompt_confirm,
+    KEY_UP,
+    KEY_DOWN,
+    KEY_LEFT,
+    KEY_RIGHT,
+    KEY_ENTER,
+    KEY_ENTER_ALT,
+    KEY_SPACE,
+    KEY_ESC,
+)
 from ..utils.local_builds import get_local_builds
 
 
@@ -48,26 +63,6 @@ class BlenderTUI:
         self.page_handlers = {
             "builds": self._handle_builds_page_input,
             "settings": self._handle_settings_page_input,
-        }
-
-        # Map of key handlers for the builds page
-        self.builds_page_handlers = {
-            "k": self._move_cursor_up,
-            "\033[A": self._move_cursor_up,  # Up arrow
-            "j": self._move_cursor_down,
-            "\033[B": self._move_cursor_down,  # Down arrow
-            "h": self._move_column_left,
-            "\033[D": self._move_column_left,  # Left arrow
-            "l": self._move_column_right,
-            "\033[C": self._move_column_right,  # Right arrow
-            "r": self._toggle_sort_reverse,
-            "f": self._fetch_online_builds,
-            "\r": self._launch_blender,
-            "\n": self._launch_blender,
-            " ": self._toggle_selection,
-            "s": self._switch_to_settings,
-            "q": lambda: False,  # Return False to exit
-            "d": self._handle_download,
         }
 
         # Set up a signal handler for window resize
@@ -374,28 +369,24 @@ class BlenderTUI:
         self.print_navigation_bar()
 
     def _fetch_online_builds(self) -> bool:
-        """Fetch builds from the online source.
+        """Fetch builds from the Blender server.
 
         Returns:
-            True to continue running the application
+            True to continue running
         """
-        self.console.print("Fetching available Blender builds...", style="bold blue")
-        self.state.builds = fetch_builds()
+        with self.console.status(
+            "[bold green]Fetching Blender builds...", spinner="dots"
+        ):
+            try:
+                self.state.builds = fetch_builds()
+                self.state.has_fetched = True
+                self.state.cursor_position = 0  # Reset cursor position
+                self.console.print("Successfully fetched builds", style="green")
+            except Exception as e:
+                self.console.print(f"Error fetching builds: {e}", style="bold red")
+                return True  # Continue running even if fetch fails
 
-        # Assign numbers to builds based on version ordering (descending)
-        sorted_by_version = sorted(
-            self.state.builds,
-            key=lambda b: tuple(map(int, b.version.split("."))),
-            reverse=True,
-        )
-
-        # Assign build numbers starting from 1
-        for i, build in enumerate(sorted_by_version):
-            self.state.build_numbers[build.version] = i + 1
-
-        self.state.has_fetched = True
-        self.state.selected_builds.clear()  # Clear selections when fetching new builds
-        self.state.cursor_position = 0  # Reset cursor position
+        # After successful fetch, ensure we refresh the display
         self.display_tui()
         return True
 
@@ -529,32 +520,32 @@ class BlenderTUI:
             # Main input loop
             running = True
 
+            # Don't use Live context since it's conflicting with our custom input handling
             while running:
                 try:
-                    # Get key input with direct keypress reading and timeout
-                    key = getch(timeout=0.1)
+                    # Get key input with our custom key handling
+                    key = get_keypress(timeout=0.1)
 
-                    # Check if we need to refresh due to resize
-                    if self.state.needs_refresh:
-                        self.display_tui()
-                        self.state.needs_refresh = False
-                        continue
-
-                    # If no key was pressed, continue the loop
+                    # If no key was pressed, check if we need a refresh
                     if key is None:
+                        if self.state.needs_refresh:
+                            self.display_tui()
+                            self.state.needs_refresh = False
                         continue
 
                     # Handle the key based on the current page
                     handler = self.page_handlers.get(self.state.current_page)
                     if handler:
                         running = handler(key)
+                        # Always refresh display after handling key
+                        self.display_tui()
 
                 except Exception as inner_e:
                     self.console.print(
                         f"Error handling input: {inner_e}", style="bold red"
                     )
                     self.console.print(f"Type: {type(inner_e)}")
-                    input("Press Enter to continue...")
+                    prompt_input("Press Enter to continue...")
                     self.display_tui()
 
         except Exception as e:
@@ -569,15 +560,38 @@ class BlenderTUI:
         Returns:
             False to exit the application, True to continue
         """
-        # Convert key to lowercase for letter keys
-        key_lower = key.lower() if key.isalpha() else key
+        # Map keys to handlers with string constants
+        key_handlers = {
+            KEY_UP: self._move_cursor_up,
+            KEY_DOWN: self._move_cursor_down,
+            KEY_LEFT: self._move_column_left,
+            KEY_RIGHT: self._move_column_right,
+            KEY_ENTER: self._launch_blender,
+            KEY_ENTER_ALT: self._launch_blender,  # Handle both Enter key types
+            KEY_SPACE: self._toggle_selection,
+            "k": self._move_cursor_up,
+            "j": self._move_cursor_down,
+            "h": self._move_column_left,
+            "l": self._move_column_right,
+            "r": self._toggle_sort_reverse,
+            "f": self._fetch_online_builds,
+            "s": self._switch_to_settings,
+            "q": lambda: False,  # Return False to exit
+            "d": self._handle_download,
+        }
 
-        # Check if we have a specific handler for this key
-        if key_lower in self.builds_page_handlers:
-            return self.builds_page_handlers[key_lower]()
+        # Check if key is in our handlers
+        if key in key_handlers:
+            return key_handlers[key]()
+
+        # Handle letter keys (case-insensitive)
+        if isinstance(key, str) and len(key) == 1 and key.isalpha():
+            key_lower = key.lower()
+            if key_lower in key_handlers:
+                return key_handlers[key_lower]()
 
         # Handle number keys for selection
-        if key.isdigit():
+        if isinstance(key, str) and key.isdigit():
             self._handle_number_selection(int(key))
 
         return True  # Continue running by default
@@ -591,23 +605,58 @@ class BlenderTUI:
         Returns:
             False to exit the application, True to continue
         """
-        if key.lower() == "k" or key == "\033[A":  # Up arrow or k
-            self.state.settings_cursor = max(0, self.state.settings_cursor - 1)
-            self.display_tui()
-        elif key.lower() == "j" or key == "\033[B":  # Down arrow or j
-            self.state.settings_cursor = min(
-                self.state.settings_cursor + 1, 2
-            )  # 3 settings
-            self.display_tui()
-        elif key.lower() == "s":  # Toggle back to builds page
-            self.state.current_page = "builds"
-            self.display_tui()
-        elif key.lower() == "q":  # Quit
-            return False
-        elif key == "\r" or key == "\n":  # Enter key - edit setting
-            self._edit_current_setting()
+        # Map keys to handlers with string constants
+        key_handlers = {
+            KEY_UP: lambda: self._move_settings_cursor(-1),
+            KEY_DOWN: lambda: self._move_settings_cursor(1),
+            KEY_ENTER: self._edit_current_setting,
+            KEY_ENTER_ALT: self._edit_current_setting,  # Handle both Enter key types
+            "k": lambda: self._move_settings_cursor(-1),
+            "j": lambda: self._move_settings_cursor(1),
+            "s": self._switch_to_builds_page,
+            "q": lambda: False,  # Return False to exit
+        }
 
-        return True  # Continue running
+        # Check if key is in our handlers
+        if key in key_handlers:
+            return key_handlers[key]()
+
+        # Handle letter keys (case-insensitive)
+        if isinstance(key, str) and len(key) == 1 and key.isalpha():
+            key_lower = key.lower()
+            if key_lower in key_handlers:
+                return key_handlers[key_lower]()
+
+        return True  # Continue running by default
+
+    def _move_settings_cursor(self, direction: int) -> bool:
+        """Move settings cursor up or down.
+
+        Args:
+            direction: -1 for up, 1 for down
+
+        Returns:
+            True to continue running
+        """
+        if direction < 0:
+            # Move up
+            self.state.settings_cursor = max(0, self.state.settings_cursor - 1)
+        else:
+            # Move down (3 settings total)
+            self.state.settings_cursor = min(self.state.settings_cursor + 1, 2)
+
+        self.display_tui()
+        return True
+
+    def _switch_to_builds_page(self) -> bool:
+        """Switch back to builds page.
+
+        Returns:
+            True to continue running
+        """
+        self.state.current_page = "builds"
+        self.display_tui()
+        return True
 
     def _move_cursor_up(self) -> bool:
         """Move cursor up.
@@ -709,26 +758,54 @@ class BlenderTUI:
         return False if result else True
 
     def _handle_download(self) -> bool:
-        """Handle the download action.
+        """Download selected builds.
 
         Returns:
-            True to continue running, False to exit
+            True to continue running
         """
-        if not self.state.selected_builds:
-            self.console.print("No builds selected for download.", style="bold yellow")
+        if not self.state.has_fetched or not self.state.builds:
+            self.console.print("No online builds to download", style="yellow")
             return True
 
-        self.clear_screen()
-        try:
-            download_multiple_builds(
-                self.state.builds, list(self.state.selected_builds), self.console
-            )
-            return False  # Exit after download
-        except KeyboardInterrupt:
-            self.console.print("\nDownload cancelled by user", style="bold red")
-            input("Press Enter to continue...")
-            self.display_tui()
-            return True  # Continue running
+        builds_to_download = []
+
+        if self.state.selected_builds:
+            # Get the builds that are currently selected
+            sorted_builds = self.sort_builds(self.state.builds)
+            for idx in self.state.selected_builds:
+                if 0 <= idx < len(sorted_builds):
+                    builds_to_download.append(sorted_builds[idx])
+        else:
+            # If no builds are selected, download the one under the cursor
+            sorted_builds = self.sort_builds(self.state.builds)
+            if 0 <= self.state.cursor_position < len(sorted_builds):
+                builds_to_download.append(sorted_builds[self.state.cursor_position])
+
+        if not builds_to_download:
+            self.console.print("No builds selected for download", style="yellow")
+            return True
+
+        # Confirm downloads with the user
+        versions = ", ".join(b.version for b in builds_to_download)
+        if not prompt_confirm(f"Download Blender {versions}?", default=True):
+            self.console.print("Download cancelled", style="yellow")
+            return True
+
+        with self.console.status(
+            f"[bold green]Downloading {len(builds_to_download)} build(s)...",
+            spinner="dots",
+        ):
+            # Perform download
+            success = download_multiple_builds(builds_to_download)
+            if success:
+                self.console.print("Download completed successfully", style="green")
+                # Refresh local builds list
+                self.state.local_builds = get_local_builds()
+            else:
+                self.console.print("Download failed", style="bold red")
+
+        self.display_tui()
+        return True
 
     def _handle_number_selection(self, num: int) -> None:
         """Handle selection by number key.
@@ -798,39 +875,43 @@ class BlenderTUI:
 
     def _edit_download_path(self) -> None:
         """Edit the download path setting."""
-        self.console.print(f"Current download directory: {AppConfig.DOWNLOAD_PATH}")
-        print(
-            "Enter new download directory (or press Enter to keep current): ",
-            end="",
-            flush=True,
+        config = AppConfig()
+        current = config.download_path
+
+        new_path = prompt_input(
+            f"Enter new download path [cyan]({current})[/cyan]", default=str(current)
         )
-        new_path = input()
-        if new_path.strip():
-            AppConfig.DOWNLOAD_PATH = new_path
+
+        if new_path and new_path != str(current):
+            config.download_path = Path(new_path)
+            config.save()
+            self.state.needs_refresh = True
 
     def _edit_version_cutoff(self) -> None:
         """Edit the version cutoff setting."""
-        self.console.print(f"Current version cutoff: {AppConfig.VERSION_CUTOFF}")
-        print(
-            "Enter new version cutoff (or press Enter to keep current): ",
-            end="",
-            flush=True,
+        config = AppConfig()
+        current = config.version_cutoff
+
+        new_cutoff = prompt_input(
+            f"Enter minimum Blender version to display [cyan]({current})[/cyan]",
+            default=current,
         )
-        new_cutoff = input()
-        if new_cutoff.strip():
-            AppConfig.VERSION_CUTOFF = new_cutoff
-            # Refresh builds with new cutoff if we've already fetched
-            if self.state.has_fetched:
-                self.state.builds = fetch_builds()
+
+        if new_cutoff and new_cutoff != current:
+            config.version_cutoff = new_cutoff
+            config.save()
+            self.state.needs_refresh = True
 
     def _edit_max_workers(self) -> None:
         """Edit the max workers setting."""
-        self.console.print(f"Current max workers: {AppConfig.MAX_WORKERS}")
-        print(
-            "Enter new max workers (or press Enter to keep current): ",
-            end="",
-            flush=True,
+        config = AppConfig()
+        current = config.max_workers
+
+        new_workers = prompt_integer(
+            f"Enter maximum download workers [cyan]({current})[/cyan]", default=current
         )
-        new_workers = input()
-        if new_workers.strip() and new_workers.isdigit():
-            AppConfig.MAX_WORKERS = int(new_workers)
+
+        if new_workers and new_workers != current:
+            config.max_workers = new_workers
+            config.save()
+            self.state.needs_refresh = True

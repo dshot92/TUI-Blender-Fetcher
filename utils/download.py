@@ -69,25 +69,26 @@ def download_build(build: BlenderBuild, console: Console) -> Optional[str]:
         return None
 
 
-def download_multiple_builds(
-    builds: List[BlenderBuild], selected_indices: List[int], console: Console
-) -> None:
+def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
     """Download multiple builds in parallel.
 
     Args:
-        builds: List of available builds
-        selected_indices: Indices of builds to download
-        console: Console for output
+        builds: List of builds to download
+
+    Returns:
+        True if all downloads were successful, False otherwise
     """
-    selected_builds = [builds[idx] for idx in selected_indices]
+    # Create console for output
+    console = Console()
 
     # Ensure download directory exists
-    download_dir = Path(AppConfig.DOWNLOAD_PATH)
+    config = AppConfig()
+    download_dir = Path(config.download_path)
     download_dir.mkdir(parents=True, exist_ok=True)
 
     # Ask confirmation for removing existing builds
     all_existing_builds = []
-    for build in selected_builds:
+    for build in builds:
         existing = list(download_dir.glob(f"blender-{build.version}*"))
         all_existing_builds.extend(existing)
 
@@ -100,22 +101,21 @@ def download_multiple_builds(
             "Do you want to remove existing builds and download the new ones?"
         ):
             console.print("Download cancelled")
-            return
+            return False
 
     console.print(
-        f"\nStarting parallel download of {len(selected_builds)} builds with {AppConfig.MAX_WORKERS} workers...\n"
+        f"\nStarting parallel download of {len(builds)} builds with {config.max_workers} workers...\n"
     )
     console.print(f"Files will be downloaded to: {download_dir}\n")
-    console.print("Press Ctrl+C to cancel downloads\n", style="bold yellow")
 
     # Use ThreadPoolExecutor to download and extract in parallel
     completed_versions = []
 
     try:
-        with ThreadPoolExecutor(max_workers=AppConfig.MAX_WORKERS) as executor:
+        with ThreadPoolExecutor(max_workers=config.max_workers) as executor:
             futures = {
                 executor.submit(download_build, build, console): build
-                for build in selected_builds
+                for build in builds
             }
 
             for future in as_completed(futures):
@@ -134,10 +134,12 @@ def download_multiple_builds(
             console.print(
                 f"\nCompleted downloading {len(completed_versions)} builds: {', '.join(completed_versions)}"
             )
+            return True
         else:
             console.print(
                 "\nNo builds were downloaded successfully", style="bold yellow"
             )
+            return False
 
     except KeyboardInterrupt:
         console.print(
@@ -148,9 +150,11 @@ def download_multiple_builds(
             "Note: Download processes may still be running in the background."
         )
         console.print("You may need to manually kill aria2c or wget processes.")
+        return False
 
     except Exception as e:
         console.print(f"\nAn error occurred during downloads: {e}", style="bold red")
+        return False
 
 
 def _cleanup_existing_builds(
