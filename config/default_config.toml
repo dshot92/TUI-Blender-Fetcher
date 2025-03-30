@@ -1,0 +1,10 @@
+# Blender Fetcher Configuration File
+
+# Path where downloaded Blender builds will be stored
+download_path = "~/blender/blender-build/"
+
+# Minimum Blender version to display
+version_cutoff = "2.80" 
+
+# Download tool: "auto", "aria2c", or "wget"
+download_tool = "auto" 

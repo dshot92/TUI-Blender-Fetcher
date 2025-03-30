@@ -616,7 +616,7 @@ class BlenderTUI:
             KEY_UP: lambda: self._move_settings_cursor(-1),
             KEY_DOWN: lambda: self._move_settings_cursor(1),
             KEY_ENTER: self._edit_current_setting,
-            KEY_ENTER_ALT: self._edit_current_setting,  # Handle both Enter key types
+            KEY_ENTER_ALT: self._edit_current_setting,
             "k": lambda: self._move_settings_cursor(-1),
             "j": lambda: self._move_settings_cursor(1),
             "s": self._switch_to_builds_page,
@@ -758,11 +758,16 @@ class BlenderTUI:
         """Launch the selected Blender version.
 
         Returns:
-            False to exit, True to continue
+            False to exit (only on builds page), True to continue
         """
-        result = self.launch_blender()
-        # If launch was successful, exit the application
-        return False if result else True
+        # Only attempt to launch Blender if we're on the builds page
+        if self.state.current_page == "builds":
+            result = self.launch_blender()
+            # If launch was successful, exit the application
+            return False if result else True
+
+        # On settings page, just continue running
+        return True
 
     def _handle_download(self) -> bool:
         """Download selected builds.
@@ -858,8 +863,12 @@ class BlenderTUI:
             # When looking at local builds, get the sorted list
             return self._get_sorted_local_build_list()
 
-    def _edit_current_setting(self) -> None:
-        """Edit the currently selected setting."""
+    def _edit_current_setting(self) -> bool:
+        """Edit the currently selected setting.
+
+        Returns:
+            True to continue running
+        """
         try:
             self.clear_screen()
 
@@ -869,9 +878,11 @@ class BlenderTUI:
                 self._edit_version_cutoff()
 
             self.display_tui()
+            return True  # Return True to prevent application exit
         except ValueError as e:
             self.console.print(f"Error updating settings: {e}", style="bold red")
             self.display_tui()
+            return True  # Return True to prevent application exit
 
     def _edit_download_path(self) -> None:
         """Edit the download path setting."""
