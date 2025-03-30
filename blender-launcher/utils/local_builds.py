@@ -1,4 +1,5 @@
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
@@ -97,3 +98,33 @@ def _extract_build_info_from_directory(dir_path: Path) -> Optional[LocalBuildInf
         return LocalBuildInfo(version=version, time=build_time)
 
     return None
+
+
+def delete_local_build(version: str) -> bool:
+    """Delete a local Blender build by version.
+
+    Args:
+        version: The version string of the build to delete
+
+    Returns:
+        True if the build was deleted successfully, False otherwise
+    """
+    download_dir = Path(AppConfig.DOWNLOAD_PATH)
+    if not download_dir.exists():
+        return False
+
+    # Search for directories containing this version
+    build_dirs = list(download_dir.glob(f"blender-{version}-*"))
+
+    if not build_dirs:
+        return False
+
+    success = True
+    # Delete all matching directories (usually just one)
+    for dir_path in build_dirs:
+        try:
+            shutil.rmtree(dir_path)
+        except (PermissionError, OSError):
+            success = False
+
+    return success

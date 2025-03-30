@@ -3,6 +3,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union, Any, Callable
+import sys
 
 from rich.console import Console
 from rich.table import Table
@@ -27,8 +28,9 @@ from ..utils.input import (
     KEY_ENTER_ALT,
     KEY_SPACE,
     KEY_ESC,
+    prompt_select,
 )
-from ..utils.local_builds import get_local_builds
+from ..utils.local_builds import get_local_builds, delete_local_build
 
 
 @dataclass
@@ -102,10 +104,17 @@ class BlenderTUI:
                 "[bold]Space[/bold]:Select  [bold]D[/bold]:Download  [bold]Enter[/bold]:Launch  [bold]F[/bold]:Fetch Online Builds",
                 highlight=False,
             )
-            self.console.print(
-                "[bold]R[/bold]:Reverse Sort  [bold]S[/bold]:Settings  [bold]Q[/bold]:Quit",
-                highlight=False,
-            )
+            if not self.state.has_fetched and self.state.local_builds:
+                # Only show X key for deleting when viewing local builds
+                self.console.print(
+                    "[bold]X[/bold]:Delete  [bold]R[/bold]:Reverse Sort  [bold]S[/bold]:Settings  [bold]Q[/bold]:Quit",
+                    highlight=False,
+                )
+            else:
+                self.console.print(
+                    "[bold]R[/bold]:Reverse Sort  [bold]S[/bold]:Settings  [bold]Q[/bold]:Quit",
+                    highlight=False,
+                )
         else:  # settings page
             self.console.print("─" * 80)  # Simple separator
             self.console.print(
@@ -339,7 +348,7 @@ class BlenderTUI:
         self.console.print("─" * 80)
 
         settings = [
-            ("Download Directory:", AppConfig.DOWNLOAD_PATH),
+            ("Download Directory:", str(AppConfig.DOWNLOAD_PATH)),
             ("Version Cutoff:", AppConfig.VERSION_CUTOFF),
         ]
 
@@ -583,6 +592,7 @@ class BlenderTUI:
             "s": self._switch_to_settings,
             "q": lambda: False,  # Return False to exit
             "d": self._handle_download,
+            "x": self._delete_selected_build,
             "\x03": lambda: False,  # Ctrl-C (ASCII value 3) to exit
         }
 
@@ -649,8 +659,8 @@ class BlenderTUI:
             # Move up
             self.state.settings_cursor = max(0, self.state.settings_cursor - 1)
         else:
-            # Move down (3 settings total)
-            self.state.settings_cursor = min(self.state.settings_cursor + 1, 2)
+            # Move down (only 2 settings now)
+            self.state.settings_cursor = min(self.state.settings_cursor + 1, 1)
 
         self.display_tui()
         return True
@@ -921,3 +931,76 @@ class BlenderTUI:
                 self.console.print(
                     f"Failed to update version cutoff: {e}", style="bold red"
                 )
+
+    def _delete_selected_build(self) -> bool:
+        """Delete the currently selected local build.
+
+        Only works when viewing local builds (not online builds).
+
+        Returns:
+            True to continue running
+        """
+        if self.state.has_fetched or not self.state.local_builds:
+            return True
+
+        # Get sorted list of local builds
+        local_build_list = self._get_sorted_local_build_list()
+
+        # Make sure cursor position is valid
+        if self.state.cursor_position < 0 or self.state.cursor_position >= len(
+            local_build_list
+        ):
+            return True
+
+        # Get version of the selected build
+        version, _ = local_build_list[self.state.cursor_position]
+
+        # Use a custom input loop to handle the deletion confirmation
+        # Clear screen and show simple confirmation prompt
+        self.clear_screen()
+        self.console.print(f"Delete Blender {version}? (y/n)", style="bold red")
+
+        # Wait for y/n without timeout to prevent main loop from refreshing
+        while True:
+            key = get_keypress(
+                timeout=None
+            )  # No timeout - will wait for actual keypress
+            if key is not None:
+                break
+
+        if key is None or key.lower() != "y":
+            # User cancelled, return to normal UI
+            return True
+
+        # Delete the build
+        success = delete_local_build(version)
+
+        # Clear screen again and show result
+        self.clear_screen()
+
+        if success:
+            # Remove from selected builds
+            if self.state.cursor_position in self.state.selected_builds:
+                self.state.selected_builds.remove(self.state.cursor_position)
+
+            # Refresh local builds
+            self.state.local_builds = get_local_builds()
+
+            # Adjust cursor if needed
+            max_index = len(self.state.local_builds) - 1
+            if max_index < 0:
+                max_index = 0
+            self.state.cursor_position = min(self.state.cursor_position, max_index)
+
+            self.console.print(f"Deleted Blender {version}", style="bold green")
+        else:
+            self.console.print(f"Failed to delete Blender {version}", style="bold red")
+
+        # Wait for a keypress before returning to normal UI - also without timeout
+        self.console.print("Press any key to continue...")
+        while True:
+            key = get_keypress(timeout=None)
+            if key is not None:
+                break
+
+        return True

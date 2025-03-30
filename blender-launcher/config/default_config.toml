@@ -4,7 +4,4 @@
 download_path = "~/blender/blender-build/"
 
 # Minimum Blender version to display
-version_cutoff = "2.80" 
-
-# Download tool: "auto", "aria2c", or "wget"
-download_tool = "auto" 
+version_cutoff = "3.1" 

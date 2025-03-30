@@ -106,11 +106,15 @@ def prompt_input(prompt_text: str, default: str = "") -> str:
         return default
 
 
-def prompt_integer(prompt_text: str, default: int = 0) -> int:
+def prompt_integer(
+    prompt_text: str, min_value: int = None, max_value: int = None, default: int = 0
+) -> int:
     """Get integer input from the user with validation.
 
     Args:
         prompt_text: The prompt to display
+        min_value: Minimum allowed value (inclusive)
+        max_value: Maximum allowed value (inclusive)
         default: Default value
 
     Returns:
@@ -122,7 +126,21 @@ def prompt_integer(prompt_text: str, default: int = 0) -> int:
             result = sys.stdin.readline().strip()
             if not result and default is not None:
                 return default
-            return int(result)
+
+            # Convert to integer and validate range
+            value = int(result)
+
+            # Check minimum value if specified
+            if min_value is not None and value < min_value:
+                console.print(f"Value must be at least {min_value}.", style="bold red")
+                continue
+
+            # Check maximum value if specified
+            if max_value is not None and value > max_value:
+                console.print(f"Value must be at most {max_value}.", style="bold red")
+                continue
+
+            return value
         except ValueError:
             console.print("Please enter a valid integer.", style="bold red")
         except (KeyboardInterrupt, EOFError):
@@ -153,3 +171,49 @@ def prompt_confirm(prompt_text: str, default: bool = False) -> bool:
             console.print("Please enter 'y' or 'n'.", style="bold red")
         except (KeyboardInterrupt, EOFError):
             return default
+
+
+def prompt_select(
+    prompt_text: str, options: List[tuple], default_index: int = 0
+) -> Any:
+    """Display a menu of options and let the user select one.
+
+    Args:
+        prompt_text: The prompt to display
+        options: List of (value, description) tuples
+        default_index: Index of the default option
+
+    Returns:
+        The value of the selected option
+    """
+    if not options:
+        return None
+
+    # Make sure default index is valid
+    if default_index < 0 or default_index >= len(options):
+        default_index = 0
+
+    # Display all available options
+    console.print(prompt_text)
+    for i, (value, description) in enumerate(options):
+        # Show option number and description
+        console.print(f"{i+1}. {description}")
+
+        # Mark current selection
+        if i == default_index:
+            console.print("   [cyan]Current selection[/cyan]")
+
+    # Get user selection
+    selection = prompt_integer(
+        f"Enter selection (1-{len(options)})",
+        min_value=1,
+        max_value=len(options),
+        default=default_index + 1,
+    )
+
+    # Return selected value (or default if input was canceled)
+    if selection and 1 <= selection <= len(options):
+        return options[selection - 1][0]
+    else:
+        # Return default if selection is invalid
+        return options[default_index][0]

@@ -2,6 +2,7 @@ from enum import Enum
 from pathlib import Path
 import os
 import sys
+import shutil
 
 # Use standard toml package
 try:
@@ -12,8 +13,6 @@ except ImportError:
     )
     sys.exit(1)
 
-import shutil
-
 
 class AppConfig:
     """Configuration for the application."""
@@ -21,10 +20,9 @@ class AppConfig:
     # Default values
     DOWNLOAD_PATH = Path.home() / "blender/blender-build/"
     VERSION_CUTOFF = "2.80"  # Show only builds with version >= this value
-    DOWNLOAD_TOOL = "auto"  # Options: "auto", "aria2c", "wget"
 
     # Config file location
-    CONFIG_DIR = Path.home() / ".config" / "blender-fetcher"
+    CONFIG_DIR = Path.home() / ".config" / "blender-launcher"
     CONFIG_FILE = CONFIG_DIR / "config.toml"
 
     @classmethod
@@ -44,8 +42,8 @@ class AppConfig:
                     cls.DOWNLOAD_PATH = Path(config_data["download_path"])
                 if "version_cutoff" in config_data:
                     cls.VERSION_CUTOFF = config_data["version_cutoff"]
-                if "download_tool" in config_data:
-                    cls.DOWNLOAD_TOOL = config_data["download_tool"]
+
+                # No need to validate settings now that download_tool is removed
         except Exception as e:
             print(f"Failed to load config: {e}")
             # Ensure we create a new config file with defaults
@@ -61,7 +59,6 @@ class AppConfig:
         config_data = {
             "download_path": str(cls.DOWNLOAD_PATH),
             "version_cutoff": cls.VERSION_CUTOFF,
-            "download_tool": cls.DOWNLOAD_TOOL,
         }
 
         # Save config

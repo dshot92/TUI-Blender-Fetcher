@@ -1,12 +1,25 @@
 import json
+import os
 import shutil
 import subprocess
+import tempfile
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 
 from rich.console import Console
+from rich.live import Live
+from rich.progress import (
+    Progress,
+    TextColumn,
+    BarColumn,
+    DownloadColumn,
+    TimeRemainingColumn,
+    TaskID,
+)
 from rich.prompt import Confirm
 
 from ..config.app_config import AppConfig
@@ -37,12 +50,25 @@ def download_build(
     download_path = download_dir / filename
     extract_path = download_dir / extracted_dir_name
 
-    # Check for existing builds BEFORE download
-    existing_builds = list(download_dir.glob(f"blender-{build.version}*"))
+    # Automatically clean up incomplete downloads without prompting
+    if download_path.exists():
+        console.print(f"Found incomplete download file: {filename}")
+        console.print("Removing incomplete download file...")
+        download_path.unlink()
+
+    # Check for existing build DIRECTORIES only (not archive files)
+    existing_builds = [
+        build_dir
+        for build_dir in download_dir.glob(f"blender-{build.version}*")
+        if build_dir.is_dir()
+    ]
+
     should_remove = False
 
     if existing_builds and not skip_confirmation:
-        console.print(f"\nExisting builds found for {build.version}:")
+        console.print(
+            f"\nExisting build directories found for Blender {build.version}:"
+        )
         for build_dir in existing_builds:
             console.print(f"  - {build_dir}")
 
@@ -120,12 +146,25 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
     download_dir = Path(AppConfig.DOWNLOAD_PATH)
     download_dir.mkdir(parents=True, exist_ok=True)
 
+    # Automatically clean up any incomplete download files first
+    for build in builds:
+        download_path = download_dir / build.file_name
+        if download_path.exists():
+            console.print(f"Found incomplete download file: {build.file_name}")
+            console.print("Removing incomplete download file...")
+            download_path.unlink()
+
     # Ask confirmation for removing existing builds BEFORE downloading
     all_existing_builds = []
     versions_to_remove: Dict[str, List[Path]] = {}
 
     for build in builds:
-        existing = list(download_dir.glob(f"blender-{build.version}*"))
+        # Only consider directories, not archive files
+        existing = [
+            build_dir
+            for build_dir in download_dir.glob(f"blender-{build.version}*")
+            if build_dir.is_dir()
+        ]
         if existing:
             versions_to_remove[build.version] = existing
             all_existing_builds.extend(existing)
@@ -133,7 +172,7 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
     should_remove = False
 
     if all_existing_builds:
-        console.print("\nExisting builds found:")
+        console.print("\nExisting build directories found:")
         for build_dir in all_existing_builds:
             console.print(f"  - {build_dir}")
 
@@ -149,43 +188,121 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
 
     console.print(f"Files will be downloaded to: {download_dir}\n")
 
-    # Use ThreadPoolExecutor to download and extract in parallel
+    # Set up progress tracking for each build
+    progress = Progress(
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TextColumn(
+            "[bold cyan]{task.fields[speed]}"
+        ),  # Color the speed for better visibility
+        TimeRemainingColumn(),
+    )
+
+    # Dictionary to track each download
+    download_tasks = {}
+    temp_log_files = {}
     completed_versions = []
+    successful_downloads = []
 
     try:
-        # First download all builds
-        with ThreadPoolExecutor(max_workers=len(builds)) as executor:
-            futures = {}
+        # Create a separate thread for each download with its own status line
+        threads = []
+        for build in builds:
+            # Create a temporary file for logging the download progress
+            temp_log = tempfile.NamedTemporaryFile(
+                delete=False, suffix=f"_{build.version}.log"
+            )
+            temp_log_files[build.version] = temp_log.name
+            temp_log.close()
 
-            for build in builds:
-                # We need to create a modified version of download_build that doesn't remove builds
-                def download_file_only(build=build):
-                    try:
-                        download_dir = Path(AppConfig.DOWNLOAD_PATH)
-                        filename = build.file_name
-                        download_path = download_dir / filename
+            # Create thread for this download
+            thread = threading.Thread(
+                target=_download_file_with_log,
+                args=(build, download_dir, temp_log.name, console),
+            )
+            threads.append((thread, build))
 
-                        console.print(f"\nStarting download of {filename}...")
-                        if _download_file(build.url, download_dir, console):
-                            return build, download_path
-                        return None
-                    except Exception as e:
-                        console.print(
-                            f"Download of {build.version} failed: {e}", style="bold red"
-                        )
-                        return None
+        # Start all download threads
+        for thread, _ in threads:
+            thread.start()
 
-                futures[executor.submit(download_file_only)] = build
+        # Add a slight delay to ensure downloads start
+        time.sleep(1)
 
-            successful_downloads = []
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    if result:
-                        build, path = result
-                        successful_downloads.append((build, path))
-                except Exception as e:
-                    console.print(f"Download failed: {e}", style="bold red")
+        # Wait for all threads to complete
+        with progress:
+            # Add a task for each download
+            for _, build in threads:
+                # Default total as percentage
+                total = 100
+
+                # Create shorter version string (just major.minor.patch)
+                version_parts = build.version.split(".")
+                short_version = ".".join(
+                    version_parts[:3] if len(version_parts) >= 3 else version_parts
+                )
+
+                # Extract branch without the full hash
+                branch = build.branch
+                if "+" in branch:
+                    branch = branch.split("+")[0]
+
+                # Create shortened name
+                short_name = f"blender-{short_version}-{branch}"
+
+                task_id = progress.add_task(f"{short_name}", total=total, speed="")
+                download_tasks[build.version] = task_id
+
+            # Update the progress bars until all downloads are complete
+            while any(thread.is_alive() for thread, _ in threads):
+                for thread, build in threads:
+                    if thread.is_alive():
+                        # Update progress from log file
+                        log_file = temp_log_files[build.version]
+                        if os.path.exists(log_file):
+                            result = _get_progress_and_speed_from_log(log_file)
+                            if result:
+                                percentage, speed = result
+
+                                # Create shorter version string
+                                version_parts = build.version.split(".")
+                                short_version = ".".join(
+                                    version_parts[:3]
+                                    if len(version_parts) >= 3
+                                    else version_parts
+                                )
+
+                                # Extract branch without the full hash
+                                branch = build.branch
+                                if "+" in branch:
+                                    branch = branch.split("+")[0]
+
+                                progress.update(
+                                    download_tasks[build.version],
+                                    completed=percentage,
+                                    description=f"blender-{short_version}-{branch}",
+                                    speed=speed,
+                                )
+                time.sleep(0.5)
+
+        # Check results and collect successful downloads
+        for _, build in threads:
+            log_file = temp_log_files[build.version]
+            if os.path.exists(log_file):
+                if _check_download_success(log_file):
+                    download_path = download_dir / build.file_name
+                    successful_downloads.append((build, download_path))
+                    # Clean up temp log file
+                    os.unlink(log_file)
+                else:
+                    console.print(
+                        f"Download of {build.version} failed.", style="bold red"
+                    )
+            else:
+                console.print(
+                    f"No log file found for {build.version}.", style="bold red"
+                )
 
         # If we got successful downloads and should remove existing builds
         if successful_downloads and should_remove:
@@ -229,6 +346,11 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
                     f"Extraction of {build.version} failed: {e}", style="bold red"
                 )
 
+        # Clean up any remaining temp log files
+        for log_file in temp_log_files.values():
+            if os.path.exists(log_file):
+                os.unlink(log_file)
+
         if completed_versions:
             console.print(
                 f"\nCompleted downloading {len(completed_versions)} builds: {', '.join(completed_versions)}"
@@ -244,20 +366,160 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
         console.print(
             "\nDownloads interrupted by user. Cleaning up...", style="bold yellow"
         )
+        # Clean up temp files
+        for log_file in temp_log_files.values():
+            if os.path.exists(log_file):
+                os.unlink(log_file)
         # We can't cancel the downloads directly, but we can inform the user
         console.print(
             "Note: Download processes may still be running in the background."
         )
-        console.print("You may need to manually kill aria2c or wget processes.")
+        console.print("You may need to manually kill wget processes.")
         return False
 
     except Exception as e:
         console.print(f"\nAn error occurred during downloads: {e}", style="bold red")
+        # Clean up temp files
+        for log_file in temp_log_files.values():
+            if os.path.exists(log_file):
+                os.unlink(log_file)
+        return False
+
+
+def _download_file_with_log(
+    build: BlenderBuild, download_dir: Path, log_file: str, console: Console
+) -> bool:
+    """Download a file using wget with output to a log file.
+
+    Args:
+        build: The build to download
+        download_dir: Directory to save the file
+        log_file: Path to log file for download progress
+        console: Console for output
+
+    Returns:
+        True if download was successful
+    """
+    try:
+        filename = build.file_name
+        console.print(f"[bold]Starting download of {filename}...[/bold]")
+
+        console.print("[bold]Using wget for download[/bold]")
+        with open(log_file, "w") as f:
+            # Set environment variables for consistent output format
+            env = os.environ.copy()
+            env["LC_ALL"] = "C"
+
+            process = subprocess.run(
+                [
+                    "wget",
+                    "--verbose",  # Use verbose to get more progress info
+                    "--progress=bar:force:noscroll",  # Force progress bar
+                    "--show-progress",  # Always show progress
+                    "-P",
+                    str(download_dir),  # Download directory
+                    build.url,
+                ],
+                stdout=f,
+                stderr=subprocess.STDOUT,
+                check=True,
+                env=env,  # Use our modified environment
+            )
+
+        return True
+    except subprocess.CalledProcessError as e:
+        with open(log_file, "a") as f:
+            f.write(f"Download failed: {e}\n")
+        return False
+
+
+def _get_progress_and_speed_from_log(log_file: str) -> Optional[Tuple[float, str]]:
+    """Extract download progress percentage and speed from log file.
+
+    Args:
+        log_file: Path to log file
+
+    Returns:
+        Tuple containing progress percentage (0-100) and speed in bytes/second
+    """
+    try:
+        with open(log_file, "r") as f:
+            content = f.read()
+
+        import re
+
+        # Look for wget progress format
+        # Wget can output progress in a few different formats:
+        # 1. Basic format: 43% [=======>              ] 12,345,678   1.23M/s eta 45s
+        # 2. Alternative format: 43% [=======>              ] 12.3M/45.6M 1.23M/s eta 45s
+        # 3. Verbose format:  2% [>                                                  ] 1,176,576   2.83MB/s    eta 2m 29s
+
+        # Extract percentage first (simplest regex)
+        percentage_pattern = r"(\d+)%"
+        percentage_matches = re.findall(percentage_pattern, content)
+
+        if percentage_matches:
+            percentage = float(percentage_matches[-1])
+
+            # Then look for different speed formats
+            # Try multiple common formats with increasing flexibility
+            speed_patterns = [
+                r"(\d+[\.,]?\d*\s?[KMG]B/s)",  # 3.85MB/s format
+                r"(\d+[\.,]?\d*\s?[KMG]i?B/s)",  # 3.85MiB/s format
+                r"(\d+[\.,]?\d*\s?[kmg]/s)",  # 3.85M/s format (case insensitive)
+                r"(\d[\d\.,]*\s*[KMG][Ii]?B/s)",  # More flexible pattern
+                r"(\d[\d\.,]*\s*[KMG]/s)",  # Generic speed pattern
+            ]
+
+            # Search for each pattern
+            for pattern in speed_patterns:
+                speed_matches = re.findall(pattern, content, re.IGNORECASE)
+                if speed_matches:
+                    # Return the speed in its original format for wget
+                    return (percentage, speed_matches[-1])
+
+            # If we found percentage but no speed, at least return the percentage
+            return (percentage, "")
+
+        # If we can't find a percentage, check if download might be starting
+        if "Starting download" in content or "Downloading" in content:
+            return (0.0, "Starting...")
+
+        return None
+    except Exception as e:
+        # If we encounter any error, return None
+        return None
+
+
+def _check_download_success(log_file: str) -> bool:
+    """Check if download completed successfully based on log file.
+
+    Args:
+        log_file: Path to log file
+
+    Returns:
+        True if download was successful
+    """
+    try:
+        with open(log_file, "r") as f:
+            content = f.read()
+
+        # Check for wget success (no error message and high percentage)
+        if "ERROR" not in content and "failed" not in content.lower():
+            # Check last percentage if available
+            result = _get_progress_and_speed_from_log(log_file)
+            if result:
+                percentage, speed = result
+                if percentage > 99:
+                    return True
+
+        return False
+    except Exception:
         return False
 
 
 def _download_file(url: str, download_dir: Path, console: Console) -> bool:
-    """Download a file using aria2c or wget.
+    """Download a file using wget.
 
     Args:
         url: URL to download
@@ -268,46 +530,20 @@ def _download_file(url: str, download_dir: Path, console: Console) -> bool:
         True if download was successful
     """
     try:
-        # Check if aria2c is available
-        if shutil.which("aria2c"):
-            console.print(
-                "[bold]Using aria2c for faster download with 16 connections[/bold]"
-            )
-            # Show download progress with speed information - run in foreground mode
-            process = subprocess.run(
-                [
-                    "aria2c",
-                    "-s",
-                    "16",  # 16 connections
-                    "-x",
-                    "16",  # 16 connections per server
-                    "-k",
-                    "1M",  # Chunk size
-                    "--console-log-level=notice",  # Show important messages
-                    "--summary-interval=1",  # Update summary every second
-                    "--file-allocation=none",  # Speeds up start time
-                    "--auto-file-renaming=false",  # Don't rename files
-                    "-d",
-                    str(download_dir),  # Download directory
-                    url,
-                ],
-                check=True,
-            )
-        else:
-            console.print("[bold]aria2c not found, falling back to wget[/bold]")
-            # Use wget with progress bar in foreground
-            process = subprocess.run(
-                [
-                    "wget",
-                    "--no-verbose",  # Not completely quiet
-                    "--progress=bar:force:noscroll",  # Force progress bar
-                    "--show-progress",  # Always show progress
-                    "-P",
-                    str(download_dir),  # Download directory
-                    url,
-                ],
-                check=True,
-            )
+        console.print("[bold]Using wget for download[/bold]")
+        # Use wget with progress bar in foreground
+        process = subprocess.run(
+            [
+                "wget",
+                "--no-verbose",  # Not completely quiet
+                "--progress=bar:force:noscroll",  # Force progress bar
+                "--show-progress",  # Always show progress
+                "-P",
+                str(download_dir),  # Download directory
+                url,
+            ],
+            check=True,
+        )
         return True
     except subprocess.CalledProcessError as e:
         console.print(f"Download failed: {e}", style="bold red")
