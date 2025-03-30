@@ -147,18 +147,14 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
 
         should_remove = True
 
-    console.print(
-        f"\nStarting parallel download of {len(builds)} builds with {AppConfig.MAX_WORKERS} workers...\n"
-    )
     console.print(f"Files will be downloaded to: {download_dir}\n")
 
     # Use ThreadPoolExecutor to download and extract in parallel
     completed_versions = []
-    download_paths = {}
 
     try:
         # First download all builds
-        with ThreadPoolExecutor(max_workers=AppConfig.MAX_WORKERS) as executor:
+        with ThreadPoolExecutor(max_workers=len(builds)) as executor:
             futures = {}
 
             for build in builds:

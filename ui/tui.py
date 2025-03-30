@@ -341,7 +341,6 @@ class BlenderTUI:
         settings = [
             ("Download Directory:", AppConfig.DOWNLOAD_PATH),
             ("Version Cutoff:", AppConfig.VERSION_CUTOFF),
-            ("Max Workers:", str(AppConfig.MAX_WORKERS)),
         ]
 
         for i, (setting, value) in enumerate(settings):
@@ -868,8 +867,6 @@ class BlenderTUI:
                 self._edit_download_path()
             elif self.state.settings_cursor == 1:  # Version cutoff
                 self._edit_version_cutoff()
-            elif self.state.settings_cursor == 2:  # Max workers
-                self._edit_max_workers()
 
             self.display_tui()
         except ValueError as e:
@@ -912,22 +909,4 @@ class BlenderTUI:
             except Exception as e:
                 self.console.print(
                     f"Failed to update version cutoff: {e}", style="bold red"
-                )
-
-    def _edit_max_workers(self) -> None:
-        """Edit the max workers setting."""
-        current = AppConfig.MAX_WORKERS
-
-        new_workers = prompt_integer(
-            f"Enter maximum download workers [cyan]({current})[/cyan]", default=current
-        )
-
-        if new_workers and new_workers != current:
-            try:
-                AppConfig.MAX_WORKERS = new_workers
-                AppConfig.save_config()
-                self.state.needs_refresh = True
-            except Exception as e:
-                self.console.print(
-                    f"Failed to update max workers: {e}", style="bold red"
                 )

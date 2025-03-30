@@ -7,7 +7,6 @@ class AppConfig:
 
     DOWNLOAD_PATH = Path.home() / "blender/blender-build/"
     VERSION_CUTOFF = "2.80"  # Show only builds with version >= this value
-    MAX_WORKERS = 4  # Maximum number of parallel downloads
 
 
 class Colors(str, Enum):
