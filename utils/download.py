@@ -4,7 +4,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 from rich.console import Console
 from rich.prompt import Confirm
@@ -13,12 +13,15 @@ from ..config.app_config import AppConfig
 from ..models.build_info import BlenderBuild
 
 
-def download_build(build: BlenderBuild, console: Console) -> Optional[str]:
+def download_build(
+    build: BlenderBuild, console: Console, skip_confirmation: bool = False
+) -> Optional[str]:
     """Download and extract a specific build.
 
     Args:
         build: The build to download
         console: Console for output
+        skip_confirmation: Whether to skip confirmation for removing existing builds
 
     Returns:
         The version string if successful, None otherwise
@@ -35,16 +38,19 @@ def download_build(build: BlenderBuild, console: Console) -> Optional[str]:
     extract_path = download_dir / extracted_dir_name
 
     # Check for and remove existing builds of this version
-    if not _cleanup_existing_builds(download_dir, build.version, console):
+    if not _cleanup_existing_builds(
+        download_dir, build.version, console, skip_confirmation
+    ):
         return None
 
     try:
         console.print(f"\nStarting download of {filename}...")
 
-        # Download the file
+        # Download the file - no status spinner here
         if not _download_file(build.url, download_dir, console):
             return None
 
+        console.print(f"Extraction of {filename}...")
         # Extract the archive
         if not _extract_archive(download_path, download_dir, console):
             return None
@@ -82,29 +88,53 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
     console = Console()
 
     # Ensure download directory exists
-    config = AppConfig()
-    download_dir = Path(config.download_path)
+    download_dir = Path(AppConfig.DOWNLOAD_PATH)
     download_dir.mkdir(parents=True, exist_ok=True)
 
     # Ask confirmation for removing existing builds
     all_existing_builds = []
+    versions_to_remove: Dict[str, List[Path]] = {}
+
     for build in builds:
         existing = list(download_dir.glob(f"blender-{build.version}*"))
-        all_existing_builds.extend(existing)
+        if existing:
+            versions_to_remove[build.version] = existing
+            all_existing_builds.extend(existing)
+
+    skip_confirmation = False
 
     if all_existing_builds:
         console.print("\nExisting builds found:")
         for build_dir in all_existing_builds:
             console.print(f"  - {build_dir}")
 
+        # More specific confirmation for updates
         if not Confirm.ask(
-            "Do you want to remove existing builds and download the new ones?"
+            "This will remove existing builds and download updates. Proceed?"
         ):
             console.print("Download cancelled")
             return False
 
+        skip_confirmation = True
+
+        # Remove builds here after confirmation instead of in download_build
+        for version, paths in versions_to_remove.items():
+            console.print(f"\nRemoving existing Blender {version} build(s)...")
+            for build_dir in paths:
+                try:
+                    console.print(f"Removing {build_dir}...")
+                    if build_dir.is_dir():
+                        subprocess.run(["rm", "-rf", str(build_dir)], check=True)
+                    else:
+                        build_dir.unlink()
+                except (subprocess.CalledProcessError, OSError) as e:
+                    console.print(
+                        f"Failed to remove {build_dir}: {e}", style="bold red"
+                    )
+                    return False
+
     console.print(
-        f"\nStarting parallel download of {len(builds)} builds with {config.max_workers} workers...\n"
+        f"\nStarting parallel download of {len(builds)} builds with {AppConfig.MAX_WORKERS} workers...\n"
     )
     console.print(f"Files will be downloaded to: {download_dir}\n")
 
@@ -112,9 +142,11 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
     completed_versions = []
 
     try:
-        with ThreadPoolExecutor(max_workers=config.max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=AppConfig.MAX_WORKERS) as executor:
             futures = {
-                executor.submit(download_build, build, console): build
+                executor.submit(
+                    download_build, build, console, skip_confirmation
+                ): build
                 for build in builds
             }
 
@@ -158,7 +190,7 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
 
 
 def _cleanup_existing_builds(
-    download_dir: Path, version: str, console: Console
+    download_dir: Path, version: str, console: Console, skip_confirmation: bool = False
 ) -> bool:
     """Remove existing builds of a specific version.
 
@@ -166,16 +198,28 @@ def _cleanup_existing_builds(
         download_dir: Path to the download directory
         version: Version string to match
         console: Console for output
+        skip_confirmation: Whether to skip confirmation for removing existing builds
 
     Returns:
         True if cleanup was successful or no builds needed cleanup
     """
+    if skip_confirmation:
+        # If we already confirmed and cleaned up builds at the multi-build level, skip this
+        return True
+
     existing_builds = list(download_dir.glob(f"blender-{version}*"))
 
     if existing_builds:
         console.print(f"\nExisting builds found for {version}:")
         for build_dir in existing_builds:
             console.print(f"  - {build_dir}")
+
+        # Ask for confirmation before removing each version
+        if not Confirm.ask(
+            f"Remove existing Blender {version} build(s)?", default=True
+        ):
+            console.print(f"Keeping existing Blender {version} build(s)")
+            return False
 
         # Remove existing builds
         for build_dir in existing_builds:
@@ -206,25 +250,44 @@ def _download_file(url: str, download_dir: Path, console: Console) -> bool:
     try:
         # Check if aria2c is available
         if shutil.which("aria2c"):
-            console.print("Using aria2c for faster download...")
-            subprocess.run(
+            console.print(
+                "[bold]Using aria2c for faster download with 16 connections[/bold]"
+            )
+            # Show download progress with speed information - run in foreground mode
+            process = subprocess.run(
                 [
                     "aria2c",
                     "-s",
-                    "16",
+                    "16",  # 16 connections
                     "-x",
-                    "16",
+                    "16",  # 16 connections per server
                     "-k",
-                    "1M",
+                    "1M",  # Chunk size
+                    "--console-log-level=notice",  # Show important messages
+                    "--summary-interval=1",  # Update summary every second
+                    "--file-allocation=none",  # Speeds up start time
+                    "--auto-file-renaming=false",  # Don't rename files
                     "-d",
-                    str(download_dir),
+                    str(download_dir),  # Download directory
                     url,
                 ],
                 check=True,
             )
         else:
-            console.print("aria2c not found, falling back to wget...")
-            subprocess.run(["wget", "-P", str(download_dir), url], check=True)
+            console.print("[bold]aria2c not found, falling back to wget[/bold]")
+            # Use wget with progress bar in foreground
+            process = subprocess.run(
+                [
+                    "wget",
+                    "--no-verbose",  # Not completely quiet
+                    "--progress=bar:force:noscroll",  # Force progress bar
+                    "--show-progress",  # Always show progress
+                    "-P",
+                    str(download_dir),  # Download directory
+                    url,
+                ],
+                check=True,
+            )
         return True
     except subprocess.CalledProcessError as e:
         console.print(f"Download failed: {e}", style="bold red")

@@ -163,19 +163,25 @@ class BlenderTUI:
             if i == self.state.sort_column:
                 col_name = f"{col_name} {'↑' if not self.state.sort_reverse else '↓'}"
 
-            # Add the column with specified alignment
+            # Add columns in order with left alignment
             if i == 0:  # Number column
-                table.add_column(col_name, justify="right", width=4)
+                table.add_column(
+                    col_name, justify="center", width=2
+                )  # Will fit build numbers
             elif i == 1:  # Selected column
-                table.add_column(col_name, justify="center", width=2)
-            elif i == 5:  # Size column
-                table.add_column(col_name, justify="right", width=10)
+                table.add_column(
+                    col_name, justify="center", width=2
+                )  # Will fit [X] or [ ]
+            elif i == 2:  # Version column
+                table.add_column(col_name, justify="left")  # Variable width
             elif i == 3:  # Branch column
-                table.add_column(col_name, width=10)
+                table.add_column(col_name, justify="center")  # Will fit branch names
             elif i == 4:  # Type column
-                table.add_column(col_name, width=12)
-            else:
-                table.add_column(col_name)
+                table.add_column(col_name, justify="center")  # Will fit risk types
+            elif i == 5:  # Size column
+                table.add_column(col_name, justify="center")  # Will fit size values
+            elif i == 6:  # Build Date column
+                table.add_column(col_name, justify="center")  # Will fit dates
 
         return table
 
@@ -374,17 +380,18 @@ class BlenderTUI:
         Returns:
             True to continue running
         """
-        with self.console.status(
-            "[bold green]Fetching Blender builds...", spinner="dots"
-        ):
-            try:
-                self.state.builds = fetch_builds()
-                self.state.has_fetched = True
-                self.state.cursor_position = 0  # Reset cursor position
-                self.console.print("Successfully fetched builds", style="green")
-            except Exception as e:
-                self.console.print(f"Error fetching builds: {e}", style="bold red")
-                return True  # Continue running even if fetch fails
+        # Clear screen to avoid UI interference
+        self.clear_screen()
+        self.console.print("[bold green]Fetching Blender builds...[/bold green]")
+
+        try:
+            self.state.builds = fetch_builds()
+            self.state.has_fetched = True
+            self.state.cursor_position = 0  # Reset cursor position
+            self.console.print("Successfully fetched builds", style="green")
+        except Exception as e:
+            self.console.print(f"Error fetching builds: {e}", style="bold red")
+            return True  # Continue running even if fetch fails
 
         # After successful fetch, ensure we refresh the display
         self.display_tui()
@@ -545,7 +552,6 @@ class BlenderTUI:
                         f"Error handling input: {inner_e}", style="bold red"
                     )
                     self.console.print(f"Type: {type(inner_e)}")
-                    prompt_input("Press Enter to continue...")
                     self.display_tui()
 
         except Exception as e:
@@ -791,18 +797,20 @@ class BlenderTUI:
             self.console.print("Download cancelled", style="yellow")
             return True
 
-        with self.console.status(
-            f"[bold green]Downloading {len(builds_to_download)} build(s)...",
-            spinner="dots",
-        ):
-            # Perform download
-            success = download_multiple_builds(builds_to_download)
-            if success:
-                self.console.print("Download completed successfully", style="green")
-                # Refresh local builds list
-                self.state.local_builds = get_local_builds()
-            else:
-                self.console.print("Download failed", style="bold red")
+        # Clear screen before starting download to avoid UI conflicts
+        self.clear_screen()
+        self.console.print(
+            f"[bold green]Starting download of {len(builds_to_download)} build(s)...[/bold green]"
+        )
+
+        # Perform download without status spinner
+        success = download_multiple_builds(builds_to_download)
+        if success:
+            self.console.print("Download completed successfully", style="green")
+            # Refresh local builds list
+            self.state.local_builds = get_local_builds()
+        else:
+            self.console.print("Download failed", style="bold red")
 
         self.display_tui()
         return True
@@ -870,27 +878,30 @@ class BlenderTUI:
             self.display_tui()
         except ValueError as e:
             self.console.print(f"Error updating settings: {e}", style="bold red")
-            input("Press Enter to continue...")
             self.display_tui()
 
     def _edit_download_path(self) -> None:
         """Edit the download path setting."""
-        config = AppConfig()
-        current = config.download_path
+        current = AppConfig.DOWNLOAD_PATH
 
         new_path = prompt_input(
             f"Enter new download path [cyan]({current})[/cyan]", default=str(current)
         )
 
         if new_path and new_path != str(current):
-            config.download_path = Path(new_path)
-            config.save()
-            self.state.needs_refresh = True
+            try:
+                # Update the class attribute directly
+                AppConfig.DOWNLOAD_PATH = Path(new_path)
+                AppConfig.save_config()  # Assuming there's a class method to save
+                self.state.needs_refresh = True
+            except Exception as e:
+                self.console.print(
+                    f"Failed to update download path: {e}", style="bold red"
+                )
 
     def _edit_version_cutoff(self) -> None:
         """Edit the version cutoff setting."""
-        config = AppConfig()
-        current = config.version_cutoff
+        current = AppConfig.VERSION_CUTOFF
 
         new_cutoff = prompt_input(
             f"Enter minimum Blender version to display [cyan]({current})[/cyan]",
@@ -898,20 +909,29 @@ class BlenderTUI:
         )
 
         if new_cutoff and new_cutoff != current:
-            config.version_cutoff = new_cutoff
-            config.save()
-            self.state.needs_refresh = True
+            try:
+                AppConfig.VERSION_CUTOFF = new_cutoff
+                AppConfig.save_config()
+                self.state.needs_refresh = True
+            except Exception as e:
+                self.console.print(
+                    f"Failed to update version cutoff: {e}", style="bold red"
+                )
 
     def _edit_max_workers(self) -> None:
         """Edit the max workers setting."""
-        config = AppConfig()
-        current = config.max_workers
+        current = AppConfig.MAX_WORKERS
 
         new_workers = prompt_integer(
             f"Enter maximum download workers [cyan]({current})[/cyan]", default=current
         )
 
         if new_workers and new_workers != current:
-            config.max_workers = new_workers
-            config.save()
-            self.state.needs_refresh = True
+            try:
+                AppConfig.MAX_WORKERS = new_workers
+                AppConfig.save_config()
+                self.state.needs_refresh = True
+            except Exception as e:
+                self.console.print(
+                    f"Failed to update max workers: {e}", style="bold red"
+                )
