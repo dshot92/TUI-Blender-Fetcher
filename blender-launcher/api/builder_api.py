@@ -2,6 +2,7 @@ from typing import List, Tuple
 
 import json
 import requests
+import platform
 
 from ..config.app_config import BuilderConfig
 from ..models.build_info import BlenderBuild
@@ -11,7 +12,7 @@ def fetch_builds() -> List[BlenderBuild]:
     """Fetch and parse build information from the Blender API.
 
     Returns:
-        List of BlenderBuild objects filtered for Linux x86_64 and by version cutoff.
+        List of BlenderBuild objects filtered for the current machine's platform/architecture and by version cutoff.
 
     Raises:
         Exception: Various exceptions for API connection errors.
@@ -27,12 +28,38 @@ def fetch_builds() -> List[BlenderBuild]:
             response.raise_for_status()
             builds_data = response.json()
 
-            # Filter for Linux x86_64 builds and exclude .sha256 files
-            linux_builds = [
+            # Get current system info
+            current_system = platform.system().lower()
+            # Map platform.system() values to Blender API platform values
+            platform_mapping = {
+                "linux": "linux",
+                "windows": "windows",
+                "darwin": "darwin",  # Blender API uses "darwin" for macOS
+            }
+            current_platform = platform_mapping.get(current_system, current_system)
+
+            # Get architecture
+            current_machine = platform.machine().lower()
+            # Map architecture values to what Blender API expects
+            arch_mapping = {
+                "x86_64": "x86_64",
+                "amd64": "amd64",  # Windows uses "amd64" in the API
+                "arm64": "arm64",
+                "aarch64": "arm64",
+            }
+
+            # On Windows, we need to use "amd64" instead of "x86_64"
+            if current_system == "windows" and current_machine in ["x86_64", "amd64"]:
+                current_arch = "amd64"
+            else:
+                current_arch = arch_mapping.get(current_machine, current_machine)
+
+            # Filter for current platform and architecture builds and exclude .sha256 files
+            matched_builds = [
                 BlenderBuild.from_dict(build)
                 for build in builds_data
-                if build["platform"] == "linux"
-                and build["architecture"] == "x86_64"
+                if build["platform"] == current_platform
+                and build["architecture"] == current_arch
                 and not build["file_extension"] == "sha256"
             ]
 
@@ -42,7 +69,7 @@ def fetch_builds() -> List[BlenderBuild]:
             version_min = tuple(map(int, AppConfig.VERSION_CUTOFF.split(".")))
             filtered_builds = [
                 build
-                for build in linux_builds
+                for build in matched_builds
                 if version_meets_minimum(build.version, version_min)
             ]
 
