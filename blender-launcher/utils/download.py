@@ -210,9 +210,9 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
 
         # Check results and collect successful downloads
         for _, build in threads:
-            log_file = temp_log_files[build.version]
-            if os.path.exists(log_file):
-                if _check_download_success(log_file):
+            log_file = Path(temp_log_files[build.version])
+            if log_file.exists():
+                if _check_download_success(str(log_file)):
                     download_path = download_dir / build.file_name
                     successful_downloads.append((build, download_path))
                 else:
@@ -276,10 +276,11 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
                 pass
 
         # Clean up log files
-        for log_file in temp_log_files.values():
-            if os.path.exists(log_file):
+        for log_path in temp_log_files.values():
+            log_file = Path(log_path)
+            if log_file.exists():
                 try:
-                    os.unlink(log_file)
+                    log_file.unlink()
                 except:
                     pass  # Ignore cleanup errors
 
@@ -299,9 +300,10 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
         #     "\nDownloads interrupted by user. Cleaning up...", style="bold yellow"
         # )
         # Clean up temp files
-        for log_file in temp_log_files.values():
-            if os.path.exists(log_file):
-                os.unlink(log_file)
+        for log_path in temp_log_files.values():
+            log_file = Path(log_path)
+            if log_file.exists():
+                log_file.unlink()
         # We can't cancel the downloads directly, but we can inform the user
         # console.print(
         #     "Note: Download processes may still be running in the background."
@@ -312,9 +314,10 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
     except Exception as e:
         # console.print(f"\nAn error occurred during downloads: {e}", style="bold red")
         # Clean up temp files
-        for log_file in temp_log_files.values():
-            if os.path.exists(log_file):
-                os.unlink(log_file)
+        for log_path in temp_log_files.values():
+            log_file = Path(log_path)
+            if log_file.exists():
+                log_file.unlink()
         return False
 
 
@@ -388,7 +391,8 @@ def _get_progress_and_speed_from_log(log_file: str) -> Optional[Tuple[float, str
         Tuple containing progress percentage (0-100) and speed in bytes/second
     """
     try:
-        with open(log_file, "r") as f:
+        log_path = Path(log_file)
+        with log_path.open("r") as f:
             content = f.read()
 
         import re
@@ -446,7 +450,8 @@ def _check_download_success(log_file: str) -> bool:
         True if download was successful
     """
     try:
-        with open(log_file, "r") as f:
+        log_path = Path(log_file)
+        with log_path.open("r") as f:
             content = f.read()
 
         # Check for wget success (no error message and high percentage)
@@ -578,11 +583,10 @@ def _calculate_directory_size(path: Path) -> int:
         Total size in bytes
     """
     total_size = 0
-    for dirpath, dirnames, filenames in os.walk(path):
-        for filename in filenames:
-            file_path = os.path.join(dirpath, filename)
-            # Skip if it's a symbolic link
-            if not os.path.islink(file_path):
-                total_size += os.path.getsize(file_path)
+    # Use Path.rglob to recursively find all files
+    for file_path in path.rglob("*"):
+        # Only include files (not directories) and skip symlinks
+        if file_path.is_file() and not file_path.is_symlink():
+            total_size += file_path.stat().st_size
 
     return total_size

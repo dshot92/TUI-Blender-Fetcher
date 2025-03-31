@@ -1255,7 +1255,7 @@ class BlenderTUI:
         """
         import time
         import threading
-        import os
+        from pathlib import Path
         from ..utils.download import (
             download_multiple_builds,
             _get_progress_and_speed_from_log,
@@ -1271,7 +1271,7 @@ class BlenderTUI:
         # Get log file paths
         temp_log_files = {}
         for build in builds:
-            temp_log_files[build.version] = get_log_file_path(build)
+            temp_log_files[build.version] = Path(get_log_file_path(build))
 
         # Track previous progress values
         previous_progress = {}
@@ -1298,7 +1298,7 @@ class BlenderTUI:
                         continue
 
                     log_file = temp_log_files[build.version]
-                    if os.path.exists(log_file):
+                    if log_file.exists():
                         result = _get_progress_and_speed_from_log(log_file)
                         if result:
                             percentage, speed = result
