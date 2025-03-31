@@ -675,6 +675,9 @@ class BlenderTUI:
             # Print navigation bar at the top for settings page
             self.print_navigation_bar()
 
+            # Add an empty line after navigation bar in settings page
+            self.console.print()
+
             # Print the settings table
             self.print_settings_table()
 
