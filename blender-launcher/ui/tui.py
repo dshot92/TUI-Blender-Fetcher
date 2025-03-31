@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 import time
+from functools import lru_cache
 
 from rich.console import Console
 from rich.table import Table
@@ -26,6 +27,55 @@ from ..utils.input import (
 from ..utils.local_builds import get_local_builds, delete_local_build
 
 
+# --- Constants for Columns and Sorting ---
+
+_BASE_COLUMNS = [
+    "",  # 0: Selection (Not sortable)
+    "Version",  # 1
+    "Status",  # 2
+    "Branch",  # 3
+    "Type",  # 4
+    "Hash",  # 5
+    "Size",  # 6
+    "Build Date",  # 7
+]
+
+_RISK_ORDER = {"stable": 0, "candidate": 1, "alpha": 2}
+
+
+def _parse_time(t):
+    try:
+        # Handle both API format (YYYY-MM-DD HH:MM:SS) and local format (YYYYMMDD_HHMM)
+        t_cleaned = (
+            t.replace("-", "").replace(":", "").replace(" ", "").replace("_", "")
+        )
+        # Pad if needed (assuming local format needs padding)
+        if len(t_cleaned) == 12:  # YYYYMMDDHHMM
+            t_cleaned += "00"  # Add seconds
+        return int(t_cleaned) if len(t_cleaned) == 14 else 0
+    except Exception:
+        return 0
+
+
+_SORT_KEYS = {
+    # Maps column index from _BASE_COLUMNS to a sort key function
+    # Operates on the unified dictionary record structure used in _get_combined_build_list
+    1: lambda d: tuple(map(int, d["version"].split("."))),  # Version
+    2: lambda d: (
+        0 if d["type"] == "local" else 1,
+        d["version"],
+    ),  # Status (sort by type, then version)
+    3: lambda d: (d["branch"] or "").lower(),  # Branch
+    4: lambda d: (_RISK_ORDER.get(d["risk_id"], 99), d["risk_id"] or ""),  # Type
+    5: lambda d: d["hash"] or "",  # Hash
+    6: lambda d: d["size_mb"],  # Size (already float)
+    7: lambda d: _parse_time(d["time"]) if d["time"] else 0,  # Build Date/Time
+}
+
+_DEFAULT_SORT_COLUMN = 7  # Default sort by Build Date (index 7)
+_DEFAULT_SORT_REVERSE = True
+
+
 @dataclass
 class UIState:
     """Holds the state of the TUI."""
@@ -41,10 +91,8 @@ class UIState:
     has_fetched: bool = False  # Flag to track if we've fetched builds from online
     local_builds: Dict[str, LocalBuildInfo] = field(default_factory=dict)
     # Sort configuration
-    sort_column: int = (
-        1  # Default sort on Version column (index 2 after removing cursor column)
-    )
-    sort_reverse: bool = True  # Sort descending by default
+    sort_column: int = _DEFAULT_SORT_COLUMN
+    sort_reverse: bool = _DEFAULT_SORT_REVERSE
     # Download progress tracking
     download_progress: Dict[str, float] = field(default_factory=dict)
     download_speed: Dict[str, str] = field(default_factory=dict)
@@ -52,6 +100,10 @@ class UIState:
 
 class BlenderTUI:
     """Text User Interface for Blender build management."""
+
+    # Use constants defined above
+    BASE_COLUMNS = _BASE_COLUMNS
+    SORT_KEYS = _SORT_KEYS
 
     def __init__(self):
         """Initialize the BlenderTUI."""
@@ -131,29 +183,15 @@ class BlenderTUI:
         # Update terminal size before rendering
         self.terminal_width, self.terminal_height = self.console.size
 
-        # Base column names for sorting indication
-        base_columns = [
-            "",  # Selection column
-            "Version",
-            "Status",
-            "Branch",
-            "Type",
-            "Hash",
-            "Size",
-        ]
+        # Use the class constant for base columns
+        base_columns = self.BASE_COLUMNS
 
         # Apply responsive column hiding based on terminal width
         column_names = self._get_responsive_columns(base_columns)
 
-        # Use "Speed" instead of "Build Date" when downloads are active
-        if self.state.download_progress:
-            column_names.append("Speed")
-        else:
-            column_names.append("Build Date")
-
         table = self._create_table(column_names)
 
-        # Get the combined list of builds
+        # Get the combined list of builds (already sorted)
         combined_build_list = self._get_combined_build_list()
 
         if not combined_build_list:
@@ -164,8 +202,8 @@ class BlenderTUI:
             return
 
         # Add all builds to the table
-        for i, (build_type, original_idx, version) in enumerate(combined_build_list):
-            # Check if this version is selected using version instead of index
+        for i, (build_type, version) in enumerate(combined_build_list):
+            # Check if this version is selected using version instead of cursor position
             selected = "[X]" if version in self.state.selected_builds else "[ ]"
             row_style = "reverse bold" if i == self.state.cursor_position else ""
 
@@ -307,7 +345,7 @@ class BlenderTUI:
             legend.append("■ Update Available", style="green")
             self.console.print(legend)
 
-    def _get_responsive_columns(self, base_columns):
+    def _get_responsive_columns(self, base_columns: List[str]) -> List[str]:
         """Determine which columns to show based on terminal width.
 
         Args:
@@ -339,6 +377,20 @@ class BlenderTUI:
             if "Size" in columns:
                 columns.remove("Size")
 
+        # Decide whether to show "Build Date" or "Speed"
+        is_downloading = bool(self.state.download_progress)
+        has_date_col = "Build Date" in columns
+
+        if is_downloading:
+            if has_date_col:
+                # Replace "Build Date" with "Speed"
+                date_idx = columns.index("Build Date")
+                columns[date_idx] = "Speed"
+            # If "Build Date" was removed by width, "Speed" will effectively replace it.
+        elif not has_date_col:
+            # If not downloading and date was removed, ensure it's not added back implicitly.
+            pass  # Date column stays removed
+
         return columns
 
     def _clear_remaining_lines(self) -> None:
@@ -361,53 +413,22 @@ class BlenderTUI:
         from rich import box
         from rich.text import Text
 
-        table = Table(show_header=True, expand=True, box=box.SIMPLE_HEAVY)
-
-        # Map of column indices in the full columns list to indices in the responsive columns list
-        column_index_map = {
-            0: 0,  # Selection column is always at index 0
-            1: 1,  # Version column is always at index 1
-            2: 2,  # Status column is always at index 2
-        }
-
-        # Track current index in column_names
-        current_idx = 3
-
-        # Branch column (index 3 in full list)
-        if "Branch" in column_names:
-            column_index_map[3] = current_idx
-            current_idx += 1
-
-        # Type column
-        column_index_map[4] = current_idx
-        current_idx += 1
-
-        # Hash column (index 5 in full list)
-        if "Hash" in column_names:
-            column_index_map[5] = current_idx
-            current_idx += 1
-
-        # Size column (index 6 in full list)
-        if "Size" in column_names:
-            column_index_map[6] = current_idx
-            current_idx += 1
-
-        # Build Date column (index 7 in full list)
-        column_index_map[7] = current_idx
-
-        # Adjust sort column if necessary
-        adjusted_sort_column = self.state.sort_column
-        if self.state.sort_column in column_index_map:
-            adjusted_sort_column = column_index_map[self.state.sort_column]
-        elif self.state.sort_column > 7:
-            # If sort column is beyond our mapping (like 8 for Date), just use the last column
-            adjusted_sort_column = len(column_names) - 1
+        table = Table(
+            show_header=True, expand=True, box=box.SIMPLE_HEAVY, padding=(0, 1)
+        )
 
         for i, col_name in enumerate(column_names):
+            # Find the original index of this visible column in the base columns
+            try:
+                original_idx = self.BASE_COLUMNS.index(col_name)
+            except ValueError:
+                # Handle "Speed" column specifically if needed, or assign a dummy index
+                original_idx = (
+                    -1
+                )  # Or len(self.BASE_COLUMNS) if using Speed as an extra column index
+
             # Add sort indicator to column header
-            if (
-                i == adjusted_sort_column
-            ):  # Fixed: removed the -1 adjustment which was incorrect
+            if original_idx == self.state.sort_column:
                 sort_indicator = "↑" if not self.state.sort_reverse else "↓"
                 header_text = Text(f"{col_name} {sort_indicator}", style="reverse bold")
             else:
@@ -437,146 +458,80 @@ class BlenderTUI:
 
         return table
 
-    def _add_online_builds_to_table(self, table: Table) -> None:
-        """Add online builds to the table.
+    def _get_combined_build_list(self) -> List[Tuple[str, str]]:
+        """Get a combined sorted list of all builds (local and online) as unified records.
 
-        Args:
-            table: Table to add rows to
-        """
-        sorted_builds = self.sort_builds(self.state.builds)
-
-        for i, build in enumerate(sorted_builds):
-            selected = "[X]" if i in self.state.selected_builds else "[ ]"
-            type_text = self._get_style_for_risk_id(build.risk_id)
-            hash_text = build.hash or ""  # Add hash column
-
-            # Check if this build is being downloaded
-            is_downloading = build.version in self.state.download_progress
-            download_progress = self.state.download_progress.get(build.version, 0)
-            download_speed = self.state.download_speed.get(build.version, "")
-
-            # Determine version style based on local builds or download status
-            if is_downloading:
-                # For downloading builds, show progress in the size column and speed in the date column
-                size_text = f"{download_progress:.0f}%"
-                date_text = str(download_speed)  # Ensure it's a string
-
-                # Set type column to show "downloading"
-                type_text = Text("downloading", style="green bold")
-
-                # Set row style for downloading build without red background
-                row_style = "reverse bold" if i == self.state.cursor_position else ""
-
-                # Set version with indicator
-                version_col = Text(f"↓ Blender {build.version}", style="green bold")
-                status_text = Text("Downloading", style="green bold")
-
-            elif build.version in self.state.local_builds:
-                local_info = self.state.local_builds[build.version]
-                style = (
-                    "yellow"
-                    if local_info.time == build.build_time or not local_info.time
-                    else "green"
-                )
-                version_col = Text(f"■ Blender {build.version}", style=style)
-                row_style = "reverse bold" if i == self.state.cursor_position else ""
-                size_text = f"{build.size_mb:.1f}MB"
-                date_text = str(build.mtime_formatted)
-                status_text = Text("Online", style="blue bold")  # Status
-            else:
-                version_col = Text(f"  Blender {build.version}")
-                row_style = "reverse bold" if i == self.state.cursor_position else ""
-                size_text = f"{build.size_mb:.1f}MB"
-                date_text = str(build.mtime_formatted)
-                status_text = Text("Online", style="blue bold")  # Status
-
-            table.add_row(
-                selected,
-                version_col,
-                status_text,
-                str(build.branch),  # Ensure all values are strings
-                type_text,
-                str(hash_text),
-                str(size_text),
-                str(date_text),
-                style=row_style,
-            )
-
-    def _add_local_builds_to_table(self, table: Table) -> None:
-        """Add local builds to the table.
-
-        Args:
-            table: Table to add rows to
-        """
-        if not self.state.local_builds:
-            self.console.print(
-                "No local builds found. Press F to fetch online builds.",
-                style="bold yellow",
-            )
-            return
-
-        # Convert local builds dictionary to a sortable list and sort it
-        local_build_list = self._get_sorted_local_build_list()
-
-        for i, (version, build_info) in enumerate(local_build_list):
-            selected = "[X]" if i in self.state.selected_builds else "[ ]"
-            row_style = "reverse bold" if i == self.state.cursor_position else ""
-            type_text = (
-                self._get_style_for_risk_id(build_info.risk_id)
-                if build_info.risk_id
-                else ""
-            )
-
-            # Get hash if available
-            hash_text = getattr(build_info, "hash", "") or ""
-
-            # Format build date nicely if available
-            build_date = self._format_build_date(build_info)
-
-            # Get size as string, handle if None
-            size_str = (
-                f"{build_info.size_mb:.1f}MB" if build_info.size_mb is not None else ""
-            )
-
-            table.add_row(
-                selected,
-                Text(f"■ Blender {version}", style="default"),
-                Text("Local", style="default"),  # Status
-                str(build_info.branch or ""),
-                type_text,
-                str(hash_text),
-                str(size_str),
-                str(build_date),
-                style=row_style,
-            )
-
-    def _get_sorted_local_build_list(self) -> List[Tuple[str, LocalBuildInfo]]:
-        """Get a sorted list of local builds based on current sort settings.
-
+        This method is now responsible for the primary sorting based on UI state.
         Returns:
-            List of (version, LocalBuildInfo) tuples
+            List of tuples (type, version)
         """
-        local_build_list = list(self.state.local_builds.items())
+        record_map = {}
 
-        # Define sort key functions for different columns (adjusted for removed # column)
+        # For local builds, use local metadata
+        for version, local_info in self.state.local_builds.items():
+            record_map[version] = {
+                "type": "local",
+                "version": version,
+                "branch": local_info.branch,
+                "risk_id": local_info.risk_id,
+                "hash": getattr(local_info, "hash", "") or "",
+                "size_mb": (
+                    float(local_info.size_mb) if local_info.size_mb is not None else 0
+                ),
+                "time": local_info.time or "",
+            }
+
+        # For online builds not already in local builds
+        if self.state.has_fetched and self.state.builds:
+            for build in self.state.builds:
+                if build.version not in record_map:
+                    record_map[build.version] = {
+                        "type": "online",
+                        "version": build.version,
+                        "branch": build.branch,
+                        "risk_id": build.risk_id,
+                        "hash": build.hash or "",
+                        "size_mb": (
+                            float(build.size_mb) if build.size_mb is not None else 0
+                        ),
+                        "time": build.file_mtime or "",
+                    }
+
+        # Define unified sort keys
+        risk_order = {"stable": 0, "candidate": 1, "alpha": 2}
+
+        def parse_time(t):
+            try:
+                return int(t.replace("_", ""))
+            except Exception:
+                return 0
+
         sort_keys = {
-            # No longer using cursor position for selection since we store by version
-            2: lambda x: tuple(map(int, x[0].split("."))),  # Version
-            3: lambda x: "Local",  # Status (always "Local" for local builds)
-            4: lambda x: x[1].branch or "",  # Branch
-            5: lambda x: x[1].risk_id or "",  # Type
-            6: lambda x: getattr(x[1], "hash", "") or "",  # Hash
-            7: lambda x: x[1].size_mb or 0,  # Size
-            8: lambda x: x[1].time or "",  # Build Date
+            2: lambda d: (
+                0 if d["type"] == "local" else 1,
+                d["version"],
+            ),  # Status (sort by type, then version)
+            3: lambda d: (d["branch"] or "").lower(),  # Branch
+            4: lambda d: (
+                _RISK_ORDER.get(d["risk_id"], 99),
+                d["risk_id"] or "",
+            ),  # Type
+            5: lambda d: d["hash"] or "",  # Hash
+            6: lambda d: d["size_mb"],  # Size (already float)
+            7: lambda d: parse_time(d["time"]) if d["time"] else 0,  # Build Date/Time
         }
 
-        # Use the appropriate sort key if defined, otherwise default to version
-        sort_key = sort_keys.get(self.state.sort_column, sort_keys[2])
+        column = self.state.sort_column
+        key_func = self.SORT_KEYS.get(
+            column, self.SORT_KEYS.get(1)  # Default to version sort key function
+        )
+        reverse = self.state.sort_reverse
 
-        # Sort the list
-        local_build_list.sort(key=sort_key, reverse=self.state.sort_reverse)
+        unified_records = list(record_map.values())
+        unified_records.sort(key=key_func, reverse=reverse)
 
-        return local_build_list
+        # Return list of (type, version)
+        return [(record["type"], record["version"]) for record in unified_records]
 
     def _get_style_for_risk_id(self, risk_id: Optional[str]) -> Text:
         """Get styled text for risk ID.
@@ -590,12 +545,7 @@ class BlenderTUI:
         if not risk_id:
             return Text("")
 
-        risk_styles = {
-            "stable": "blue",
-            "alpha": "magenta",
-            "candidate": "cyan",
-        }
-
+        risk_styles = {"stable": "blue", "alpha": "magenta", "candidate": "cyan"}
         style = risk_styles.get(risk_id, "")
         return Text(risk_id, style=style)
 
@@ -725,7 +675,7 @@ class BlenderTUI:
             return None
 
         # Get the build info from the cursor position
-        build_type, _, version = combined_build_list[self.state.cursor_position]
+        build_type, version = combined_build_list[self.state.cursor_position]
 
         # Check if this version exists locally
         if version not in self.state.local_builds:
@@ -799,42 +749,6 @@ class BlenderTUI:
                     return dir_path
 
         return None
-
-    def sort_builds(self, builds: List[BlenderBuild]) -> List[BlenderBuild]:
-        """Sort builds based on current sort configuration.
-
-        Args:
-            builds: List of builds to sort
-
-        Returns:
-            Sorted list of builds
-        """
-        if not builds:
-            return []
-
-        # Make a copy to not modify the original list
-        sorted_builds = builds.copy()
-
-        # Define sort keys for different columns
-        sort_keys = {
-            # Adjusted column indices (after removing # column)
-            # No longer using cursor position for selection since we store by version
-            2: lambda b: tuple(map(int, b.version.split("."))),  # Version
-            3: lambda b: "Online",  # Status (always "Online" for online builds)
-            4: lambda b: b.branch,  # Branch
-            5: lambda b: b.risk_id,  # Type
-            6: lambda b: b.hash or "",  # Hash - default to empty string if None
-            7: lambda b: b.size_mb,  # Size
-            8: lambda b: b.file_mtime,  # Build Date
-        }
-
-        # Use the appropriate sort key if defined, otherwise don't sort
-        if self.state.sort_column in sort_keys:
-            sorted_builds.sort(
-                key=sort_keys[self.state.sort_column], reverse=self.state.sort_reverse
-            )
-
-        return sorted_builds
 
     def run(self) -> None:
         """Run the TUI application."""
@@ -1050,39 +964,6 @@ class BlenderTUI:
         self.display_tui(full_clear=False)
         return True
 
-    def _get_combined_build_list(self) -> List[Tuple[str, int, str]]:
-        """Get a combined list of all builds (local and online).
-
-        Returns:
-            List of tuples (type, index, version)
-        """
-        combined_list = []
-
-        # First add all local builds
-        for i, (version, build_info) in enumerate(self._get_sorted_local_build_list()):
-            combined_list.append(("local", i, version))
-
-        # Track local versions to avoid duplicates
-        local_versions = set(version for _, _, version in combined_list)
-
-        # Then add online builds that aren't local
-        if self.state.has_fetched and self.state.builds:
-            sorted_builds = self.sort_builds(self.state.builds)
-            for i, build in enumerate(sorted_builds):
-                if build.version not in local_versions:
-                    combined_list.append(("online", i, build.version))
-
-        # Sort the entire list by version if sorting by version
-        if self.state.sort_column == 2:  # Version column (adjusted index)
-
-            def version_sort_key(item):
-                # Split version string into components and convert to integers
-                return tuple(map(int, item[2].split(".")))
-
-            combined_list.sort(key=version_sort_key, reverse=self.state.sort_reverse)
-
-        return combined_list
-
     def _move_column_left(self) -> bool:
         """Select previous column.
 
@@ -1090,41 +971,30 @@ class BlenderTUI:
             True to continue running
         """
         # Get the current visible columns
-        base_columns = [
-            "",  # Selection column
-            "Version",
-            "Status",
-            "Branch",
-            "Type",
-            "Hash",
-            "Size",
-            "Build Date",  # or Speed
-        ]
-        visible_columns = self._get_responsive_columns(base_columns)
+        visible_columns = self._get_responsive_columns(list(self.BASE_COLUMNS))
 
         # Map sort column indices to visible column indices
-        column_indices = [0, 1, 2]  # Selection, Version, Status are always visible
-        if "Branch" in visible_columns:
-            column_indices.append(3)
-        column_indices.append(4)  # Type is always visible
-        if "Hash" in visible_columns:
-            column_indices.append(5)
-        if "Size" in visible_columns:
-            column_indices.append(6)
-        column_indices.append(7)  # Date/Speed is always visible
+        visible_sortable_indices = [
+            idx
+            for idx, name in enumerate(self.BASE_COLUMNS)
+            if name in visible_columns and idx in self.SORT_KEYS
+        ]
 
-        # Find the current column in the visible column indices
+        if not visible_sortable_indices:
+            return True  # No sortable columns visible
+
+        # Find the current sort column's position in the visible sortable list
         try:
-            current_idx = column_indices.index(self.state.sort_column)
-            if current_idx > 0:
+            current_pos = visible_sortable_indices.index(self.state.sort_column)
+            if current_pos > 0:
                 # Move to the previous visible column
-                self.state.sort_column = column_indices[current_idx - 1]
+                self.state.sort_column = visible_sortable_indices[current_pos - 1]
                 # Use partial screen update to reduce flashing
                 self.display_tui(full_clear=False)
         except ValueError:
             # If the current sort column isn't in our visible columns,
             # reset to a default visible column
-            self.state.sort_column = column_indices[-1]
+            self.state.sort_column = visible_sortable_indices[0]
             self.display_tui(full_clear=False)
 
         return True
@@ -1136,41 +1006,30 @@ class BlenderTUI:
             True to continue running
         """
         # Get the current visible columns
-        base_columns = [
-            "",  # Selection column
-            "Version",
-            "Status",
-            "Branch",
-            "Type",
-            "Hash",
-            "Size",
-            "Build Date",  # or Speed
-        ]
-        visible_columns = self._get_responsive_columns(base_columns)
+        visible_columns = self._get_responsive_columns(list(self.BASE_COLUMNS))
 
         # Map sort column indices to visible column indices
-        column_indices = [0, 1, 2]  # Selection, Version, Status are always visible
-        if "Branch" in visible_columns:
-            column_indices.append(3)
-        column_indices.append(4)  # Type is always visible
-        if "Hash" in visible_columns:
-            column_indices.append(5)
-        if "Size" in visible_columns:
-            column_indices.append(6)
-        column_indices.append(7)  # Date/Speed is always visible
+        visible_sortable_indices = [
+            idx
+            for idx, name in enumerate(self.BASE_COLUMNS)
+            if name in visible_columns and idx in self.SORT_KEYS
+        ]
 
-        # Find the current column in the visible column indices
+        if not visible_sortable_indices:
+            return True  # No sortable columns visible
+
+        # Find the current sort column's position in the visible sortable list
         try:
-            current_idx = column_indices.index(self.state.sort_column)
-            if current_idx < len(column_indices) - 1:
+            current_pos = visible_sortable_indices.index(self.state.sort_column)
+            if current_pos < len(visible_sortable_indices) - 1:
                 # Move to the next visible column
-                self.state.sort_column = column_indices[current_idx + 1]
+                self.state.sort_column = visible_sortable_indices[current_pos + 1]
                 # Use partial screen update to reduce flashing
                 self.display_tui(full_clear=False)
         except ValueError:
             # If the current sort column isn't in our visible columns,
             # reset to a default visible column
-            self.state.sort_column = column_indices[0]
+            self.state.sort_column = visible_sortable_indices[0]
             self.display_tui(full_clear=False)
 
         return True
@@ -1198,7 +1057,7 @@ class BlenderTUI:
         # Get the version of the build at the current cursor position
         combined_build_list = self._get_combined_build_list()
         if 0 <= self.state.cursor_position < len(combined_build_list):
-            _, _, version = combined_build_list[self.state.cursor_position]
+            _, version = combined_build_list[self.state.cursor_position]
 
             # Toggle selection based on version instead of cursor position
             if version in self.state.selected_builds:
@@ -1268,7 +1127,7 @@ class BlenderTUI:
                         ):
                             builds_to_download.append(build)
                             # Find the index in the combined list for progress tracking
-                            for i, (_, _, v) in enumerate(combined_build_list):
+                            for i, (_, v) in enumerate(combined_build_list):
                                 if v == version:
                                     download_indices.append(i)
                                     break
@@ -1276,9 +1135,7 @@ class BlenderTUI:
         else:
             # If no builds are selected, download the one under the cursor
             if 0 <= self.state.cursor_position < len(combined_build_list):
-                build_type, orig_idx, version = combined_build_list[
-                    self.state.cursor_position
-                ]
+                build_type, version = combined_build_list[self.state.cursor_position]
                 # Find the corresponding online build
                 for build in self.state.builds:
                     if build.version == version:
@@ -1579,7 +1436,7 @@ class BlenderTUI:
         else:
             # No selection, delete the build at the current cursor
             if 0 <= self.state.cursor_position < len(combined_build_list):
-                build_type, _, version = combined_build_list[self.state.cursor_position]
+                build_type, version = combined_build_list[self.state.cursor_position]
                 if version in self.state.local_builds:
                     versions_to_delete.append(version)
 
@@ -1648,124 +1505,6 @@ class BlenderTUI:
         self.display_tui()
 
         return True
-
-    def _get_current_build_list(
-        self,
-    ) -> Union[List[BlenderBuild], List[Tuple[str, LocalBuildInfo]]]:
-        """Get the currently visible build list based on view state.
-
-        Returns:
-            Either a list of BlenderBuild objects or a list of (version, LocalBuildInfo) tuples
-        """
-        if self.state.has_fetched:
-            # When looking at online builds, we need the sorted list
-            return self.sort_builds(self.state.builds)
-        else:
-            # When looking at local builds, get the sorted list
-            return self._get_sorted_local_build_list()
-
-    def display_download_progress(self) -> None:
-        """Optimized display method for download progress updates.
-        Only updates the essential elements to minimize screen updates and flashing.
-        """
-        # Position cursor at home position without clearing the screen
-        print("\033[H", end="", flush=True)
-        print("\033[?25l", end="", flush=True)
-
-        # Update terminal size before rendering
-        self.terminal_width, self.terminal_height = self.console.size
-
-        # Print navigation bar at the top
-        self.print_navigation_bar()
-
-        # Create a minimalist table just showing downloads
-        base_columns = [
-            "",  # Selection column
-            "Version",
-            "Status",
-            "Branch",
-            "Type",
-            "Hash",
-            "Size",
-        ]
-
-        # Apply responsive column hiding based on terminal width
-        column_names = self._get_responsive_columns(base_columns)
-
-        # Always add the Speed column for downloads
-        column_names.append("Speed")
-
-        table = self._create_table(column_names)
-
-        # Only add rows for builds being downloaded
-        combined_build_list = self._get_combined_build_list()
-
-        # For each build that's being downloaded
-        for i, (build_type, original_idx, version) in enumerate(combined_build_list):
-            if version in self.state.download_progress:
-                selected = "[X]"  # Downloaded builds are selected
-                row_style = ""
-
-                # Find the build info
-                online_build = None
-                for build in self.state.builds:
-                    if build.version == version:
-                        online_build = build
-                        break
-
-                if online_build:
-                    # Get download progress and speed
-                    download_progress = self.state.download_progress.get(version, 0)
-                    download_speed = self.state.download_speed.get(version, "")
-
-                    # Set values for the table row
-                    version_col = Text(f"↓ Blender {version}", style="green bold")
-                    status_text = Text("Downloading", style="green bold")
-                    type_text = Text("downloading", style="green bold")
-                    hash_text = online_build.hash or ""
-                    size_text = f"{download_progress:.0f}%"
-                    date_text = download_speed
-
-                    # Prepare row data
-                    row_data = [
-                        selected,
-                        version_col,
-                        status_text,
-                    ]
-
-                    # Only add Branch column if it's in our responsive columns
-                    if "Branch" in column_names:
-                        row_data.append(str(online_build.branch))
-
-                    row_data.append(type_text)
-
-                    # Only add Hash column if it's in our responsive columns
-                    if "Hash" in column_names:
-                        row_data.append(str(hash_text))
-
-                    # Only add Size column if it's in our responsive columns
-                    if "Size" in column_names:
-                        row_data.append(str(size_text))
-
-                    row_data.append(str(date_text))
-
-                    table.add_row(*row_data, style=row_style)
-
-        # Print the table
-        self.console.print(table)
-
-        # Display legend below the table
-        legend = Text()
-        legend.append("■ Current Local Version (fetched)", style="yellow")
-        legend.append("   ")
-        legend.append("■ Update Available", style="green")
-        self.console.print(legend)
-
-        # Add cancel download hint
-        self.console.print("Press any key to cancel download", style="dim")
-
-        # Clear any remaining content
-        self._clear_remaining_lines()
 
     def _display_centered_panel(self, panel) -> None:
         """Display a panel centered both horizontally and vertically.
