@@ -530,6 +530,7 @@ def _create_version_info(extract_path: Path, build: BlenderBuild) -> None:
         "mtime_formatted": build.mtime_formatted,
         "download_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "directory_size": directory_size,  # Add the calculated directory size
+        "hash": build.hash,  # Add hash information
     }
 
     # Write the information to a JSON file

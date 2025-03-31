@@ -16,6 +16,7 @@ class LocalBuildInfo:
     build_date: Optional[str] = None
     download_date: Optional[str] = None
     directory_size: Optional[int] = None  # Size of the build directory in bytes
+    hash: Optional[str] = None  # Git commit hash
 
     @property
     def size_mb(self) -> Optional[float]:
@@ -40,6 +41,7 @@ class BlenderBuild:
     url: str
     platform: str
     architecture: str
+    hash: Optional[str] = None  # Add hash field
 
     @property
     def size_mb(self) -> float:
@@ -69,4 +71,5 @@ class BlenderBuild:
             url=data["url"],
             platform=data["platform"],
             architecture=data["architecture"],
+            hash=data.get("hash", None),  # Get hash from API data
         )

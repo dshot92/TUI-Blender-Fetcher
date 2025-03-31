@@ -43,8 +43,6 @@ class UIState:
         2  # Default sort on Version column (index 2 after removing cursor column)
     )
     sort_reverse: bool = True  # Sort descending by default
-    # Dictionary to store build numbers that persist through sorting
-    build_numbers: Dict[str, int] = field(default_factory=dict)
     # Download progress tracking
     download_progress: Dict[str, float] = field(default_factory=dict)
     download_speed: Dict[str, str] = field(default_factory=dict)
@@ -68,18 +66,6 @@ class BlenderTUI:
 
         # Load initial local builds
         self.state.local_builds = get_local_builds()
-        self._initialize_build_numbers()
-
-    def _initialize_build_numbers(self) -> None:
-        """Initialize build numbers based on available local builds."""
-        if not self.state.build_numbers and self.state.local_builds:
-            sorted_local_versions = sorted(
-                self.state.local_builds.keys(),
-                key=lambda v: tuple(map(int, v.split("."))),
-                reverse=True,
-            )
-            for i, version in enumerate(sorted_local_versions):
-                self.state.build_numbers[version] = i + 1
 
     def _handle_resize(self, *args) -> None:
         """Handle terminal resize events by setting a flag to refresh the UI."""
@@ -121,16 +107,15 @@ class BlenderTUI:
     def print_build_table(self) -> None:
         """Print a table of available Blender builds."""
         self.state.local_builds = get_local_builds()
-        self._initialize_build_numbers()
 
         # Column names for sorting indication
         column_names = [
-            "#",
-            "",
+            "",  # Selection column
             "Version",
-            "Status",  # New column for local/online status
+            "Status",
             "Branch",
             "Type",
+            "Hash",
             "Size",
             "Build Date",
         ]
@@ -150,7 +135,6 @@ class BlenderTUI:
         # Add all builds to the table
         for i, (build_type, original_idx, version) in enumerate(combined_build_list):
             selected = "[X]" if i in self.state.selected_builds else "[ ]"
-            build_num = self.state.build_numbers.get(version, i + 1)
             row_style = "reverse bold" if i == self.state.cursor_position else ""
 
             if build_type == "local":
@@ -167,6 +151,9 @@ class BlenderTUI:
                 version_style = "yellow"
                 version_prefix = "■ "
                 status_text = Text("Local", style="yellow bold")
+
+                # Hash information (might be None for local builds)
+                hash_text = getattr(build_info, "hash", "") or ""
 
                 # Get size information
                 size_text = ""
@@ -188,15 +175,17 @@ class BlenderTUI:
                                     "green"  # Change to green for update available
                                 )
                                 status_text = Text("Update", style="green bold")
+                                # Show online hash if an update is available
+                                hash_text = online_build.hash or ""
 
                 table.add_row(
-                    str(build_num),
                     selected,
                     Text(f"{version_prefix}Blender {version}", style=version_style),
-                    status_text,  # Add status column
+                    status_text,
                     build_info.branch or "",
                     type_text,
-                    size_text,  # Add size information for local builds
+                    hash_text,
+                    size_text,
                     build_date,
                     style=row_style,
                 )
@@ -213,6 +202,7 @@ class BlenderTUI:
 
                 type_text = self._get_style_for_risk_id(online_build.risk_id)
                 status_text = Text("Online", style="blue bold")
+                hash_text = online_build.hash or ""  # Add hash
 
                 # Check if this build is being downloaded
                 is_downloading = version in self.state.download_progress
@@ -232,12 +222,12 @@ class BlenderTUI:
                     version_col = Text(f"  Blender {version}", style="default")
 
                 table.add_row(
-                    str(build_num),
                     selected,
                     version_col,
-                    status_text,  # Add status column
+                    status_text,
                     online_build.branch,
                     type_text,
+                    hash_text,
                     size_text,
                     date_text,
                     style=row_style,
@@ -269,26 +259,26 @@ class BlenderTUI:
 
         for i, col_name in enumerate(column_names):
             # Add sort indicator to column header
-            if i == self.state.sort_column:
+            if i + 1 == self.state.sort_column:  # Adjust index for removed column
                 col_name = f"{col_name} {'↑' if not self.state.sort_reverse else '↓'}"
 
             # Add columns in order with left alignment
-            if i == 0:  # Number column
-                table.add_column(
-                    col_name, justify="center", width=2
-                )  # Will fit build numbers
-            elif i == 1:  # Selected column
+            if i == 0:  # Selected column
                 table.add_column(
                     col_name, justify="center", width=2
                 )  # Will fit [X] or [ ]
-            elif i == 2:  # Version column
+            elif i == 1:  # Version column
                 table.add_column(col_name, justify="left")  # Variable width
-            elif i == 3:  # Status column
-                table.add_column(col_name, justify="left", width=6)  # New status column
-            elif i == 4:  # Branch column
+            elif i == 2:  # Status column
+                table.add_column(col_name, justify="left", width=6)  # Status column
+            elif i == 3:  # Branch column
                 table.add_column(col_name, justify="center")  # Will fit branch names
-            elif i == 5:  # Type column
+            elif i == 4:  # Type column
                 table.add_column(col_name, justify="center")  # Will fit risk types
+            elif i == 5:  # Hash column
+                table.add_column(
+                    col_name, justify="center", width=12
+                )  # Will fit hash values
             elif i == 6:  # Size column
                 table.add_column(col_name, justify="center")  # Will fit size values
             elif i == 7:  # Build Date column
@@ -306,8 +296,8 @@ class BlenderTUI:
 
         for i, build in enumerate(sorted_builds):
             selected = "[X]" if i in self.state.selected_builds else "[ ]"
-            build_num = self.state.build_numbers.get(build.version, i + 1)
             type_text = self._get_style_for_risk_id(build.risk_id)
+            hash_text = build.hash or ""  # Add hash column
 
             # Check if this build is being downloaded
             is_downloading = build.version in self.state.download_progress
@@ -347,11 +337,12 @@ class BlenderTUI:
                 date_text = build.mtime_formatted
 
             table.add_row(
-                str(build_num),
                 selected,
                 version_col,
+                Text("Online", style="blue bold"),  # Status
                 build.branch,
                 type_text,
+                hash_text,
                 size_text,
                 date_text,
                 style=row_style,
@@ -375,7 +366,6 @@ class BlenderTUI:
 
         for i, (version, build_info) in enumerate(local_build_list):
             selected = "[X]" if i in self.state.selected_builds else "[ ]"
-            build_num = self.state.build_numbers.get(version, i + 1)
             row_style = "reverse bold" if i == self.state.cursor_position else ""
             type_text = (
                 self._get_style_for_risk_id(build_info.risk_id)
@@ -383,16 +373,20 @@ class BlenderTUI:
                 else ""
             )
 
+            # Get hash if available
+            hash_text = getattr(build_info, "hash", "") or ""
+
             # Format build date nicely if available
             build_date = self._format_build_date(build_info)
 
             table.add_row(
-                str(build_num),
                 selected,
-                Text(f"Blender {version}"),
+                Text(f"■ Blender {version}", style="yellow"),
+                Text("Local", style="yellow bold"),  # Status
                 build_info.branch or "",
                 type_text,
-                "",  # Size (unavailable for locals)
+                hash_text,
+                build_info.size_mb or "",  # Size may be None
                 build_date,
                 style=row_style,
             )
@@ -405,13 +399,17 @@ class BlenderTUI:
         """
         local_build_list = list(self.state.local_builds.items())
 
-        # Define sort key functions for different columns
+        # Define sort key functions for different columns (adjusted for removed # column)
         sort_keys = {
+            1: lambda x: self.state.cursor_position
+            in self.state.selected_builds,  # Selected
             2: lambda x: tuple(map(int, x[0].split("."))),  # Version
             3: lambda x: "Local",  # Status (always "Local" for local builds)
             4: lambda x: x[1].branch or "",  # Branch
             5: lambda x: x[1].risk_id or "",  # Type
-            7: lambda x: x[1].time or "",  # Build Date
+            6: lambda x: getattr(x[1], "hash", "") or "",  # Hash
+            7: lambda x: x[1].size_mb or 0,  # Size
+            8: lambda x: x[1].time or "",  # Build Date
         }
 
         # Use the appropriate sort key if defined, otherwise default to version
@@ -602,10 +600,29 @@ class BlenderTUI:
         """
         download_dir = Path(AppConfig.DOWNLOAD_PATH)
 
-        # Look for the exact directory that has this version
-        for dir_path in download_dir.glob(f"blender-{version}*"):
-            if dir_path.is_dir():
+        # Get all directories that start with "blender-"
+        all_build_dirs = list(download_dir.glob("blender-*"))
+
+        # Filter to find those matching our version
+        for dir_path in all_build_dirs:
+            if not dir_path.is_dir():
+                continue
+
+            # Extract the version from the directory name
+            dir_name = dir_path.name
+            if dir_name.startswith(f"blender-{version}"):
+                # Direct match at the start
                 return dir_path
+            elif "-" in dir_name and len(dir_name.split("-")) > 1:
+                # Check if the part after "blender-" is our version
+                dir_version = dir_name.split("-")[1]
+
+                # Handle case where version might contain a +
+                if "+" in dir_version:
+                    dir_version = dir_version.split("+")[0]
+
+                if dir_version == version:
+                    return dir_path
 
         return None
 
@@ -626,15 +643,16 @@ class BlenderTUI:
 
         # Define sort keys for different columns
         sort_keys = {
-            # Numbers are just the position, so no need for column 0
+            # Adjusted column indices (after removing # column)
             1: lambda b: self.state.cursor_position
             in self.state.selected_builds,  # Selected
             2: lambda b: tuple(map(int, b.version.split("."))),  # Version
             3: lambda b: "Online",  # Status (always "Online" for online builds)
             4: lambda b: b.branch,  # Branch
             5: lambda b: b.risk_id,  # Type
-            6: lambda b: b.size_mb,  # Size
-            7: lambda b: b.file_mtime,  # Build Date
+            6: lambda b: b.hash or "",  # Hash - default to empty string if None
+            7: lambda b: b.size_mb,  # Size
+            8: lambda b: b.file_mtime,  # Build Date
         }
 
         # Use the appropriate sort key if defined, otherwise don't sort
@@ -774,10 +792,6 @@ class BlenderTUI:
             if key_lower in key_handlers:
                 return key_handlers[key_lower]()
 
-        # Handle number keys for selection
-        if isinstance(key, str) and key.isdigit():
-            self._handle_number_selection(int(key))
-
         return True  # Continue running by default
 
     def _handle_settings_page_input(self, key: str) -> bool:
@@ -873,40 +887,32 @@ class BlenderTUI:
         Returns:
             List of tuples (type, index, version)
         """
-        # Create an unsorted combined list first
-        unsorted_list = []
+        combined_list = []
 
-        # Add local builds
-        local_build_list = self._get_sorted_local_build_list()
-        for i, local_item in enumerate(local_build_list):
-            version = local_item[0]
-            unsorted_list.append(("local", i, version))
+        # First add all local builds
+        for i, (version, build_info) in enumerate(self._get_sorted_local_build_list()):
+            combined_list.append(("local", i, version))
 
-        # Add online builds if fetched
+        # Track local versions to avoid duplicates
+        local_versions = set(version for _, _, version in combined_list)
+
+        # Then add online builds that aren't local
         if self.state.has_fetched and self.state.builds:
             sorted_builds = self.sort_builds(self.state.builds)
             for i, build in enumerate(sorted_builds):
-                if build.version in self.state.local_builds:
-                    # Skip builds that are already shown as local
-                    continue
-                unsorted_list.append(("online", i, build.version))
+                if build.version not in local_versions:
+                    combined_list.append(("online", i, build.version))
 
-        # Sort the combined list by version number
-        def version_sort_key(item):
-            # Split version string into components and convert to integers
-            return tuple(map(int, item[2].split(".")))
+        # Sort the entire list by version if sorting by version
+        if self.state.sort_column == 2:  # Version column (adjusted index)
 
-        # Sort according to current sort settings
-        if self.state.sort_column == 2:  # Version column
-            # Sort by version
-            combined_build_list = sorted(
-                unsorted_list, key=version_sort_key, reverse=self.state.sort_reverse
-            )
-        else:
-            # For other columns, maintain existing sort
-            combined_build_list = unsorted_list
+            def version_sort_key(item):
+                # Split version string into components and convert to integers
+                return tuple(map(int, item[2].split(".")))
 
-        return combined_build_list
+            combined_list.sort(key=version_sort_key, reverse=self.state.sort_reverse)
+
+        return combined_list
 
     def _move_column_left(self) -> bool:
         """Select previous column.
@@ -914,7 +920,7 @@ class BlenderTUI:
         Returns:
             True to continue running
         """
-        if self.state.sort_column > 0:
+        if self.state.sort_column > 1:  # Start from column 1 now (Selection)
             self.state.sort_column -= 1
             self.display_tui()
         return True
@@ -925,7 +931,7 @@ class BlenderTUI:
         Returns:
             True to continue running
         """
-        if self.state.sort_column < 7:  # Updated max column index
+        if self.state.sort_column < 8:  # Adjust max column index (was 7)
             self.state.sort_column += 1
             self.display_tui()
         return True
@@ -1220,50 +1226,6 @@ class BlenderTUI:
 
         return False
 
-    def _handle_number_selection(self, num: int) -> None:
-        """Handle selection by number key.
-
-        Args:
-            num: The number key pressed
-        """
-        # Only move cursor if we have a valid build list
-        if not self._has_visible_builds():
-            return
-
-        # Get the combined list
-        combined_build_list = self._get_combined_build_list()
-
-        # Find the build with the matching number in the current display order
-        for i, item in enumerate(combined_build_list):
-            build_type, _, version = item
-
-            build_num = self.state.build_numbers.get(version)
-            if build_num == num:
-                self.state.cursor_position = i
-                # Toggle selection state
-                if i in self.state.selected_builds:
-                    self.state.selected_builds.remove(i)
-                else:
-                    self.state.selected_builds.add(i)
-                break
-
-        self.display_tui()
-
-    def _get_current_build_list(
-        self,
-    ) -> Union[List[BlenderBuild], List[Tuple[str, LocalBuildInfo]]]:
-        """Get the currently visible build list based on view state.
-
-        Returns:
-            Either a list of BlenderBuild objects or a list of (version, LocalBuildInfo) tuples
-        """
-        if self.state.has_fetched:
-            # When looking at online builds, we need the sorted list
-            return self.sort_builds(self.state.builds)
-        else:
-            # When looking at local builds, get the sorted list
-            return self._get_sorted_local_build_list()
-
     def _edit_current_setting(self) -> bool:
         """Edit the currently selected setting.
 
@@ -1335,181 +1297,91 @@ class BlenderTUI:
             return True
 
         # Get the complete list of builds (both local and online if fetched)
-        combined_build_list = []
+        combined_build_list = self._get_combined_build_list()
 
-        # First add local builds
-        local_build_list = self._get_sorted_local_build_list()
-        for i, local_item in enumerate(local_build_list):
-            combined_build_list.append(
-                ("local", i, local_item[0])
-            )  # type, index, version
-
-        # Then add online builds if fetched
-        if self.state.has_fetched and self.state.builds:
-            sorted_builds = self.sort_builds(self.state.builds)
-            for i, build in enumerate(sorted_builds):
-                if build.version not in self.state.local_builds:
-                    # Skip online builds that aren't installed locally
-                    continue
-                # Offset index by length of local builds to match cursor position
-                combined_build_list.append(
-                    ("online", i + len(local_build_list), build.version)
-                )
-
+        versions_to_delete = []
         if self.state.selected_builds:
             # Delete all selected builds
-            selected_indices = sorted(self.state.selected_builds)
-            versions_to_delete = []
-            for idx in selected_indices:
+            for idx in self.state.selected_builds:
                 if 0 <= idx < len(combined_build_list):
                     build_type, _, version = combined_build_list[idx]
                     if version in self.state.local_builds:
                         versions_to_delete.append(version)
-
-            if not versions_to_delete:
-                return True
-
-            # Show deletion prompt as a panel
-            from rich.panel import Panel
-            from rich.align import Align
-
-            prompt_text = (
-                f"Delete Blender builds: {', '.join(versions_to_delete)}? (y/n)"
-            )
-            panel = Panel(
-                Align.center(prompt_text),
-                title="Confirm Deletion",
-                border_style="red bold",
-                width=min(len(prompt_text) + 10, 80),
-            )
-
-            # Clear screen and show panel instead of table
-            self.clear_screen()
-            self.console.print(panel)
-            self.print_navigation_bar()
-
-            # Get user confirmation
-            while True:
-                key = get_keypress(timeout=None)
-                if key is not None:
-                    break
-
-            if key.lower() != "y":
-                self.display_tui()  # Redraw the UI
-                return True
-
-            # Perform deletion
-            overall_success = True
-            for version in versions_to_delete:
-                success = delete_local_build(version)
-                if not success:
-                    overall_success = False
-
-            # Update local builds data
-            self.state.selected_builds.clear()
-            self.state.local_builds = get_local_builds()
-            max_index = len(self._get_combined_build_list()) - 1
-            if max_index < 0:
-                max_index = 0
-            self.state.cursor_position = min(self.state.cursor_position, max_index)
-
-            # Show result as a notification panel
-            result_text = (
-                f"Deleted Blender builds: {', '.join(versions_to_delete)}"
-                if overall_success
-                else "Failed to delete one or more builds"
-            )
-            result_panel = Panel(
-                Align.center(result_text),
-                title="Result",
-                border_style="green bold" if overall_success else "red bold",
-                width=min(len(result_text) + 10, 80),
-            )
-
-            # Clear screen and show result panel
-            self.clear_screen()
-            self.console.print(result_panel)
-
-            # Brief pause before returning to normal view
-            time.sleep(1.5)
-            self.display_tui()
-
-            return True
         else:
-            # No multiple selection, delete the build at the current cursor
-            if self.state.cursor_position < 0 or self.state.cursor_position >= len(
-                combined_build_list
-            ):
-                return True
+            # No selection, delete the build at the current cursor
+            if 0 <= self.state.cursor_position < len(combined_build_list):
+                build_type, _, version = combined_build_list[self.state.cursor_position]
+                if version in self.state.local_builds:
+                    versions_to_delete.append(version)
 
-            _, _, version = combined_build_list[self.state.cursor_position]
-
-            # Only allow deletion if it's a local build
-            if version not in self.state.local_builds:
-                return True
-
-            # Show deletion confirmation panel
-            from rich.panel import Panel
-            from rich.align import Align
-
-            prompt_text = f"Delete Blender {version}? (y/n)"
-            panel = Panel(
-                Align.center(prompt_text),
-                title="Confirm Deletion",
-                border_style="red bold",
-                width=min(len(prompt_text) + 10, 80),
-            )
-
-            # Clear screen and show panel instead of table
-            self.clear_screen()
-            self.console.print(panel)
-            self.print_navigation_bar()
-
-            # Get user confirmation
-            while True:
-                key = get_keypress(timeout=None)
-                if key is not None:
-                    break
-
-            if key.lower() != "y":
-                self.display_tui()  # Redraw the UI
-                return True
-
-            # Perform deletion
-            success = delete_local_build(version)
-
-            # Update state
-            if success and self.state.cursor_position in self.state.selected_builds:
-                self.state.selected_builds.remove(self.state.cursor_position)
-
-            self.state.local_builds = get_local_builds()
-            max_index = len(self._get_combined_build_list()) - 1
-            if max_index < 0:
-                max_index = 0
-            self.state.cursor_position = min(self.state.cursor_position, max_index)
-
-            # Show result panel
-            result_text = (
-                f"Deleted Blender {version}"
-                if success
-                else f"Failed to delete Blender {version}"
-            )
-            result_panel = Panel(
-                Align.center(result_text),
-                title="Result",
-                border_style="green bold" if success else "red bold",
-                width=min(len(result_text) + 10, 80),
-            )
-
-            # Clear screen and show result panel
-            self.clear_screen()
-            self.console.print(result_panel)
-
-            # Brief pause before returning to normal view
-            time.sleep(1.5)
-            self.display_tui()
-
+        if not versions_to_delete:
             return True
+
+        # Show deletion confirmation panel
+        from rich.panel import Panel
+        from rich.align import Align
+
+        prompt_text = f"Delete Blender {', '.join(versions_to_delete)}? (y/n)"
+        panel = Panel(
+            Align.center(prompt_text),
+            title="Confirm Deletion",
+            border_style="red bold",
+            width=min(len(prompt_text) + 10, 80),
+        )
+
+        # Clear screen and show panel instead of table
+        self.clear_screen()
+        self.console.print(panel)
+        self.print_navigation_bar()
+
+        # Get user confirmation
+        while True:
+            key = get_keypress(timeout=None)
+            if key is not None:
+                break
+
+        if key.lower() != "y":
+            self.display_tui()  # Redraw the UI
+            return True
+
+        # Perform deletion
+        success = True
+        for version in versions_to_delete:
+            if not delete_local_build(version):
+                success = False
+
+        # Update state
+        self.state.selected_builds.clear()
+        self.state.local_builds = get_local_builds()
+
+        # Update cursor position
+        max_index = len(self._get_combined_build_list()) - 1
+        if max_index < 0:
+            max_index = 0
+        self.state.cursor_position = min(self.state.cursor_position, max_index)
+
+        # Show result panel
+        result_text = (
+            f"Deleted Blender {'builds' if len(versions_to_delete) > 1 else version}"
+            if success
+            else "Failed to delete one or more builds"
+        )
+        result_panel = Panel(
+            Align.center(result_text),
+            title="Result",
+            border_style="green bold" if success else "red bold",
+            width=min(len(result_text) + 10, 80),
+        )
+
+        # Clear screen and show result panel
+        self.clear_screen()
+        self.console.print(result_panel)
+
+        # Brief pause before returning to normal view
+        time.sleep(1.5)
+        self.display_tui()
+
+        return True
 
     def update_build_table_only(self) -> None:
         """Update just the build table without clearing the screen.
@@ -1523,3 +1395,18 @@ class BlenderTUI:
 
         # Print the nav bar
         self.print_navigation_bar()
+
+    def _get_current_build_list(
+        self,
+    ) -> Union[List[BlenderBuild], List[Tuple[str, LocalBuildInfo]]]:
+        """Get the currently visible build list based on view state.
+
+        Returns:
+            Either a list of BlenderBuild objects or a list of (version, LocalBuildInfo) tuples
+        """
+        if self.state.has_fetched:
+            # When looking at online builds, we need the sorted list
+            return self.sort_builds(self.state.builds)
+        else:
+            # When looking at local builds, get the sorted list
+            return self._get_sorted_local_build_list()
