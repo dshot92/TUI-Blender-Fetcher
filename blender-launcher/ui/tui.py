@@ -254,35 +254,39 @@ class BlenderTUI:
         """
         # Use a standard box style from Rich
         from rich import box
+        from rich.text import Text
 
         table = Table(show_header=True, expand=True, box=box.SIMPLE_HEAVY)
 
         for i, col_name in enumerate(column_names):
             # Add sort indicator to column header
             if i + 1 == self.state.sort_column:  # Adjust index for removed column
-                col_name = f"{col_name} {'↑' if not self.state.sort_reverse else '↓'}"
+                sort_indicator = "↑" if not self.state.sort_reverse else "↓"
+                header_text = Text(f"{col_name} {sort_indicator}", style="reverse bold")
+            else:
+                header_text = col_name
 
             # Add columns in order with left alignment
             if i == 0:  # Selected column
                 table.add_column(
-                    col_name, justify="center", width=2
+                    header_text, justify="center", width=2
                 )  # Will fit [X] or [ ]
             elif i == 1:  # Version column
-                table.add_column(col_name, justify="left")  # Variable width
+                table.add_column(header_text, justify="left")  # Variable width
             elif i == 2:  # Status column
-                table.add_column(col_name, justify="left", width=6)  # Status column
+                table.add_column(header_text, justify="left", width=6)  # Status column
             elif i == 3:  # Branch column
-                table.add_column(col_name, justify="center")  # Will fit branch names
+                table.add_column(header_text, justify="center")  # Will fit branch names
             elif i == 4:  # Type column
-                table.add_column(col_name, justify="center")  # Will fit risk types
+                table.add_column(header_text, justify="center")  # Will fit risk types
             elif i == 5:  # Hash column
                 table.add_column(
-                    col_name, justify="center", width=12
+                    header_text, justify="center", width=12
                 )  # Will fit hash values
             elif i == 6:  # Size column
-                table.add_column(col_name, justify="center")  # Will fit size values
+                table.add_column(header_text, justify="center")  # Will fit size values
             elif i == 7:  # Build Date column
-                table.add_column(col_name, justify="center")  # Will fit dates
+                table.add_column(header_text, justify="center")  # Will fit dates
 
         return table
 
