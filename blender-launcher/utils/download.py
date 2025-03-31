@@ -97,7 +97,12 @@ def download_build(
         if not _extract_archive(download_path, download_dir, console):
             return None
 
-        # Create version information file
+        # Verify the extraction was successful and the directory exists
+        if not extract_path.exists() or not extract_path.is_dir():
+            # console.print(f"Extraction failed: Directory {extract_path} not found", style="bold red")
+            return None
+
+        # Create version information file only after extraction is verified successful
         _create_version_info(extract_path, build)
 
         # Clean up the archive file
@@ -248,17 +253,22 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
 
                 # console.print(f"Extraction of {filename}...")
                 if _extract_archive(download_path, download_dir, console):
-                    # Create version information file
-                    _create_version_info(extract_path, build)
+                    # Verify the extraction was successful and the directory exists
+                    if not extract_path.exists() or not extract_path.is_dir():
+                        # console.print(f"Extraction failed: Directory {extract_path} not found", style="bold red")
+                        pass
+                    else:
+                        # Create version information file only after extraction is verified successful
+                        _create_version_info(extract_path, build)
 
-                    # Clean up the archive file
-                    download_path.unlink()
-                    # console.print(f"Cleaned up archive file for {build.version}")
+                        # Clean up the archive file
+                        download_path.unlink()
+                        # console.print(f"Cleaned up archive file for {build.version}")
 
-                    # console.print(
-                    #     f"Extraction of Blender {build.version} completed successfully"
-                    # )
-                    completed_versions.append(build.version)
+                        # console.print(
+                        #     f"Extraction of Blender {build.version} completed successfully"
+                        # )
+                        completed_versions.append(build.version)
             except Exception as e:
                 # console.print(
                 #     f"Extraction of {build.version} failed: {e}", style="bold red"
@@ -514,33 +524,48 @@ def _create_version_info(extract_path: Path, build: BlenderBuild) -> None:
         extract_path: Path to the extracted build directory
         build: Build information to save
     """
-    if not extract_path.exists():
+    # Perform a more thorough check to ensure the extraction was successful
+    if not extract_path.exists() or not extract_path.is_dir():
         return
 
-    # Calculate directory size
-    directory_size = _calculate_directory_size(extract_path)
+    # Check if the blender executable exists, confirming it's a valid Blender installation
+    blender_executable = extract_path / "blender"
+    if not blender_executable.exists():
+        return
 
-    # Create a dictionary with all build information
-    build_info = {
-        "version": build.version,
-        "branch": build.branch,
-        "risk_id": build.risk_id,
-        "file_size": build.file_size,
-        "file_mtime": build.file_mtime,
-        "file_name": build.file_name,
-        "platform": build.platform,
-        "architecture": build.architecture,
-        "build_time": build.build_time,
-        "mtime_formatted": build.mtime_formatted,
-        "download_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "directory_size": directory_size,  # Add the calculated directory size
-        "hash": build.hash,  # Add hash information
-    }
+    try:
+        # Calculate directory size
+        directory_size = _calculate_directory_size(extract_path)
 
-    # Write the information to a JSON file
-    version_file = extract_path / "version.json"
-    with open(version_file, "w") as f:
-        json.dump(build_info, f, indent=2)
+        # Create a dictionary with all build information
+        build_info = {
+            "version": build.version,
+            "branch": build.branch,
+            "risk_id": build.risk_id,
+            "file_size": build.file_size,
+            "file_mtime": build.file_mtime,
+            "file_name": build.file_name,
+            "platform": build.platform,
+            "architecture": build.architecture,
+            "build_time": build.build_time,
+            "mtime_formatted": build.mtime_formatted,
+            "download_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "directory_size": directory_size,  # Add the calculated directory size
+            "hash": build.hash,  # Add hash information
+        }
+
+        # Write the information to a JSON file
+        version_file = extract_path / "version.json"
+        with open(version_file, "w") as f:
+            json.dump(build_info, f, indent=2)
+    except Exception:
+        # If anything goes wrong during version.json creation, don't leave a partial file
+        version_file = extract_path / "version.json"
+        if version_file.exists():
+            try:
+                version_file.unlink()
+            except:
+                pass
 
 
 def _calculate_directory_size(path: Path) -> int:

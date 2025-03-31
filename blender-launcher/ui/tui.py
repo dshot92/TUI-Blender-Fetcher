@@ -258,10 +258,8 @@ class BlenderTUI:
         # Print the table
         self.console.print(table)
 
-        # Display legend below the table if we have online builds
+        # Display legend at the top of the page if we have online builds
         if self.state.has_fetched and self.state.builds:
-            from rich.text import Text
-
             legend = Text()
             legend.append("■ Current Local Version", style="yellow")
             legend.append("   ")
@@ -1543,8 +1541,6 @@ class BlenderTUI:
         self.console.print(table)
 
         # Display legend below the table
-        from rich.text import Text
-
         legend = Text()
         legend.append("■ Current Local Version", style="yellow")
         legend.append("   ")
