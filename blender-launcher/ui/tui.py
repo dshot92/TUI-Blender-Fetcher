@@ -2,13 +2,12 @@ import signal
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Union, cast
+from typing import Dict, List, Optional, Set, Tuple, Union
 import time
 
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
-from rich.panel import Panel
 
 from ..api.builder_api import fetch_builds
 from ..config.app_config import AppConfig
@@ -43,7 +42,7 @@ class UIState:
     local_builds: Dict[str, LocalBuildInfo] = field(default_factory=dict)
     # Sort configuration
     sort_column: int = (
-        2  # Default sort on Version column (index 2 after removing cursor column)
+        1  # Default sort on Version column (index 2 after removing cursor column)
     )
     sort_reverse: bool = True  # Sort descending by default
     # Download progress tracking
@@ -406,7 +405,9 @@ class BlenderTUI:
 
         for i, col_name in enumerate(column_names):
             # Add sort indicator to column header
-            if i == adjusted_sort_column - 1:  # Adjust index for removed column
+            if (
+                i == adjusted_sort_column
+            ):  # Fixed: removed the -1 adjustment which was incorrect
                 sort_indicator = "↑" if not self.state.sort_reverse else "↓"
                 header_text = Text(f"{col_name} {sort_indicator}", style="reverse bold")
             else:
@@ -1085,10 +1086,44 @@ class BlenderTUI:
         Returns:
             True to continue running
         """
-        if self.state.sort_column > 1:  # Start from column 1 now (Selection)
-            self.state.sort_column -= 1
-            # Use partial screen update to reduce flashing
+        # Get the current visible columns
+        base_columns = [
+            "",  # Selection column
+            "Version",
+            "Status",
+            "Branch",
+            "Type",
+            "Hash",
+            "Size",
+            "Build Date",  # or Speed
+        ]
+        visible_columns = self._get_responsive_columns(base_columns)
+
+        # Map sort column indices to visible column indices
+        column_indices = [0, 1, 2]  # Selection, Version, Status are always visible
+        if "Branch" in visible_columns:
+            column_indices.append(3)
+        column_indices.append(4)  # Type is always visible
+        if "Hash" in visible_columns:
+            column_indices.append(5)
+        if "Size" in visible_columns:
+            column_indices.append(6)
+        column_indices.append(7)  # Date/Speed is always visible
+
+        # Find the current column in the visible column indices
+        try:
+            current_idx = column_indices.index(self.state.sort_column)
+            if current_idx > 0:
+                # Move to the previous visible column
+                self.state.sort_column = column_indices[current_idx - 1]
+                # Use partial screen update to reduce flashing
+                self.display_tui(full_clear=False)
+        except ValueError:
+            # If the current sort column isn't in our visible columns,
+            # reset to a default visible column
+            self.state.sort_column = column_indices[-1]
             self.display_tui(full_clear=False)
+
         return True
 
     def _move_column_right(self) -> bool:
@@ -1097,10 +1132,44 @@ class BlenderTUI:
         Returns:
             True to continue running
         """
-        if self.state.sort_column < 8:  # Adjust max column index (was 7)
-            self.state.sort_column += 1
-            # Use partial screen update to reduce flashing
+        # Get the current visible columns
+        base_columns = [
+            "",  # Selection column
+            "Version",
+            "Status",
+            "Branch",
+            "Type",
+            "Hash",
+            "Size",
+            "Build Date",  # or Speed
+        ]
+        visible_columns = self._get_responsive_columns(base_columns)
+
+        # Map sort column indices to visible column indices
+        column_indices = [0, 1, 2]  # Selection, Version, Status are always visible
+        if "Branch" in visible_columns:
+            column_indices.append(3)
+        column_indices.append(4)  # Type is always visible
+        if "Hash" in visible_columns:
+            column_indices.append(5)
+        if "Size" in visible_columns:
+            column_indices.append(6)
+        column_indices.append(7)  # Date/Speed is always visible
+
+        # Find the current column in the visible column indices
+        try:
+            current_idx = column_indices.index(self.state.sort_column)
+            if current_idx < len(column_indices) - 1:
+                # Move to the next visible column
+                self.state.sort_column = column_indices[current_idx + 1]
+                # Use partial screen update to reduce flashing
+                self.display_tui(full_clear=False)
+        except ValueError:
+            # If the current sort column isn't in our visible columns,
+            # reset to a default visible column
+            self.state.sort_column = column_indices[0]
             self.display_tui(full_clear=False)
+
         return True
 
     def _toggle_sort_reverse(self) -> bool:
