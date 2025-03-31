@@ -180,10 +180,10 @@ class BlenderTUI:
                 )
                 build_date = self._format_build_date(build_info)
 
-                # Default style is yellow for local builds
-                version_style = "yellow"
+                # Default style is neutral for local builds
+                version_style = "default"
                 version_prefix = "■ "
-                status_text = Text("Local", style="yellow bold")
+                status_text = Text("Local", style="default")
 
                 # Hash information (might be None for local builds)
                 hash_text = getattr(build_info, "hash", "") or ""
@@ -197,12 +197,13 @@ class BlenderTUI:
                 if self.state.has_fetched:
                     for online_build in self.state.builds:
                         if online_build.version == version:
-                            # This local build also exists online, check if update available
+                            # This local build also exists online
                             if (
                                 build_info.time
                                 and online_build.build_time
                                 and build_info.time != online_build.build_time
                             ):
+                                # Update available
                                 type_text = Text("update available", style="green bold")
                                 version_style = (
                                     "green"  # Change to green for update available
@@ -210,6 +211,10 @@ class BlenderTUI:
                                 status_text = Text("Update", style="green bold")
                                 # Show online hash if an update is available
                                 hash_text = online_build.hash or ""
+                            else:
+                                # Duplicate (exists both locally and online)
+                                version_style = "yellow"
+                                status_text = Text("Local", style="yellow bold")
 
                 # Prepare row data
                 row_data = [
@@ -298,7 +303,7 @@ class BlenderTUI:
         # Display legend at the top of the page if we have online builds
         if self.state.has_fetched and self.state.builds:
             legend = Text()
-            legend.append("■ Current Local Version", style="yellow")
+            legend.append("■ Current Local Version (fetched)", style="yellow")
             legend.append("   ")
             legend.append("■ Update Available", style="green")
             self.console.print(legend)
@@ -534,8 +539,8 @@ class BlenderTUI:
 
             table.add_row(
                 selected,
-                Text(f"■ Blender {version}", style="yellow"),
-                Text("Local", style="yellow bold"),  # Status
+                Text(f"■ Blender {version}", style="default"),
+                Text("Local", style="default"),  # Status
                 str(build_info.branch or ""),
                 type_text,
                 str(hash_text),
@@ -1679,7 +1684,7 @@ class BlenderTUI:
 
         # Display legend below the table
         legend = Text()
-        legend.append("■ Current Local Version", style="yellow")
+        legend.append("■ Current Local Version (fetched)", style="yellow")
         legend.append("   ")
         legend.append("■ Update Available", style="green")
         self.console.print(legend)
