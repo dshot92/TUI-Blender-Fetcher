@@ -1,9 +1,6 @@
 import sys
-from typing import Optional, Any, Dict, List, Union
-from rich.prompt import Prompt, IntPrompt, Confirm
+from typing import Optional, Any, List
 from rich.console import Console
-from rich.text import Text
-from rich.live import Live
 
 # Define key constants as strings instead of using rich.key.Key
 KEY_UP = "KEY_UP"
@@ -195,7 +192,7 @@ def prompt_select(
 
     # Display all available options
     console.print(prompt_text)
-    for i, (value, description) in enumerate(options):
+    for i, (_, description) in enumerate(options):
         # Show option number and description
         console.print(f"{i+1}. {description}")
 

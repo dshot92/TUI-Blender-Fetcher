@@ -2,8 +2,7 @@ import signal
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Union, Any, Callable
-import sys
+from typing import Dict, List, Optional, Set, Tuple, Union
 import time
 
 from rich.console import Console

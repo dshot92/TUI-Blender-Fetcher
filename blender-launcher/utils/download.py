@@ -1,25 +1,12 @@
 import json
 import os
-import shutil
 import subprocess
-import tempfile
 import threading
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Tuple
 
 from rich.console import Console
-from rich.live import Live
-from rich.progress import (
-    Progress,
-    TextColumn,
-    BarColumn,
-    DownloadColumn,
-    TimeRemainingColumn,
-    TaskID,
-)
 from rich.prompt import Confirm
 
 from ..config.app_config import AppConfig
