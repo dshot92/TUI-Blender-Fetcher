@@ -2,12 +2,13 @@ import signal
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union, cast
 import time
 
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
+from rich.panel import Panel
 
 from ..api.builder_api import fetch_builds
 from ..config.app_config import AppConfig
@@ -52,28 +53,41 @@ class BlenderTUI:
     """Text User Interface for Blender build management."""
 
     def __init__(self):
+        """Initialize the BlenderTUI."""
+        # Get fixed download path
+        self.download_path = AppConfig.DOWNLOAD_PATH
+
+        # Create console
         self.console = Console()
+
+        # Track terminal size
+        self.terminal_width, self.terminal_height = self.console.size
+
+        # Add signal handler for terminal resize
+        signal.signal(signal.SIGWINCH, self._handle_resize)
+
+        # Create UI state
         self.state = UIState()
 
-        # Key handlers for different pages
+        # Get local builds to start
+        self.state.local_builds = get_local_builds()
+
+        # Initialize page handlers
         self.page_handlers = {
             "builds": self._handle_builds_page_input,
             "settings": self._handle_settings_page_input,
         }
-
-        # Set up a signal handler for window resize
-        signal.signal(signal.SIGWINCH, self._handle_resize)
-
-        # Load initial local builds
-        self.state.local_builds = get_local_builds()
 
     def _handle_resize(self, *args) -> None:
         """Handle terminal resize events by setting a flag to refresh the UI."""
         self.state.needs_refresh = True
 
     def clear_screen(self) -> None:
-        """Clear the terminal screen."""
-        self.console.clear()
+        """Position cursor at top without fully clearing the screen.
+        This reduces flashing by not doing a full terminal clear.
+        """
+        # Move cursor to home position instead of clearing the screen
+        print("\033[H", end="", flush=True)
 
     def print_navigation_bar(self) -> None:
         """Print a navigation bar with keybindings at the bottom of the screen."""
@@ -237,6 +251,16 @@ class BlenderTUI:
                 sep="   ",
             )
 
+        # Clear any remaining content from previous renders
+        self._clear_remaining_lines()
+
+    def _clear_remaining_lines(self) -> None:
+        """Clear any remaining content lines after table rendering.
+        This prevents ghost content from previous renders persisting on screen.
+        """
+        # Use ANSI escape sequence to clear from cursor to end of screen
+        print("\033[J", end="", flush=True)
+
     def _create_table(self, column_names: List[str]) -> Table:
         """Create and configure the table with proper columns.
 
@@ -306,7 +330,7 @@ class BlenderTUI:
             if is_downloading:
                 # For downloading builds, show progress in the size column and speed in the date column
                 size_text = f"{download_progress:.0f}%"
-                date_text = download_speed
+                date_text = str(download_speed)  # Ensure it's a string
 
                 # Set type column to show "downloading"
                 type_text = Text("downloading", style="green bold")
@@ -316,6 +340,7 @@ class BlenderTUI:
 
                 # Set version with indicator
                 version_col = Text(f"↓ Blender {build.version}", style="green bold")
+                status_text = Text("Downloading", style="green bold")
 
             elif build.version in self.state.local_builds:
                 local_info = self.state.local_builds[build.version]
@@ -327,22 +352,24 @@ class BlenderTUI:
                 version_col = Text(f"■ Blender {build.version}", style=style)
                 row_style = "reverse bold" if i == self.state.cursor_position else ""
                 size_text = f"{build.size_mb:.1f}MB"
-                date_text = build.mtime_formatted
+                date_text = str(build.mtime_formatted)
+                status_text = Text("Online", style="blue bold")  # Status
             else:
                 version_col = Text(f"  Blender {build.version}")
                 row_style = "reverse bold" if i == self.state.cursor_position else ""
                 size_text = f"{build.size_mb:.1f}MB"
-                date_text = build.mtime_formatted
+                date_text = str(build.mtime_formatted)
+                status_text = Text("Online", style="blue bold")  # Status
 
             table.add_row(
                 selected,
                 version_col,
-                Text("Online", style="blue bold"),  # Status
-                build.branch,
+                status_text,
+                str(build.branch),  # Ensure all values are strings
                 type_text,
-                hash_text,
-                size_text,
-                date_text,
+                str(hash_text),
+                str(size_text),
+                str(date_text),
                 style=row_style,
             )
 
@@ -377,15 +404,20 @@ class BlenderTUI:
             # Format build date nicely if available
             build_date = self._format_build_date(build_info)
 
+            # Get size as string, handle if None
+            size_str = (
+                f"{build_info.size_mb:.1f}MB" if build_info.size_mb is not None else ""
+            )
+
             table.add_row(
                 selected,
                 Text(f"■ Blender {version}", style="yellow"),
                 Text("Local", style="yellow bold"),  # Status
-                build_info.branch or "",
+                str(build_info.branch or ""),
                 type_text,
-                hash_text,
-                build_info.size_mb or "",  # Size may be None
-                build_date,
+                str(hash_text),
+                str(size_str),
+                str(build_date),
                 style=row_style,
             )
 
@@ -488,10 +520,12 @@ class BlenderTUI:
 
     def display_tui(self) -> None:
         """Display the TUI using Rich's components."""
-        # Only clear the screen if we're not in a download - this helps reduce flashing
-        # during frequent updates of download progress
-        if not self.state.download_progress:
-            self.clear_screen()
+        # Position cursor at top - this is more gentle than clearing
+        self.clear_screen()
+
+        # Override console width to ensure we have consistent table width
+        # This prevents jitter in the display
+        table_width = min(self.terminal_width, 120)  # Cap at reasonable width
 
         if self.state.current_page == "builds":
             if self.state.has_fetched and not self.state.builds:
@@ -502,7 +536,6 @@ class BlenderTUI:
             else:
                 self.print_build_table()
         else:  # settings page
-            self.clear_screen()  # Always clear for settings page
             self.print_settings_table()
 
         # Move navigation bar to bottom
@@ -665,6 +698,7 @@ class BlenderTUI:
         """Run the TUI application."""
         try:
             # Initial display
+            self.clear_screen()
             self.display_tui()
 
             # Main input loop
@@ -689,51 +723,54 @@ class BlenderTUI:
                     download_active = bool(self.state.download_progress)
                     if download_active != is_download_in_progress:
                         is_download_in_progress = download_active
-                        # Only do a full refresh when download state changes
+
+                        # Always clear screen and display the updated table
                         self.clear_screen()
                         self.display_tui()
+
                         last_refresh_time = current_time
                         last_full_refresh = current_time
                         continue
 
                     # If no key was pressed, check if we need a refresh for download progress
                     if key is None:
-                        if self.state.needs_refresh and self.state.download_progress:
-                            # For downloads, limit refresh rate to prevent flashing
+                        if self.state.needs_refresh:
+                            # For downloads, update at a reasonable rate to prevent flashing
                             time_since_last_refresh = current_time - last_refresh_time
                             if (
                                 time_since_last_refresh >= 0.5
-                            ):  # Max 2 refreshes per second for downloads
-                                # For downloads, don't clear screen, just reprint the table
-                                self.update_build_table_only()
+                            ):  # Max 2 refreshes per second
+                                # Just reposition cursor and update display - no full clear
+                                self.display_tui()
                                 self.state.needs_refresh = False
                                 last_refresh_time = current_time
-                        elif self.state.needs_refresh:
-                            # For non-download refreshes, limit to 3 per second
-                            time_since_last_refresh = current_time - last_refresh_time
-                            if time_since_last_refresh >= 0.3:
-                                # Do a full refresh every 3 seconds max
-                                time_since_full_refresh = (
-                                    current_time - last_full_refresh
-                                )
-                                if time_since_full_refresh >= 3.0:
-                                    self.clear_screen()
-                                    self.display_tui()
-                                    last_full_refresh = current_time
-                                else:
-                                    # Just reprint the table without clearing
-                                    self.update_build_table_only()
 
+                        if self.state.needs_refresh:
+                            # For downloads, update at a reasonable rate to prevent flashing
+                            time_since_last_refresh = current_time - last_refresh_time
+                            if (
+                                time_since_last_refresh >= 0.5
+                            ):  # Max 2 refreshes per second
+                                if is_download_in_progress:
+                                    # Use the optimized display for downloads to minimize flashing
+                                    self.display_download_progress()
+                                else:
+                                    # For non-download pages, use the standard display
+                                    self.display_tui()
                                 self.state.needs_refresh = False
                                 last_refresh_time = current_time
                         continue
+                        # Refresh display after handling key but avoid full clear
+                        self.display_tui()
+                        last_refresh_time = time.time()
+                        last_full_refresh = time.time()
 
                     # Handle the key based on the current page
                     handler = self.page_handlers.get(self.state.current_page)
                     if handler:
                         running = handler(key)
-                        # Always refresh display after handling key
-                        self.clear_screen()
+
+                        # Refresh display after handling key without a full clear
                         self.display_tui()
                         last_refresh_time = time.time()
                         last_full_refresh = time.time()
@@ -1044,12 +1081,18 @@ class BlenderTUI:
             self.state.download_progress[build.version] = 0
             self.state.download_speed[build.version] = "Starting..."
 
-        # Clear the screen to start fresh
+        # Stop any existing live display
+        # Clear the screen
         self.clear_screen()
 
-        # Mark builds as being downloaded so they show in the table
-        # Then use the standard display_tui to render the initial state
-        self.display_tui()
+        # Show preparing message
+        self.console.print("[bold green]Preparing download...[/bold green]")
+
+        # Position cursor at home and update display
+        self.clear_screen()
+
+        # Show preparing message
+        self.console.print("[bold green]Preparing download...please wait[/bold green]")
 
         # Start download in background thread
         import threading
@@ -1061,8 +1104,8 @@ class BlenderTUI:
         )
         download_thread.start()
 
-        # Return to main loop, which will show progress in the table
-        # through normal refresh cycles
+        # Return to main loop, which will detect the download is active
+        # and update the UI accordingly
         return True
 
     def _download_with_progress_tracking(self, builds: List[BlenderBuild]) -> None:
@@ -1137,6 +1180,10 @@ class BlenderTUI:
                                 significant_change = True
                                 previous_progress[build.version] = percentage
 
+                            # No need to check for significant changes - always update
+                            # to ensure smooth progress display
+                            previous_progress[build.version] = percentage
+
                             # Update progress tracking
                             self.state.download_progress[build.version] = percentage
                             self.state.download_speed[build.version] = speed
@@ -1152,6 +1199,18 @@ class BlenderTUI:
                 # Tell main loop to update the UI if there's a significant change
                 # and sufficient time has passed since last refresh
                 if significant_change and (current_time - last_refresh_request >= 0.5):
+                    self.state.needs_refresh = True
+                    last_refresh_request = current_time
+
+                # Tell main loop to update the UI if sufficient time has passed
+                if current_time - last_refresh_request >= 0.3:
+                    # Always mark as needing refresh during downloads to ensure live updates
+                    self.state.needs_refresh = True
+                    last_refresh_request = current_time
+
+                # Tell main loop to update the UI more frequently but not too fast to avoid flashing
+                if current_time - last_refresh_request >= 0.25:
+                    # Always mark as needing refresh during downloads to ensure live updates
                     self.state.needs_refresh = True
                     last_refresh_request = current_time
 
@@ -1381,19 +1440,6 @@ class BlenderTUI:
 
         return True
 
-    def update_build_table_only(self) -> None:
-        """Update just the build table without clearing the screen.
-        Used during downloads to minimize flicker.
-        """
-        # Move cursor to top of console
-        self.console.clear()
-
-        # Print the table
-        self.print_build_table()
-
-        # Print the nav bar
-        self.print_navigation_bar()
-
     def _get_current_build_list(
         self,
     ) -> Union[List[BlenderBuild], List[Tuple[str, LocalBuildInfo]]]:
@@ -1408,3 +1454,75 @@ class BlenderTUI:
         else:
             # When looking at local builds, get the sorted list
             return self._get_sorted_local_build_list()
+
+    def display_download_progress(self) -> None:
+        """Optimized display method for download progress updates.
+        Only updates the essential elements to minimize screen updates and flashing.
+        """
+        # Position cursor at home position
+        print("\033[H", end="", flush=True)
+
+        # Create a minimalist table just showing downloads
+        column_names = [
+            "",  # Selection column
+            "Version",
+            "Status",
+            "Branch",
+            "Type",
+            "Hash",
+            "Size",
+            "Speed",
+        ]
+
+        table = self._create_table(column_names)
+
+        # Only add rows for builds being downloaded
+        combined_build_list = self._get_combined_build_list()
+
+        # For each build that's being downloaded
+        for i, (build_type, original_idx, version) in enumerate(combined_build_list):
+            if version in self.state.download_progress:
+                selected = "[X]"  # Downloaded builds are selected
+                row_style = ""
+
+                # Find the build info
+                online_build = None
+                for build in self.state.builds:
+                    if build.version == version:
+                        online_build = build
+                        break
+
+                if online_build:
+                    # Get download progress and speed
+                    download_progress = self.state.download_progress.get(version, 0)
+                    download_speed = self.state.download_speed.get(version, "")
+
+                    # Set values for the table row
+                    version_col = Text(f"↓ Blender {version}", style="green bold")
+                    status_text = Text("Downloading", style="green bold")
+                    type_text = Text("downloading", style="green bold")
+                    hash_text = online_build.hash or ""
+                    size_text = f"{download_progress:.0f}%"
+                    date_text = download_speed
+
+                    # Add the row to the table
+                    table.add_row(
+                        selected,
+                        version_col,
+                        status_text,
+                        str(online_build.branch),
+                        type_text,
+                        str(hash_text),
+                        str(size_text),
+                        str(date_text),
+                        style=row_style,
+                    )
+
+        # Print the table
+        self.console.print(table)
+
+        # Print navigation hints
+        self.console.print("Press any key to cancel download", style="dim")
+
+        # Clear any remaining content
+        self._clear_remaining_lines()
