@@ -78,31 +78,25 @@ class BlenderTUI:
     def print_navigation_bar(self) -> None:
         """Print a navigation bar with keybindings at the bottom of the screen."""
         if self.state.current_page == "builds":
-            # Split the commands into two rows for better readability
-            self.console.print("─" * 80)  # Simple separator
+            # Create a more visually appealing separator
+            self.console.print("━" * self.console.width, style="dim")
 
-            # Use explicit Text objects to control styling and prevent auto-detection
-            self.console.print(
-                "[bold]Space[/bold]:Select  [bold]D[/bold]:Download  [bold]Enter[/bold]:Launch  [bold]F[/bold]:Fetch Online Builds",
-                highlight=False,
-            )
-            # Always show X key for deleting, regardless of view
-            if self.state.local_builds:
-                self.console.print(
-                    "[bold]X[/bold]:Delete  [bold]R[/bold]:Reverse Sort  [bold]S[/bold]:Settings  [bold]Q[/bold]:Quit",
-                    highlight=False,
-                )
-            else:
-                self.console.print(
-                    "[bold]R[/bold]:Reverse Sort  [bold]S[/bold]:Settings  [bold]Q[/bold]:Quit",
-                    highlight=False,
-                )
+            # Group commands by functionality with better spacing and styling
+            actions = "[bold yellow]Space[/bold yellow]:Select  [bold green]Enter[/bold green]:Launch  [bold cyan]D[/bold cyan]:Download  [bold red]X[/bold red]:Delete"
+            system = "[bold magenta]F[/bold magenta]:Fetch  [bold magenta]R[/bold magenta]:Reverse  [bold magenta]S[/bold magenta]:Settings  [bold magenta]Q[/bold magenta]:Quit"
+
+            # Format in a visually balanced way
+            self.console.print(f"{actions}  │  {system}", highlight=False)
         else:  # settings page
-            self.console.print("─" * 80)  # Simple separator
-            self.console.print(
-                "[bold]Enter[/bold]:Edit  [bold]S[/bold]:Back to builds  [bold]Q[/bold]:Quit",
-                highlight=False,
-            )
+            # Create a more visually appealing separator for settings
+            self.console.print("━" * self.console.width, style="dim")
+
+            # Group commands for settings page
+            actions = "[bold green]Enter[/bold green]:Edit Setting"
+            system = "[bold magenta]S[/bold magenta]:Back to Builds  [bold magenta]Q[/bold magenta]:Quit"
+
+            # Format in a visually balanced way
+            self.console.print(f"{actions}  │  {system}", highlight=False)
 
     def print_build_table(self) -> None:
         """Print a table of available Blender builds."""
