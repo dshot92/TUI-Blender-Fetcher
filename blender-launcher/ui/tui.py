@@ -7,10 +7,15 @@ import time
 from functools import lru_cache
 import tempfile
 import threading
+import platform
+from datetime import datetime
 
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
+from rich.panel import Panel
+from rich.align import Align
+from rich import box
 
 from ..api.builder_api import fetch_builds
 from ..config.app_config import AppConfig
@@ -27,6 +32,10 @@ from ..utils.input import (
     KEY_SPACE,
 )
 from ..utils.local_builds import get_local_builds, delete_local_build
+from ..utils.download import (
+    download_multiple_builds,
+    _get_progress_and_speed_from_log,
+)
 
 
 # --- Constants for Columns and Sorting ---
@@ -44,19 +53,56 @@ _BASE_COLUMNS = [
 
 _RISK_ORDER = {"stable": 0, "candidate": 1, "alpha": 2}
 
+# Define a default datetime for sorting entries with unparseable dates
+_DEFAULT_DATETIME = datetime.min
 
-def _parse_time(t):
-    try:
-        # Handle both API format (YYYY-MM-DD HH:MM:SS) and local format (YYYYMMDD_HHMM)
-        t_cleaned = (
-            t.replace("-", "").replace(":", "").replace(" ", "").replace("_", "")
-        )
-        # Pad if needed (assuming local format needs padding)
-        if len(t_cleaned) == 12:  # YYYYMMDDHHMM
-            t_cleaned += "00"  # Add seconds
-        return int(t_cleaned) if len(t_cleaned) == 14 else 0
-    except Exception:
-        return 0
+
+def _parse_time_to_datetime(t: Union[str, int, None]) -> datetime:
+    """Parse different time string formats or timestamps into datetime objects.
+
+    Returns:
+        datetime object or a default minimum datetime if parsing fails.
+    """
+    if t is None:
+        return _DEFAULT_DATETIME
+
+    # Handle integer timestamps first
+    if isinstance(t, int):
+        try:
+            # Assume it's a Unix timestamp
+            return datetime.fromtimestamp(t)
+        except (ValueError, OSError):  # Catch potential errors with invalid timestamps
+            return _DEFAULT_DATETIME
+
+    # Handle string formats
+    if isinstance(t, str):
+        if not t:
+            return _DEFAULT_DATETIME
+        try:
+            # Try API format first (more specific: YYYY-MM-DD HH:MM:SS)
+            return datetime.strptime(t, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            try:
+                # Try local format (YYYYMMDD_HHMM)
+                return datetime.strptime(t, "%Y%m%d_%H%M")
+            except ValueError:
+                # Fallback for potentially cleaned formats (less likely needed now)
+                try:
+                    t_cleaned = (
+                        t.replace("-", "")
+                        .replace(":", "")
+                        .replace(" ", "")
+                        .replace("_", "")
+                    )
+                    if len(t_cleaned) == 14:  # YYYYMMDDHHMMSS
+                        return datetime.strptime(t_cleaned, "%Y%m%d%H%M%S")
+                    elif len(t_cleaned) == 12:  # YYYYMMDDHHMM
+                        return datetime.strptime(t_cleaned, "%Y%m%d%H%M")
+                except ValueError:
+                    pass  # Ignore secondary parsing errors
+
+    # Return default if input is not int/str or parsing fails
+    return _DEFAULT_DATETIME
 
 
 _SORT_KEYS = {
@@ -71,7 +117,9 @@ _SORT_KEYS = {
     4: lambda d: (_RISK_ORDER.get(d["risk_id"], 99), d["risk_id"] or ""),  # Type
     5: lambda d: d["hash"] or "",  # Hash
     6: lambda d: d["size_mb"],  # Size (already float)
-    7: lambda d: _parse_time(d["time"]) if d["time"] else 0,  # Build Date/Time
+    7: lambda d: _parse_time_to_datetime(
+        d["time"]
+    ),  # Build Date/Time (uses datetime objects)
 }
 
 _DEFAULT_SORT_COLUMN = 1  # Default sort by Build Date (index 7)
@@ -380,18 +428,9 @@ class BlenderTUI:
                 columns.remove("Size")
 
         # Decide whether to show "Build Date" or "Speed"
-        is_downloading = bool(self.state.download_progress)
-        has_date_col = "Build Date" in columns
-
-        if is_downloading:
-            if has_date_col:
-                # Replace "Build Date" with "Speed"
-                date_idx = columns.index("Build Date")
-                columns[date_idx] = "Speed"
-            # If "Build Date" was removed by width, "Speed" will effectively replace it.
-        elif not has_date_col:
-            # If not downloading and date was removed, ensure it's not added back implicitly.
-            pass  # Date column stays removed
+        # Removed logic that renamed the column header.
+        # The header will always be "Build Date" if the column is visible.
+        # The cell content will show speed during downloads (handled in print_build_table).
 
         return columns
 
@@ -412,9 +451,6 @@ class BlenderTUI:
             Configured table object
         """
         # Use a standard box style from Rich
-        from rich import box
-        from rich.text import Text
-
         table = Table(
             show_header=True, expand=True, box=box.SIMPLE_HEAVY, padding=(0, 1)
         )
@@ -424,10 +460,8 @@ class BlenderTUI:
             try:
                 original_idx = self.BASE_COLUMNS.index(col_name)
             except ValueError:
-                # Handle "Speed" column specifically if needed, or assign a dummy index
-                original_idx = (
-                    -1
-                )  # Or len(self.BASE_COLUMNS) if using Speed as an extra column index
+                # Should not happen now as we don't dynamically change column names like 'Speed'
+                original_idx = -1
 
             # Add sort indicator to column header
             if original_idx == self.state.sort_column:
@@ -455,8 +489,10 @@ class BlenderTUI:
                 )  # Will fit hash values
             elif col_name == "Size":
                 table.add_column(header_text, justify="center")  # Will fit size values
-            elif col_name == "Build Date" or col_name == "Speed":
-                table.add_column(header_text, justify="center")  # Will fit dates
+            elif col_name == "Build Date":  # Removed 'or col_name == "Speed"'
+                table.add_column(
+                    header_text, justify="center"
+                )  # Will fit dates or speed
 
         return table
 
@@ -499,31 +535,31 @@ class BlenderTUI:
                         "time": build.file_mtime or "",
                     }
 
-        # Define unified sort keys
-        risk_order = {"stable": 0, "candidate": 1, "alpha": 2}
-
-        def parse_time(t):
-            try:
-                return int(t.replace("_", ""))
-            except Exception:
-                return 0
-
-        sort_keys = {
-            2: lambda d: (
-                0 if d["type"] == "local" else 1,
-                d["version"],
-            ),  # Status (sort by type, then version)
-            3: lambda d: (d["branch"] or "").lower(),  # Branch
-            4: lambda d: (
-                _RISK_ORDER.get(d["risk_id"], 99),
-                d["risk_id"] or "",
-            ),  # Type
-            5: lambda d: d["hash"] or "",  # Hash
-            6: lambda d: d["size_mb"],  # Size (already float)
-            7: lambda d: parse_time(d["time"]) if d["time"] else 0,  # Build Date/Time
-        }
+        # Define unified sort keys - THIS SECTION IS NO LONGER NEEDED FOR SORTING
+        # The actual sorting uses self.SORT_KEYS which references the global _SORT_KEYS
+        # risk_order = {"stable": 0, "candidate": 1, "alpha": 2}
+        # def parse_time(t):
+        #     try:
+        #         return int(t.replace("_", ""))
+        #     except Exception:
+        #         return 0
+        # sort_keys = {
+        #     2: lambda d: (
+        #         0 if d["type"] == "local" else 1,
+        #         d["version"],
+        #     ),  # Status (sort by type, then version)
+        #     3: lambda d: (d["branch"] or "").lower(),  # Branch
+        #     4: lambda d: (
+        #         _RISK_ORDER.get(d["risk_id"], 99),
+        #         d["risk_id"] or "",
+        #     ),  # Type
+        #     5: lambda d: d["hash"] or "",  # Hash
+        #     6: lambda d: d["size_mb"],  # Size (already float)
+        #     7: lambda d: parse_time(d["time"]) if d["time"] else 0,  # Build Date/Time
+        # }
 
         column = self.state.sort_column
+        # Use the globally defined SORT_KEYS which now uses datetime parsing
         key_func = self.SORT_KEYS.get(
             column, self.SORT_KEYS.get(1)  # Default to version sort key function
         )
@@ -833,6 +869,28 @@ class BlenderTUI:
             # Always ensure cursor is visible when program exits
             print("\033[?25h", end="", flush=True)
 
+    def _process_key_input(self, key: str, key_handlers: Dict) -> bool:
+        """Generic key input processor.
+
+        Args:
+            key: The pressed key.
+            key_handlers: A dictionary mapping keys/constants to handler functions.
+
+        Returns:
+            False to exit the application, True to continue.
+        """
+        if key in key_handlers:
+            result = key_handlers[key]()
+            # Ensure handler result dictates continuation (False means exit)
+            return result if isinstance(result, bool) else True
+        elif isinstance(key, str) and len(key) == 1 and key.isalpha():
+            key_lower = key.lower()
+            if key_lower in key_handlers:
+                result = key_handlers[key_lower]()
+                # Ensure handler result dictates continuation
+                return result if isinstance(result, bool) else True
+        return True  # Continue running if key not handled
+
     def _handle_builds_page_input(self, key: str) -> bool:
         """Handle input for the builds page.
 
@@ -864,18 +922,7 @@ class BlenderTUI:
             "x": self._delete_selected_build,
             "\x03": lambda: False,  # Ctrl-C (ASCII value 3) to exit
         }
-
-        # Check if key is in our handlers
-        if key in key_handlers:
-            return key_handlers[key]()
-
-        # Handle letter keys (case-insensitive)
-        if isinstance(key, str) and len(key) == 1 and key.isalpha():
-            key_lower = key.lower()
-            if key_lower in key_handlers:
-                return key_handlers[key_lower]()
-
-        return True  # Continue running by default
+        return self._process_key_input(key, key_handlers)
 
     def _handle_settings_page_input(self, key: str) -> bool:
         """Handle input for the settings page.
@@ -898,18 +945,7 @@ class BlenderTUI:
             "q": lambda: False,  # Return False to exit
             "\x03": lambda: False,  # Ctrl-C (ASCII value 3) to exit
         }
-
-        # Check if key is in our handlers
-        if key in key_handlers:
-            return key_handlers[key]()
-
-        # Handle letter keys (case-insensitive)
-        if isinstance(key, str) and len(key) == 1 and key.isalpha():
-            key_lower = key.lower()
-            if key_lower in key_handlers:
-                return key_handlers[key_lower]()
-
-        return True  # Continue running by default
+        return self._process_key_input(key, key_handlers)
 
     def _move_settings_cursor(self, direction: int) -> bool:
         """Move settings cursor up or down.
@@ -973,15 +1009,8 @@ class BlenderTUI:
         Returns:
             True to continue running
         """
-        # Get the current visible columns
-        visible_columns = self._get_responsive_columns(list(self.BASE_COLUMNS))
-
-        # Map sort column indices to visible column indices
-        visible_sortable_indices = [
-            idx
-            for idx, name in enumerate(self.BASE_COLUMNS)
-            if name in visible_columns and idx in self.SORT_KEYS
-        ]
+        # Get the indices of currently visible sortable columns
+        visible_sortable_indices = self._get_visible_sortable_column_indices()
 
         if not visible_sortable_indices:
             return True  # No sortable columns visible
@@ -1008,15 +1037,8 @@ class BlenderTUI:
         Returns:
             True to continue running
         """
-        # Get the current visible columns
-        visible_columns = self._get_responsive_columns(list(self.BASE_COLUMNS))
-
-        # Map sort column indices to visible column indices
-        visible_sortable_indices = [
-            idx
-            for idx, name in enumerate(self.BASE_COLUMNS)
-            if name in visible_columns and idx in self.SORT_KEYS
-        ]
+        # Get the indices of currently visible sortable columns
+        visible_sortable_indices = self._get_visible_sortable_column_indices()
 
         if not visible_sortable_indices:
             return True  # No sortable columns visible
@@ -1391,66 +1413,60 @@ class BlenderTUI:
         Returns:
             True to continue running
         """
+        setting_index = self.state.settings_cursor
+        config_updated = False
+
+        self.clear_screen()  # Clear before prompt
+
+        # Show cursor for text input
+        print("\033[?25h", end="", flush=True)
+
         try:
-            self.clear_screen()
-
-            if self.state.settings_cursor == 0:  # Download path
-                self._edit_download_path()
-            elif self.state.settings_cursor == 1:  # Version cutoff
-                self._edit_version_cutoff()
-
-            self.display_tui()
-            return True  # Return True to prevent application exit
-        except ValueError as e:
-            self.console.print(f"Error updating settings: {e}", style="bold red")
-            self.display_tui()
-            return True  # Return True to prevent application exit
-
-    def _edit_download_path(self) -> None:
-        """Edit the download path setting."""
-        current = AppConfig.DOWNLOAD_PATH
-
-        # Show cursor for text input
-        print("\033[?25h", end="", flush=True)
-        new_path = prompt_input(
-            f"Enter new download path [cyan]({current})[/cyan]", default=str(current)
-        )
-        # Hide cursor after input
-        print("\033[?25l", end="", flush=True)
-
-        if new_path and new_path != str(current):
-            try:
-                # Update the class attribute directly
-                AppConfig.DOWNLOAD_PATH = Path(new_path)
-                AppConfig.save_config()  # Assuming there's a class method to save
-                self.state.needs_refresh = True
-            except Exception as e:
-                self.console.print(
-                    f"Failed to update download path: {e}", style="bold red"
+            if setting_index == 0:  # Download Directory
+                current = AppConfig.DOWNLOAD_PATH
+                prompt_text = f"Enter new download path [cyan]({current})[/cyan]"
+                new_value_str = prompt_input(prompt_text, default=str(current))
+                if new_value_str and new_value_str != str(current):
+                    new_value = Path(new_value_str)
+                    AppConfig.DOWNLOAD_PATH = new_value
+                    config_updated = True
+            elif setting_index == 1:  # Version Cutoff
+                current = AppConfig.VERSION_CUTOFF
+                prompt_text = (
+                    f"Enter minimum Blender version to display [cyan]({current})[/cyan]"
                 )
+                new_value_str = prompt_input(prompt_text, default=current)
+                if new_value_str and new_value_str != current:
+                    # Basic validation (e.g., check if it's like X.Y)
+                    if "." in new_value_str and all(
+                        part.isdigit() for part in new_value_str.split(".")
+                    ):
+                        AppConfig.VERSION_CUTOFF = new_value_str
+                        config_updated = True
+                    else:
+                        raise ValueError("Invalid version format (e.g., 4.1)")
 
-    def _edit_version_cutoff(self) -> None:
-        """Edit the version cutoff setting."""
-        current = AppConfig.VERSION_CUTOFF
-
-        # Show cursor for text input
-        print("\033[?25h", end="", flush=True)
-        new_cutoff = prompt_input(
-            f"Enter minimum Blender version to display [cyan]({current})[/cyan]",
-            default=current,
-        )
-        # Hide cursor after input
-        print("\033[?25l", end="", flush=True)
-
-        if new_cutoff and new_cutoff != current:
-            try:
-                AppConfig.VERSION_CUTOFF = new_cutoff
+            if config_updated:
                 AppConfig.save_config()
-                self.state.needs_refresh = True
-            except Exception as e:
-                self.console.print(
-                    f"Failed to update version cutoff: {e}", style="bold red"
+                self.state.needs_refresh = True  # Refresh needed if config changed
+                # Display success briefly
+                self._display_temporary_message(
+                    "Setting updated successfully.", "green", 1.0
                 )
+
+        except Exception as e:
+            # Display error message temporarily
+            self._display_temporary_message(
+                f"Error updating setting: {e}", "bold red", 2.0
+            )
+
+        finally:
+            # Hide cursor after input attempt
+            print("\033[?25l", end="", flush=True)
+            # Ensure the main UI is redisplayed regardless of success/failure
+            self.display_tui()
+
+        return True  # Always continue running
 
     def _delete_selected_build(self) -> bool:
         """Delete the selected local build(s).
@@ -1483,15 +1499,13 @@ class BlenderTUI:
             return True
 
         # Show deletion confirmation panel
-        from rich.panel import Panel
-        from rich.align import Align
-
-        prompt_text = f"Delete Blender {', '.join(versions_to_delete)}? (y/n)"
         panel = Panel(
-            Align.center(prompt_text),
+            Align.center(f"Delete Blender {', '.join(versions_to_delete)}? (y/n)"),
             title="Confirm Deletion",
             border_style="red bold",
-            width=min(len(prompt_text) + 10, 80),
+            width=min(
+                len(f"Delete Blender {', '.join(versions_to_delete)}? (y/n)") + 10, 80
+            ),
         )
 
         # Display the centered panel
@@ -1545,6 +1559,20 @@ class BlenderTUI:
 
         return True
 
+    def _display_temporary_message(
+        self, message: str, style: str = "default", duration: float = 1.5
+    ) -> None:
+        """Clears screen partially and displays a temporary message."""
+        self.clear_screen(full_clear=False)  # Partial clear
+        self.print_navigation_bar()  # Keep nav bar
+        self.console.print()  # Add a newline for spacing
+        self.console.print(Align.center(Text(message, style=style)))
+        self.console.print()
+        self._clear_remaining_lines()
+        time.sleep(duration)
+        # Trigger a redraw by the main loop by setting the flag
+        self.state.needs_refresh = True
+
     def _display_centered_panel(self, panel) -> None:
         """Display a panel centered both horizontally and vertically.
 
@@ -1572,8 +1600,6 @@ class BlenderTUI:
             self.console.print("")
 
         # Print centered panel
-        from rich.align import Align
-
         self.console.print(Align.center(panel))
 
     def _open_build_directory(self) -> bool:
@@ -1582,90 +1608,72 @@ class BlenderTUI:
         Returns:
             True to continue running.
         """
-        import platform
-        import subprocess
-
         if not self._has_visible_builds():
-            self.console.print("No builds available.", style="yellow")
+            self._display_temporary_message("No builds available.", "yellow")
             return True
 
         combined_build_list = self._get_combined_build_list()
         if not (0 <= self.state.cursor_position < len(combined_build_list)):
-            self.console.print("Invalid cursor position.", style="red")
+            self._display_temporary_message("Invalid cursor position.", "red")
             return True
 
         build_type, version = combined_build_list[self.state.cursor_position]
 
         if build_type != "local":
-            self.console.print(
-                "Cannot open directory for an online build.", style="yellow"
+            self._display_temporary_message(
+                "Cannot open directory for an online build.", "yellow"
             )
-            # Display message briefly
-            time.sleep(1.0)
-            self.display_tui(full_clear=False)  # Redraw to clear message
             return True
 
         build_dir = self._find_build_directory(version)
         if not build_dir or not build_dir.is_dir():
-            self.console.print(
-                f"Directory not found for local build {version}.", style="red"
+            self._display_temporary_message(
+                f"Directory not found for local build {version}.", "red"
             )
-            # Display message briefly
-            time.sleep(1.0)
-            self.display_tui(full_clear=False)  # Redraw to clear message
             return True
 
         command = []
         system = platform.system()
 
         if system == "Windows":
-            # Use 'start ""' to handle paths with spaces correctly via shell
-            command = ["start", '""', str(build_dir)]  # Pass empty title
-        elif system == "Darwin":  # macOS
+            command = ["start", '""', str(build_dir)]
+        elif system == "Darwin":
             command = ["open", str(build_dir)]
         elif system == "Linux":
             command = ["xdg-open", str(build_dir)]
         else:
-            self.console.print(
-                f"Unsupported operating system ({system}) for opening directory.",
-                style="red",
+            self._display_temporary_message(
+                f"Unsupported OS ({system}) for opening directory.", "red"
             )
-            # Display message briefly
-            time.sleep(1.0)
-            self.display_tui(full_clear=False)  # Redraw to clear message
             return True
 
         try:
-            # Clear screen and show opening message
-            self.clear_screen(full_clear=False)  # Use partial clear
-
-            self.print_navigation_bar()  # Keep nav bar visible
-
             # Use Popen for non-blocking execution
-            # shell=True is generally needed for 'start' on Windows
             subprocess.Popen(
                 " ".join(command) if system == "Windows" else command,
                 shell=(system == "Windows"),
+                stdout=subprocess.DEVNULL,  # Suppress output
+                stderr=subprocess.DEVNULL,  # Suppress errors
+            )
+            self._display_temporary_message(
+                f"Opening directory for Blender {version}...", "green", 0.75
             )
 
-            # Brief pause allows the message to be seen before redraw by main loop
-            time.sleep(0.5)
         except FileNotFoundError:
-            # Clear screen and show error message
-            self.clear_screen(full_clear=False)  # Use partial clear
-            self.console.print(
-                f"Error: Command '{command[0]}' not found. Cannot open directory.",
-                style="red",
+            self._display_temporary_message(
+                f"Error: Command '{command[0]}' not found.", "red"
             )
-            self.print_navigation_bar()  # Keep nav bar visible
-            time.sleep(1.5)  # Allow user to see error
         except Exception as e:
-            # Clear screen and show error message
-            self.clear_screen(full_clear=False)  # Use partial clear
-            self.console.print(f"Error opening directory: {e}", style="red")
-            self.print_navigation_bar()  # Keep nav bar visible
-            time.sleep(1.5)  # Allow user to see error
+            self._display_temporary_message(f"Error opening directory: {e}", "red")
 
-        # Trigger a redraw from the main loop to restore the table
-        self.state.needs_refresh = True
+        # Main loop will handle redraw because needs_refresh is set by _display_temporary_message
         return True
+
+    def _get_visible_sortable_column_indices(self) -> List[int]:
+        """Gets the indices of sortable columns currently visible."""
+        visible_columns = self._get_responsive_columns(list(self.BASE_COLUMNS))
+        return [
+            idx
+            for idx, name in enumerate(self.BASE_COLUMNS)
+            if name in visible_columns and idx in self.SORT_KEYS
+        ]
