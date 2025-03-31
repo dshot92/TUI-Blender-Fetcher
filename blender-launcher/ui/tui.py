@@ -32,7 +32,9 @@ class UIState:
     """Holds the state of the TUI."""
 
     builds: List[BlenderBuild] = field(default_factory=list)
-    selected_builds: Set[int] = field(default_factory=set)
+    selected_builds: Set[str] = field(
+        default_factory=set
+    )  # Now stores versions instead of indices
     current_page: str = "builds"  # "builds" or "settings"
     cursor_position: int = 0  # Current cursor position for navigation
     settings_cursor: int = 0  # Cursor position in settings page
@@ -164,7 +166,8 @@ class BlenderTUI:
 
         # Add all builds to the table
         for i, (build_type, original_idx, version) in enumerate(combined_build_list):
-            selected = "[X]" if i in self.state.selected_builds else "[ ]"
+            # Check if this version is selected using version instead of index
+            selected = "[X]" if version in self.state.selected_builds else "[ ]"
             row_style = "reverse bold" if i == self.state.cursor_position else ""
 
             if build_type == "local":
@@ -551,8 +554,7 @@ class BlenderTUI:
 
         # Define sort key functions for different columns (adjusted for removed # column)
         sort_keys = {
-            1: lambda x: self.state.cursor_position
-            in self.state.selected_builds,  # Selected
+            # No longer using cursor position for selection since we store by version
             2: lambda x: tuple(map(int, x[0].split("."))),  # Version
             3: lambda x: "Local",  # Status (always "Local" for local builds)
             4: lambda x: x[1].branch or "",  # Branch
@@ -807,8 +809,7 @@ class BlenderTUI:
         # Define sort keys for different columns
         sort_keys = {
             # Adjusted column indices (after removing # column)
-            1: lambda b: self.state.cursor_position
-            in self.state.selected_builds,  # Selected
+            # No longer using cursor position for selection since we store by version
             2: lambda b: tuple(map(int, b.version.split("."))),  # Version
             3: lambda b: "Online",  # Status (always "Online" for online builds)
             4: lambda b: b.branch,  # Branch
@@ -1117,12 +1118,19 @@ class BlenderTUI:
         if not self._has_visible_builds():
             return True
 
-        if self.state.cursor_position in self.state.selected_builds:
-            self.state.selected_builds.remove(self.state.cursor_position)
-        else:
-            self.state.selected_builds.add(self.state.cursor_position)
-        # Use partial screen update to reduce flashing
-        self.display_tui(full_clear=False)
+        # Get the version of the build at the current cursor position
+        combined_build_list = self._get_combined_build_list()
+        if 0 <= self.state.cursor_position < len(combined_build_list):
+            _, _, version = combined_build_list[self.state.cursor_position]
+
+            # Toggle selection based on version instead of cursor position
+            if version in self.state.selected_builds:
+                self.state.selected_builds.remove(version)
+            else:
+                self.state.selected_builds.add(version)
+
+            # Use partial screen update to reduce flashing
+            self.display_tui(full_clear=False)
         return True
 
     def _has_visible_builds(self) -> bool:
@@ -1171,20 +1179,23 @@ class BlenderTUI:
         combined_build_list = self._get_combined_build_list()
 
         if self.state.selected_builds:
-            # Get the builds that are currently selected
-            for idx in self.state.selected_builds:
-                if 0 <= idx < len(combined_build_list):
-                    build_type, orig_idx, version = combined_build_list[idx]
-                    # Only download online builds that aren't already local
-                    if build_type == "online" or (
-                        build_type == "local" and self._has_update_available(version)
-                    ):
-                        # Find the corresponding online build
-                        for build in self.state.builds:
-                            if build.version == version:
-                                builds_to_download.append(build)
-                                download_indices.append(idx)
-                                break
+            # Get the builds that are currently selected by version
+            for version in self.state.selected_builds:
+                # Find this version in online builds
+                for build in self.state.builds:
+                    if build.version == version:
+                        # Only download if it's not local or has an update
+                        if (
+                            version not in self.state.local_builds
+                            or self._has_update_available(version)
+                        ):
+                            builds_to_download.append(build)
+                            # Find the index in the combined list for progress tracking
+                            for i, (_, _, v) in enumerate(combined_build_list):
+                                if v == version:
+                                    download_indices.append(i)
+                                    break
+                        break
         else:
             # If no builds are selected, download the one under the cursor
             if 0 <= self.state.cursor_position < len(combined_build_list):
@@ -1485,11 +1496,9 @@ class BlenderTUI:
         versions_to_delete = []
         if self.state.selected_builds:
             # Delete all selected builds
-            for idx in self.state.selected_builds:
-                if 0 <= idx < len(combined_build_list):
-                    build_type, _, version = combined_build_list[idx]
-                    if version in self.state.local_builds:
-                        versions_to_delete.append(version)
+            for version in self.state.selected_builds:
+                if version in self.state.local_builds:
+                    versions_to_delete.append(version)
         else:
             # No selection, delete the build at the current cursor
             if 0 <= self.state.cursor_position < len(combined_build_list):
