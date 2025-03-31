@@ -9,15 +9,11 @@ env/
 .env/
 .venv/
 
+build/
+dist/
+
 # IDE settings
 .vscode/
 .idea/
 *.swp
 .DS_Store
-
-# Project specific
-*.m4b
-chapters.txt
-input.txt
-metadata.txt
-contat.txt
