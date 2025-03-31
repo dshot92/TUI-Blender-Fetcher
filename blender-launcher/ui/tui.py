@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 import time
-from functools import lru_cache
 import tempfile
 import threading
 import platform
@@ -32,11 +31,6 @@ from ..utils.input import (
     KEY_SPACE,
 )
 from ..utils.local_builds import get_local_builds, delete_local_build
-from ..utils.download import (
-    download_multiple_builds,
-    _get_progress_and_speed_from_log,
-)
-
 
 # --- Constants for Columns and Sorting ---
 
@@ -109,10 +103,7 @@ _SORT_KEYS = {
     # Maps column index from _BASE_COLUMNS to a sort key function
     # Operates on the unified dictionary record structure used in _get_combined_build_list
     1: lambda d: tuple(map(int, d["version"].split("."))),  # Version
-    2: lambda d: (
-        0 if d["type"] == "local" else 1,
-        d["version"],
-    ),  # Status (sort by type, then version)
+    2: lambda d: ( 0 if d["type"] == "local" else 1, d["version"],),  # Status (sort by type, then version)
     3: lambda d: (d["branch"] or "").lower(),  # Branch
     4: lambda d: (_RISK_ORDER.get(d["risk_id"], 99), d["risk_id"] or ""),  # Type
     5: lambda d: d["hash"] or "",  # Hash
@@ -535,29 +526,6 @@ class BlenderTUI:
                         "time": build.file_mtime or "",
                     }
 
-        # Define unified sort keys - THIS SECTION IS NO LONGER NEEDED FOR SORTING
-        # The actual sorting uses self.SORT_KEYS which references the global _SORT_KEYS
-        # risk_order = {"stable": 0, "candidate": 1, "alpha": 2}
-        # def parse_time(t):
-        #     try:
-        #         return int(t.replace("_", ""))
-        #     except Exception:
-        #         return 0
-        # sort_keys = {
-        #     2: lambda d: (
-        #         0 if d["type"] == "local" else 1,
-        #         d["version"],
-        #     ),  # Status (sort by type, then version)
-        #     3: lambda d: (d["branch"] or "").lower(),  # Branch
-        #     4: lambda d: (
-        #         _RISK_ORDER.get(d["risk_id"], 99),
-        #         d["risk_id"] or "",
-        #     ),  # Type
-        #     5: lambda d: d["hash"] or "",  # Hash
-        #     6: lambda d: d["size_mb"],  # Size (already float)
-        #     7: lambda d: parse_time(d["time"]) if d["time"] else 0,  # Build Date/Time
-        # }
-
         column = self.state.sort_column
         # Use the globally defined SORT_KEYS which now uses datetime parsing
         key_func = self.SORT_KEYS.get(
@@ -644,8 +612,6 @@ class BlenderTUI:
         self.clear_screen(full_clear=full_clear)
 
         # Override console width to ensure we have consistent table width
-        # This prevents jitter in the display
-        table_width = min(self.terminal_width, 120)  # Cap at reasonable width
 
         if self.state.current_page == "builds":
             if self.state.has_fetched and not self.state.builds:
@@ -798,7 +764,6 @@ class BlenderTUI:
             # Main input loop
             running = True
             last_refresh_time = time.time()
-            last_full_refresh = time.time()
 
             # Track UI state to minimize refreshes
             is_download_in_progress = False
@@ -828,7 +793,6 @@ class BlenderTUI:
                         self.display_tui()
 
                         last_refresh_time = current_time
-                        last_full_refresh = current_time
                         continue
 
                     # If no key was pressed, check if we need a refresh for download progress
@@ -853,7 +817,6 @@ class BlenderTUI:
                         # Refresh display after handling key without a full clear
                         self.display_tui(full_clear=False)
                         last_refresh_time = time.time()
-                        last_full_refresh = time.time()
 
                 except Exception as inner_e:
                     self.console.print(

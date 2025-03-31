@@ -11,6 +11,22 @@ except ImportError:
     )
     sys.exit(1)
 
+try:
+    # Import appdirs for cross-platform directory finding
+    import appdirs
+except ImportError:
+    print(
+        "appdirs package is required for cross-platform config paths. Install with: pip install appdirs"
+    )
+    # Fallback to Linux-style path if appdirs is not available
+    _DEFAULT_CONFIG_DIR = Path.home() / ".config" / "blender-launcher-tui"
+    _USE_APPDIRS = False
+else:
+    # Use appdirs to determine the user config directory
+    # You might want to specify an app_author too, e.g., appdirs.user_config_dir("blender-launcher", "YourAppNameOrOrg")
+    _DEFAULT_CONFIG_DIR = Path(appdirs.user_config_dir("blender-launcher-tui"))
+    _USE_APPDIRS = True
+
 
 class AppConfig:
     """Configuration for the application."""
@@ -19,8 +35,8 @@ class AppConfig:
     DOWNLOAD_PATH = Path.home() / "blender/blender-build/"
     VERSION_CUTOFF = "3.1"  # Show only builds with version >= this value
 
-    # Config file location
-    CONFIG_DIR = Path.home() / ".config" / "blender-launcher"
+    # Config file location using appdirs (or fallback)
+    CONFIG_DIR = _DEFAULT_CONFIG_DIR
     CONFIG_FILE = CONFIG_DIR / "config.toml"
 
     @classmethod
@@ -30,6 +46,16 @@ class AppConfig:
         If the configuration file doesn't exist or loading fails,
         default values will be used and a new configuration file will be created.
         """
+        # Create the config directory early if using appdirs and it doesn't exist
+        if _USE_APPDIRS and not cls.CONFIG_DIR.exists():
+            try:
+                cls.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                print(f"Debug: Created config directory: {cls.CONFIG_DIR}")
+            except Exception as e:
+                print(f"Failed to create config directory {cls.CONFIG_DIR}: {e}")
+                # Fallback or handle error appropriately if directory creation fails
+                # For now, we'll let the rest of the code try and potentially fail
+
         try:
             if cls.CONFIG_FILE.exists():
                 with open(cls.CONFIG_FILE, "r") as f:

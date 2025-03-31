@@ -2,7 +2,6 @@ import json
 import os
 import subprocess
 import threading
-import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Tuple
