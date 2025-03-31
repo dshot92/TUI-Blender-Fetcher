@@ -513,6 +513,9 @@ def _create_version_info(extract_path: Path, build: BlenderBuild) -> None:
     if not extract_path.exists():
         return
 
+    # Calculate directory size
+    directory_size = _calculate_directory_size(extract_path)
+
     # Create a dictionary with all build information
     build_info = {
         "version": build.version,
@@ -526,9 +529,30 @@ def _create_version_info(extract_path: Path, build: BlenderBuild) -> None:
         "build_time": build.build_time,
         "mtime_formatted": build.mtime_formatted,
         "download_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "directory_size": directory_size,  # Add the calculated directory size
     }
 
     # Write the information to a JSON file
     version_file = extract_path / "version.json"
     with open(version_file, "w") as f:
         json.dump(build_info, f, indent=2)
+
+
+def _calculate_directory_size(path: Path) -> int:
+    """Calculate the total size of a directory.
+
+    Args:
+        path: Directory path
+
+    Returns:
+        Total size in bytes
+    """
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        for filename in filenames:
+            file_path = os.path.join(dirpath, filename)
+            # Skip if it's a symbolic link
+            if not os.path.islink(file_path):
+                total_size += os.path.getsize(file_path)
+
+    return total_size

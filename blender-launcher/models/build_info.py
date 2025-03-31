@@ -15,6 +15,16 @@ class LocalBuildInfo:
     risk_id: Optional[str] = None
     build_date: Optional[str] = None
     download_date: Optional[str] = None
+    directory_size: Optional[int] = None  # Size of the build directory in bytes
+
+    @property
+    def size_mb(self) -> Optional[float]:
+        """Get the directory size in megabytes, if available."""
+        return (
+            self.directory_size / (1024 * 1024)
+            if self.directory_size is not None
+            else None
+        )
 
 
 @dataclass

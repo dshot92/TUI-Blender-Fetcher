@@ -72,6 +72,7 @@ def _extract_build_info_from_directory(dir_path: Path) -> Optional[LocalBuildInf
                             ).strftime("%Y-%m-%d %H:%M"),
                         ),
                         download_date=build_info.get("download_date"),
+                        directory_size=build_info.get("directory_size"),
                     )
         except (json.JSONDecodeError, IOError, KeyError):
             # If there's an error reading the json, fall back to directory name parsing
@@ -95,7 +96,19 @@ def _extract_build_info_from_directory(dir_path: Path) -> Optional[LocalBuildInf
             # No timestamp in directory name, but still a valid build
             build_time = None
 
-        return LocalBuildInfo(version=version, time=build_time)
+        # Calculate directory size for builds without version.json
+        directory_size = None
+        try:
+            # Import here to avoid circular imports
+            from .download import _calculate_directory_size
+
+            directory_size = _calculate_directory_size(dir_path)
+        except Exception:
+            pass  # Skip size calculation if it fails
+
+        return LocalBuildInfo(
+            version=version, time=build_time, directory_size=directory_size
+        )
 
     return None
 
