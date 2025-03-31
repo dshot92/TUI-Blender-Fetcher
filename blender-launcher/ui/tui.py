@@ -80,6 +80,8 @@ class BlenderTUI:
 
     def _handle_resize(self, *args) -> None:
         """Handle terminal resize events by setting a flag to refresh the UI."""
+        # Update terminal size immediately
+        self.terminal_width, self.terminal_height = self.console.size
         self.state.needs_refresh = True
 
     def clear_screen(self, full_clear=True) -> None:
@@ -125,8 +127,11 @@ class BlenderTUI:
         """Print a table of available Blender builds."""
         self.state.local_builds = get_local_builds()
 
-        # Column names for sorting indication
-        column_names = [
+        # Update terminal size before rendering
+        self.terminal_width, self.terminal_height = self.console.size
+
+        # Base column names for sorting indication
+        base_columns = [
             "",  # Selection column
             "Version",
             "Status",
@@ -135,6 +140,9 @@ class BlenderTUI:
             "Hash",
             "Size",
         ]
+
+        # Apply responsive column hiding based on terminal width
+        column_names = self._get_responsive_columns(base_columns)
 
         # Use "Speed" instead of "Build Date" when downloads are active
         if self.state.download_progress:
@@ -200,17 +208,30 @@ class BlenderTUI:
                                 # Show online hash if an update is available
                                 hash_text = online_build.hash or ""
 
-                table.add_row(
+                # Prepare row data
+                row_data = [
                     selected,
                     Text(f"{version_prefix}Blender {version}", style=version_style),
                     status_text,
-                    build_info.branch or "",
-                    type_text,
-                    hash_text,
-                    size_text,
-                    build_date,
-                    style=row_style,
-                )
+                ]
+
+                # Only add Branch column if it's in our responsive columns
+                if "Branch" in column_names:
+                    row_data.append(build_info.branch or "")
+
+                row_data.append(type_text)
+
+                # Only add Hash column if it's in our responsive columns
+                if "Hash" in column_names:
+                    row_data.append(hash_text)
+
+                # Only add Size column if it's in our responsive columns
+                if "Size" in column_names:
+                    row_data.append(size_text)
+
+                row_data.append(build_date)
+
+                table.add_row(*row_data, style=row_style)
             else:
                 # It's an online build
                 online_build = None
@@ -243,17 +264,30 @@ class BlenderTUI:
                     date_text = online_build.mtime_formatted
                     version_col = Text(f"  Blender {version}", style="default")
 
-                table.add_row(
+                # Prepare row data
+                row_data = [
                     selected,
                     version_col,
                     status_text,
-                    online_build.branch,
-                    type_text,
-                    hash_text,
-                    size_text,
-                    date_text,
-                    style=row_style,
-                )
+                ]
+
+                # Only add Branch column if it's in our responsive columns
+                if "Branch" in column_names:
+                    row_data.append(online_build.branch)
+
+                row_data.append(type_text)
+
+                # Only add Hash column if it's in our responsive columns
+                if "Hash" in column_names:
+                    row_data.append(hash_text)
+
+                # Only add Size column if it's in our responsive columns
+                if "Size" in column_names:
+                    row_data.append(size_text)
+
+                row_data.append(date_text)
+
+                table.add_row(*row_data, style=row_style)
 
         # Print the table
         self.console.print(table)
@@ -265,6 +299,40 @@ class BlenderTUI:
             legend.append("   ")
             legend.append("■ Update Available", style="green")
             self.console.print(legend)
+
+    def _get_responsive_columns(self, base_columns):
+        """Determine which columns to show based on terminal width.
+
+        Args:
+            base_columns: The base set of column names
+
+        Returns:
+            List of column names adjusted for the current terminal width
+        """
+        # Make a copy of the base columns
+        columns = base_columns.copy()
+
+        # Minimum width required for a comfortably usable display
+        # (selection, version, status, type, and date)
+        min_required_width = 80
+
+        # Remove columns in order of preference as terminal width decreases
+        # 1. First remove Branch (lowest priority to keep)
+        if self.terminal_width < 115:
+            if "Branch" in columns:
+                columns.remove("Branch")
+
+        # 2. Then remove Hash
+        if self.terminal_width < 100:
+            if "Hash" in columns:
+                columns.remove("Hash")
+
+        # 3. Finally remove Size
+        if self.terminal_width < min_required_width:
+            if "Size" in columns:
+                columns.remove("Size")
+
+        return columns
 
     def _clear_remaining_lines(self) -> None:
         """Clear any remaining content lines after table rendering.
@@ -288,34 +356,74 @@ class BlenderTUI:
 
         table = Table(show_header=True, expand=True, box=box.SIMPLE_HEAVY)
 
+        # Map of column indices in the full columns list to indices in the responsive columns list
+        column_index_map = {
+            0: 0,  # Selection column is always at index 0
+            1: 1,  # Version column is always at index 1
+            2: 2,  # Status column is always at index 2
+        }
+
+        # Track current index in column_names
+        current_idx = 3
+
+        # Branch column (index 3 in full list)
+        if "Branch" in column_names:
+            column_index_map[3] = current_idx
+            current_idx += 1
+
+        # Type column
+        column_index_map[4] = current_idx
+        current_idx += 1
+
+        # Hash column (index 5 in full list)
+        if "Hash" in column_names:
+            column_index_map[5] = current_idx
+            current_idx += 1
+
+        # Size column (index 6 in full list)
+        if "Size" in column_names:
+            column_index_map[6] = current_idx
+            current_idx += 1
+
+        # Build Date column (index 7 in full list)
+        column_index_map[7] = current_idx
+
+        # Adjust sort column if necessary
+        adjusted_sort_column = self.state.sort_column
+        if self.state.sort_column in column_index_map:
+            adjusted_sort_column = column_index_map[self.state.sort_column]
+        elif self.state.sort_column > 7:
+            # If sort column is beyond our mapping (like 8 for Date), just use the last column
+            adjusted_sort_column = len(column_names) - 1
+
         for i, col_name in enumerate(column_names):
             # Add sort indicator to column header
-            if i + 1 == self.state.sort_column:  # Adjust index for removed column
+            if i == adjusted_sort_column - 1:  # Adjust index for removed column
                 sort_indicator = "↑" if not self.state.sort_reverse else "↓"
                 header_text = Text(f"{col_name} {sort_indicator}", style="reverse bold")
             else:
                 header_text = col_name
 
-            # Add columns in order with left alignment
-            if i == 0:  # Selected column
+            # Add columns with appropriate configuration
+            if col_name == "":  # Selection column
                 table.add_column(
                     header_text, justify="center", width=2
                 )  # Will fit [X] or [ ]
-            elif i == 1:  # Version column
+            elif col_name == "Version":
                 table.add_column(header_text, justify="left")  # Variable width
-            elif i == 2:  # Status column
+            elif col_name == "Status":
                 table.add_column(header_text, justify="left", width=6)  # Status column
-            elif i == 3:  # Branch column
+            elif col_name == "Branch":
                 table.add_column(header_text, justify="center")  # Will fit branch names
-            elif i == 4:  # Type column
+            elif col_name == "Type":
                 table.add_column(header_text, justify="center")  # Will fit risk types
-            elif i == 5:  # Hash column
+            elif col_name == "Hash":
                 table.add_column(
                     header_text, justify="center", width=12
                 )  # Will fit hash values
-            elif i == 6:  # Size column
+            elif col_name == "Size":
                 table.add_column(header_text, justify="center")  # Will fit size values
-            elif i == 7:  # Build Date column
+            elif col_name == "Build Date" or col_name == "Speed":
                 table.add_column(header_text, justify="center")  # Will fit dates
 
         return table
@@ -1478,11 +1586,14 @@ class BlenderTUI:
         print("\033[H", end="", flush=True)
         print("\033[?25l", end="", flush=True)
 
+        # Update terminal size before rendering
+        self.terminal_width, self.terminal_height = self.console.size
+
         # Print navigation bar at the top
         self.print_navigation_bar()
 
         # Create a minimalist table just showing downloads
-        column_names = [
+        base_columns = [
             "",  # Selection column
             "Version",
             "Status",
@@ -1490,8 +1601,13 @@ class BlenderTUI:
             "Type",
             "Hash",
             "Size",
-            "Speed",
         ]
+
+        # Apply responsive column hiding based on terminal width
+        column_names = self._get_responsive_columns(base_columns)
+
+        # Always add the Speed column for downloads
+        column_names.append("Speed")
 
         table = self._create_table(column_names)
 
@@ -1524,18 +1640,30 @@ class BlenderTUI:
                     size_text = f"{download_progress:.0f}%"
                     date_text = download_speed
 
-                    # Add the row to the table
-                    table.add_row(
+                    # Prepare row data
+                    row_data = [
                         selected,
                         version_col,
                         status_text,
-                        str(online_build.branch),
-                        type_text,
-                        str(hash_text),
-                        str(size_text),
-                        str(date_text),
-                        style=row_style,
-                    )
+                    ]
+
+                    # Only add Branch column if it's in our responsive columns
+                    if "Branch" in column_names:
+                        row_data.append(str(online_build.branch))
+
+                    row_data.append(type_text)
+
+                    # Only add Hash column if it's in our responsive columns
+                    if "Hash" in column_names:
+                        row_data.append(str(hash_text))
+
+                    # Only add Size column if it's in our responsive columns
+                    if "Size" in column_names:
+                        row_data.append(str(size_text))
+
+                    row_data.append(str(date_text))
+
+                    table.add_row(*row_data, style=row_style)
 
         # Print the table
         self.console.print(table)
