@@ -82,12 +82,21 @@ class BlenderTUI:
         """Handle terminal resize events by setting a flag to refresh the UI."""
         self.state.needs_refresh = True
 
-    def clear_screen(self) -> None:
-        """Position cursor at top without fully clearing the screen.
-        This reduces flashing by not doing a full terminal clear.
+    def clear_screen(self, full_clear=True) -> None:
+        """Clear the screen completely or just position cursor at home position.
+
+        Args:
+            full_clear: If True, completely clear the screen. If False, only position cursor.
         """
-        # Move cursor to home position instead of clearing the screen
+        if full_clear:
+            # Use ANSI sequence to clear the entire screen
+            print("\033[2J", end="", flush=True)
+
+        # Move cursor to home position
         print("\033[H", end="", flush=True)
+
+        # Hide the cursor to prevent it from flashing
+        print("\033[?25l", end="", flush=True)
 
     def print_navigation_bar(self) -> None:
         """Print a navigation bar with keybindings at the bottom of the screen."""
@@ -125,8 +134,13 @@ class BlenderTUI:
             "Type",
             "Hash",
             "Size",
-            "Build Date",
         ]
+
+        # Use "Speed" instead of "Build Date" when downloads are active
+        if self.state.download_progress:
+            column_names.append("Speed")
+        else:
+            column_names.append("Build Date")
 
         table = self._create_table(column_names)
 
@@ -241,18 +255,18 @@ class BlenderTUI:
                     style=row_style,
                 )
 
+        # Print the table
         self.console.print(table)
 
-        # Print legend if online builds are available
+        # Display legend below the table if we have online builds
         if self.state.has_fetched and self.state.builds:
-            self.console.print(
-                Text("■ Current Local Version", style="yellow"),
-                Text("■ Update Available", style="green"),
-                sep="   ",
-            )
+            from rich.text import Text
 
-        # Clear any remaining content from previous renders
-        self._clear_remaining_lines()
+            legend = Text()
+            legend.append("■ Current Local Version", style="yellow")
+            legend.append("   ")
+            legend.append("■ Update Available", style="green")
+            self.console.print(legend)
 
     def _clear_remaining_lines(self) -> None:
         """Clear any remaining content lines after table rendering.
@@ -518,10 +532,14 @@ class BlenderTUI:
         # Add some spacing at the bottom
         self.console.print()
 
-    def display_tui(self) -> None:
-        """Display the TUI using Rich's components."""
+    def display_tui(self, full_clear=True) -> None:
+        """Display the TUI using Rich's components.
+
+        Args:
+            full_clear: Whether to fully clear the screen before redrawing
+        """
         # Position cursor at top - this is more gentle than clearing
-        self.clear_screen()
+        self.clear_screen(full_clear=full_clear)
 
         # Override console width to ensure we have consistent table width
         # This prevents jitter in the display
@@ -534,12 +552,20 @@ class BlenderTUI:
                     style="bold yellow",
                 )
             else:
+                # Print navigation bar at the top
+                self.print_navigation_bar()
+
+                # Print the build table (legend will be printed by print_build_table)
                 self.print_build_table()
         else:  # settings page
+            # Print navigation bar at the top for settings page
+            self.print_navigation_bar()
+
+            # Print the settings table
             self.print_settings_table()
 
-        # Move navigation bar to bottom
-        self.print_navigation_bar()
+        # Clear any remaining content
+        self._clear_remaining_lines()
 
     def _fetch_online_builds(self) -> bool:
         """Fetch builds from the Blender server.
@@ -715,7 +741,12 @@ class BlenderTUI:
                     # Use a shorter timeout when downloads are in progress to keep the UI responsive
                     # but not so short that it causes excessive refreshing
                     timeout = 0.1 if self.state.download_progress else 0.5
+
+                    # Show cursor when waiting for input
+                    print("\033[?25h", end="", flush=True)
                     key = get_keypress(timeout=timeout)
+                    # Hide cursor again when displaying UI
+                    print("\033[?25l", end="", flush=True)
 
                     current_time = time.time()
 
@@ -738,32 +769,13 @@ class BlenderTUI:
                             # For downloads, update at a reasonable rate to prevent flashing
                             time_since_last_refresh = current_time - last_refresh_time
                             if (
-                                time_since_last_refresh >= 0.5
-                            ):  # Max 2 refreshes per second
-                                # Just reposition cursor and update display - no full clear
-                                self.display_tui()
-                                self.state.needs_refresh = False
-                                last_refresh_time = current_time
-
-                        if self.state.needs_refresh:
-                            # For downloads, update at a reasonable rate to prevent flashing
-                            time_since_last_refresh = current_time - last_refresh_time
-                            if (
-                                time_since_last_refresh >= 0.5
-                            ):  # Max 2 refreshes per second
-                                if is_download_in_progress:
-                                    # Use the optimized display for downloads to minimize flashing
-                                    self.display_download_progress()
-                                else:
-                                    # For non-download pages, use the standard display
-                                    self.display_tui()
+                                time_since_last_refresh >= 0.75
+                            ):  # Reduce refresh rate to once per 0.75 seconds
+                                # Always use the standard display method instead of the specialized download one
+                                self.display_tui(full_clear=False)
                                 self.state.needs_refresh = False
                                 last_refresh_time = current_time
                         continue
-                        # Refresh display after handling key but avoid full clear
-                        self.display_tui()
-                        last_refresh_time = time.time()
-                        last_full_refresh = time.time()
 
                     # Handle the key based on the current page
                     handler = self.page_handlers.get(self.state.current_page)
@@ -771,7 +783,7 @@ class BlenderTUI:
                         running = handler(key)
 
                         # Refresh display after handling key without a full clear
-                        self.display_tui()
+                        self.display_tui(full_clear=False)
                         last_refresh_time = time.time()
                         last_full_refresh = time.time()
 
@@ -785,6 +797,9 @@ class BlenderTUI:
 
         except Exception as e:
             self.console.print(f"An error occurred: {e}", style="bold red")
+        finally:
+            # Always ensure cursor is visible when program exits
+            print("\033[?25h", end="", flush=True)
 
     def _handle_builds_page_input(self, key: str) -> bool:
         """Handle input for the builds page.
@@ -879,7 +894,8 @@ class BlenderTUI:
             # Move down (only 2 settings now)
             self.state.settings_cursor = min(self.state.settings_cursor + 1, 1)
 
-        self.display_tui()
+        # Use partial screen update to reduce flashing
+        self.display_tui(full_clear=False)
         return True
 
     def _switch_to_builds_page(self) -> bool:
@@ -899,7 +915,8 @@ class BlenderTUI:
             True to continue running
         """
         self.state.cursor_position = max(0, self.state.cursor_position - 1)
-        self.display_tui()
+        # Use partial screen update to reduce flashing
+        self.display_tui(full_clear=False)
         return True
 
     def _move_cursor_down(self) -> bool:
@@ -913,7 +930,8 @@ class BlenderTUI:
         max_index = total_items - 1 if total_items > 0 else 0
 
         self.state.cursor_position = min(self.state.cursor_position + 1, max_index)
-        self.display_tui()
+        # Use partial screen update to reduce flashing
+        self.display_tui(full_clear=False)
         return True
 
     def _get_combined_build_list(self) -> List[Tuple[str, int, str]]:
@@ -957,7 +975,8 @@ class BlenderTUI:
         """
         if self.state.sort_column > 1:  # Start from column 1 now (Selection)
             self.state.sort_column -= 1
-            self.display_tui()
+            # Use partial screen update to reduce flashing
+            self.display_tui(full_clear=False)
         return True
 
     def _move_column_right(self) -> bool:
@@ -968,7 +987,8 @@ class BlenderTUI:
         """
         if self.state.sort_column < 8:  # Adjust max column index (was 7)
             self.state.sort_column += 1
-            self.display_tui()
+            # Use partial screen update to reduce flashing
+            self.display_tui(full_clear=False)
         return True
 
     def _toggle_sort_reverse(self) -> bool:
@@ -978,7 +998,8 @@ class BlenderTUI:
             True to continue running
         """
         self.state.sort_reverse = not self.state.sort_reverse
-        self.display_tui()
+        # Use partial screen update to reduce flashing
+        self.display_tui(full_clear=False)
         return True
 
     def _toggle_selection(self) -> bool:
@@ -994,7 +1015,8 @@ class BlenderTUI:
             self.state.selected_builds.remove(self.state.cursor_position)
         else:
             self.state.selected_builds.add(self.state.cursor_position)
-        self.display_tui()
+        # Use partial screen update to reduce flashing
+        self.display_tui(full_clear=False)
         return True
 
     def _has_visible_builds(self) -> bool:
@@ -1081,18 +1103,18 @@ class BlenderTUI:
             self.state.download_progress[build.version] = 0
             self.state.download_speed[build.version] = "Starting..."
 
-        # Stop any existing live display
-        # Clear the screen
-        self.clear_screen()
+        # Create a panel with the download message
+        from rich.panel import Panel
+        from rich.align import Align
 
-        # Show preparing message
-        self.console.print("[bold green]Preparing download...[/bold green]")
+        panel = Panel(
+            Align.center("Preparing download...please wait"),
+            border_style="green bold",
+            width=40,
+        )
 
-        # Position cursor at home and update display
-        self.clear_screen()
-
-        # Show preparing message
-        self.console.print("[bold green]Preparing download...please wait[/bold green]")
+        # Display the centered panel
+        self._display_centered_panel(panel)
 
         # Start download in background thread
         import threading
@@ -1198,19 +1220,9 @@ class BlenderTUI:
 
                 # Tell main loop to update the UI if there's a significant change
                 # and sufficient time has passed since last refresh
-                if significant_change and (current_time - last_refresh_request >= 0.5):
-                    self.state.needs_refresh = True
-                    last_refresh_request = current_time
-
-                # Tell main loop to update the UI if sufficient time has passed
-                if current_time - last_refresh_request >= 0.3:
-                    # Always mark as needing refresh during downloads to ensure live updates
-                    self.state.needs_refresh = True
-                    last_refresh_request = current_time
-
-                # Tell main loop to update the UI more frequently but not too fast to avoid flashing
-                if current_time - last_refresh_request >= 0.25:
-                    # Always mark as needing refresh during downloads to ensure live updates
+                if (significant_change or any_progress_updated) and (
+                    current_time - last_refresh_request >= 0.5
+                ):
                     self.state.needs_refresh = True
                     last_refresh_request = current_time
 
@@ -1308,9 +1320,13 @@ class BlenderTUI:
         """Edit the download path setting."""
         current = AppConfig.DOWNLOAD_PATH
 
+        # Show cursor for text input
+        print("\033[?25h", end="", flush=True)
         new_path = prompt_input(
             f"Enter new download path [cyan]({current})[/cyan]", default=str(current)
         )
+        # Hide cursor after input
+        print("\033[?25l", end="", flush=True)
 
         if new_path and new_path != str(current):
             try:
@@ -1327,10 +1343,14 @@ class BlenderTUI:
         """Edit the version cutoff setting."""
         current = AppConfig.VERSION_CUTOFF
 
+        # Show cursor for text input
+        print("\033[?25h", end="", flush=True)
         new_cutoff = prompt_input(
             f"Enter minimum Blender version to display [cyan]({current})[/cyan]",
             default=current,
         )
+        # Hide cursor after input
+        print("\033[?25l", end="", flush=True)
 
         if new_cutoff and new_cutoff != current:
             try:
@@ -1386,10 +1406,8 @@ class BlenderTUI:
             width=min(len(prompt_text) + 10, 80),
         )
 
-        # Clear screen and show panel instead of table
-        self.clear_screen()
-        self.console.print(panel)
-        self.print_navigation_bar()
+        # Display the centered panel
+        self._display_centered_panel(panel)
 
         # Get user confirmation
         while True:
@@ -1430,9 +1448,8 @@ class BlenderTUI:
             width=min(len(result_text) + 10, 80),
         )
 
-        # Clear screen and show result panel
-        self.clear_screen()
-        self.console.print(result_panel)
+        # Display the centered result panel
+        self._display_centered_panel(result_panel)
 
         # Brief pause before returning to normal view
         time.sleep(1.5)
@@ -1459,8 +1476,12 @@ class BlenderTUI:
         """Optimized display method for download progress updates.
         Only updates the essential elements to minimize screen updates and flashing.
         """
-        # Position cursor at home position
+        # Position cursor at home position without clearing the screen
         print("\033[H", end="", flush=True)
+        print("\033[?25l", end="", flush=True)
+
+        # Print navigation bar at the top
+        self.print_navigation_bar()
 
         # Create a minimalist table just showing downloads
         column_names = [
@@ -1521,8 +1542,48 @@ class BlenderTUI:
         # Print the table
         self.console.print(table)
 
-        # Print navigation hints
+        # Display legend below the table
+        from rich.text import Text
+
+        legend = Text()
+        legend.append("■ Current Local Version", style="yellow")
+        legend.append("   ")
+        legend.append("■ Update Available", style="green")
+        self.console.print(legend)
+
+        # Add cancel download hint
         self.console.print("Press any key to cancel download", style="dim")
 
         # Clear any remaining content
         self._clear_remaining_lines()
+
+    def _display_centered_panel(self, panel) -> None:
+        """Display a panel centered both horizontally and vertically.
+
+        Args:
+            panel: Rich Panel object to display centered
+        """
+        # Clear screen first - this needs a full clear for panels
+        self.clear_screen(full_clear=True)
+
+        # Print navigation at the top
+        self.print_navigation_bar()
+
+        # Calculate vertical position to center the panel
+        terminal_height = self.console.height
+        # Estimate panel height as 3 lines for simple panels, adjust if needed
+        panel_height = 3
+        nav_bar_height = 2  # Navigation bar takes about 2 lines
+
+        vertical_padding = max(
+            0, (terminal_height - panel_height - nav_bar_height) // 2
+        )
+
+        # Add vertical padding
+        for _ in range(vertical_padding):
+            self.console.print("")
+
+        # Print centered panel
+        from rich.align import Align
+
+        self.console.print(Align.center(panel))

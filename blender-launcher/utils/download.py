@@ -39,8 +39,8 @@ def download_build(
 
     # Automatically clean up incomplete downloads without prompting
     if download_path.exists():
-        console.print(f"Found incomplete download file: {filename}")
-        console.print("Removing incomplete download file...")
+        # console.print(f"Found incomplete download file: {filename}")
+        # console.print("Removing incomplete download file...")
         download_path.unlink()
 
     # Check for existing build DIRECTORIES only (not archive files)
@@ -53,23 +53,23 @@ def download_build(
     should_remove = False
 
     if existing_builds and not skip_confirmation:
-        console.print(
-            f"\nExisting build directories found for Blender {build.version}:"
-        )
-        for build_dir in existing_builds:
-            console.print(f"  - {build_dir}")
+        # console.print(
+        #     f"\nExisting build directories found for Blender {build.version}:"
+        # )
+        # for build_dir in existing_builds:
+        #     console.print(f"  - {build_dir}")
 
         # Ask for confirmation before downloading
         if not Confirm.ask(
             f"Remove existing Blender {build.version} build(s)?", default=True
         ):
-            console.print(f"Keeping existing Blender {build.version} build(s)")
+            # console.print(f"Keeping existing Blender {build.version} build(s)")
             return None
 
         should_remove = True
 
     try:
-        console.print(f"\nStarting download of {filename}...")
+        # console.print(f"\nStarting download of {filename}...")
 
         # Download the file
         if not _download_file(build.url, download_dir, console):
@@ -79,20 +79,20 @@ def download_build(
         if should_remove or skip_confirmation:
             for build_dir in existing_builds:
                 try:
-                    console.print(f"Removing {build_dir}...")
+                    # console.print(f"Removing {build_dir}...")
                     if build_dir.is_dir():
                         subprocess.run(["rm", "-rf", str(build_dir)], check=True)
                     else:
                         build_dir.unlink()
                 except (subprocess.CalledProcessError, OSError) as e:
-                    console.print(
-                        f"Failed to remove {build_dir}: {e}", style="bold red"
-                    )
+                    # console.print(
+                    #     f"Failed to remove {build_dir}: {e}", style="bold red"
+                    # )
                     if download_path.exists():
                         download_path.unlink()
                     return None
 
-        console.print(f"Extraction of {filename}...")
+        # console.print(f"Extraction of {filename}...")
         # Extract the archive
         if not _extract_archive(download_path, download_dir, console):
             return None
@@ -102,18 +102,18 @@ def download_build(
 
         # Clean up the archive file
         download_path.unlink()
-        console.print(f"Cleaned up archive file for {build.version}")
+        # console.print(f"Cleaned up archive file for {build.version}")
 
-        console.print(
-            f"Download and extraction of Blender {build.version} completed successfully"
-        )
+        # console.print(
+        #     f"Download and extraction of Blender {build.version} completed successfully"
+        # )
 
         return build.version
 
     except Exception as e:
-        console.print(
-            f"Failed to download/extract {build.version}: {e}", style="bold red"
-        )
+        # console.print(
+        #     f"Failed to download/extract {build.version}: {e}", style="bold red"
+        # )
         return None
 
 
@@ -137,8 +137,8 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
     for build in builds:
         download_path = download_dir / build.file_name
         if download_path.exists():
-            console.print(f"Found incomplete download file: {build.file_name}")
-            console.print("Removing incomplete download file...")
+            # console.print(f"Found incomplete download file: {build.file_name}")
+            # console.print("Removing incomplete download file...")
             download_path.unlink()
 
     # Ask confirmation for removing existing builds BEFORE downloading
@@ -159,21 +159,21 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
     should_remove = False
 
     if all_existing_builds:
-        console.print("\nExisting build directories found:")
-        for build_dir in all_existing_builds:
-            console.print(f"  - {build_dir}")
+        # console.print("\nExisting build directories found:")
+        # for build_dir in all_existing_builds:
+        #     console.print(f"  - {build_dir}")
 
         # Get confirmation for updates
         if not Confirm.ask(
             "This will remove existing builds and download updates. Proceed?",
             default=True,
         ):
-            console.print("Download cancelled")
+            # console.print("Download cancelled")
             return False
 
         should_remove = True
 
-    console.print(f"Files will be downloaded to: {download_dir}\n")
+    # console.print(f"Files will be downloaded to: {download_dir}\n")
 
     # Dictionary to track each download
     temp_log_files = {}
@@ -211,30 +211,33 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
                     download_path = download_dir / build.file_name
                     successful_downloads.append((build, download_path))
                 else:
-                    console.print(
-                        f"Download of {build.version} failed.", style="bold red"
-                    )
+                    # console.print(
+                    #     f"Download of {build.version} failed.", style="bold red"
+                    # )
+                    pass
             else:
-                console.print(
-                    f"No log file found for {build.version}.", style="bold red"
-                )
+                # console.print(
+                #     f"No log file found for {build.version}.", style="bold red"
+                # )
+                pass
 
         # If we got successful downloads and should remove existing builds
         if successful_downloads and should_remove:
-            console.print("\nRemoving existing builds...")
+            # console.print("\nRemoving existing builds...")
             for version, paths in versions_to_remove.items():
-                console.print(f"Removing existing Blender {version} build(s)...")
+                # console.print(f"Removing existing Blender {version} build(s)...")
                 for build_dir in paths:
                     try:
-                        console.print(f"Removing {build_dir}...")
+                        # console.print(f"Removing {build_dir}...")
                         if build_dir.is_dir():
                             subprocess.run(["rm", "-rf", str(build_dir)], check=True)
                         else:
                             build_dir.unlink()
                     except (subprocess.CalledProcessError, OSError) as e:
-                        console.print(
-                            f"Failed to remove {build_dir}: {e}", style="bold red"
-                        )
+                        # console.print(
+                        #     f"Failed to remove {build_dir}: {e}", style="bold red"
+                        # )
+                        pass
 
         # Now extract all successful downloads
         for build, download_path in successful_downloads:
@@ -243,23 +246,24 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
                 extracted_dir_name = filename.replace(".tar.xz", "")
                 extract_path = download_dir / extracted_dir_name
 
-                console.print(f"Extraction of {filename}...")
+                # console.print(f"Extraction of {filename}...")
                 if _extract_archive(download_path, download_dir, console):
                     # Create version information file
                     _create_version_info(extract_path, build)
 
                     # Clean up the archive file
                     download_path.unlink()
-                    console.print(f"Cleaned up archive file for {build.version}")
+                    # console.print(f"Cleaned up archive file for {build.version}")
 
-                    console.print(
-                        f"Extraction of Blender {build.version} completed successfully"
-                    )
+                    # console.print(
+                    #     f"Extraction of Blender {build.version} completed successfully"
+                    # )
                     completed_versions.append(build.version)
             except Exception as e:
-                console.print(
-                    f"Extraction of {build.version} failed: {e}", style="bold red"
-                )
+                # console.print(
+                #     f"Extraction of {build.version} failed: {e}", style="bold red"
+                # )
+                pass
 
         # Clean up log files
         for log_file in temp_log_files.values():
@@ -270,33 +274,33 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
                     pass  # Ignore cleanup errors
 
         if completed_versions:
-            console.print(
-                f"\nCompleted downloading {len(completed_versions)} builds: {', '.join(completed_versions)}"
-            )
+            # console.print(
+            #     f"\nCompleted downloading {len(completed_versions)} builds: {', '.join(completed_versions)}"
+            # )
             return True
         else:
-            console.print(
-                "\nNo builds were downloaded successfully", style="bold yellow"
-            )
+            # console.print(
+            #     "\nNo builds were downloaded successfully", style="bold yellow"
+            # )
             return False
 
     except KeyboardInterrupt:
-        console.print(
-            "\nDownloads interrupted by user. Cleaning up...", style="bold yellow"
-        )
+        # console.print(
+        #     "\nDownloads interrupted by user. Cleaning up...", style="bold yellow"
+        # )
         # Clean up temp files
         for log_file in temp_log_files.values():
             if os.path.exists(log_file):
                 os.unlink(log_file)
         # We can't cancel the downloads directly, but we can inform the user
-        console.print(
-            "Note: Download processes may still be running in the background."
-        )
-        console.print("You may need to manually kill wget processes.")
+        # console.print(
+        #     "Note: Download processes may still be running in the background."
+        # )
+        # console.print("You may need to manually kill wget processes.")
         return False
 
     except Exception as e:
-        console.print(f"\nAn error occurred during downloads: {e}", style="bold red")
+        # console.print(f"\nAn error occurred during downloads: {e}", style="bold red")
         # Clean up temp files
         for log_file in temp_log_files.values():
             if os.path.exists(log_file):
@@ -333,9 +337,9 @@ def _download_file_with_log(
     """
     try:
         filename = build.file_name
-        console.print(f"[bold]Starting download of {filename}...[/bold]")
+        # console.print(f"[bold]Starting download of {filename}...[/bold]")
 
-        console.print("[bold]Using wget for download[/bold]")
+        # console.print("[bold]Using wget for download[/bold]")
         with open(log_file, "w") as f:
             # Set environment variables for consistent output format
             env = os.environ.copy()
@@ -461,7 +465,7 @@ def _download_file(url: str, download_dir: Path, console: Console) -> bool:
         True if download was successful
     """
     try:
-        console.print("[bold]Using wget for download[/bold]")
+        # console.print("[bold]Using wget for download[/bold]")
         # Use wget with progress bar in foreground
         process = subprocess.run(
             [
@@ -477,7 +481,7 @@ def _download_file(url: str, download_dir: Path, console: Console) -> bool:
         )
         return True
     except subprocess.CalledProcessError as e:
-        console.print(f"Download failed: {e}", style="bold red")
+        # console.print(f"Download failed: {e}", style="bold red")
         return False
 
 
@@ -493,13 +497,13 @@ def _extract_archive(archive_path: Path, target_dir: Path, console: Console) -> 
         True if extraction was successful
     """
     try:
-        console.print(f"Extracting {archive_path.name}...")
+        # console.print(f"Extracting {archive_path.name}...")
         subprocess.run(
             ["tar", "-xf", str(archive_path), "-C", str(target_dir)], check=True
         )
         return True
     except subprocess.CalledProcessError as e:
-        console.print(f"Extraction failed: {e}", style="bold red")
+        # console.print(f"Extraction failed: {e}", style="bold red")
         return False
 
 
