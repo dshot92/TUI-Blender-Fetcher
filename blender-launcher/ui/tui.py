@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 import time
 from functools import lru_cache
+import tempfile
+import threading
 
 from rich.console import Console
 from rich.table import Table
@@ -72,7 +74,7 @@ _SORT_KEYS = {
     7: lambda d: _parse_time(d["time"]) if d["time"] else 0,  # Build Date/Time
 }
 
-_DEFAULT_SORT_COLUMN = 7  # Default sort by Build Date (index 7)
+_DEFAULT_SORT_COLUMN = 1  # Default sort by Build Date (index 7)
 _DEFAULT_SORT_REVERSE = True
 
 
@@ -160,7 +162,7 @@ class BlenderTUI:
             self.console.print("━" * self.console.width, style="dim")
 
             # Group commands by functionality with better spacing and styling
-            actions = "[bold yellow]Space[/bold yellow]:Select  [bold green]Enter[/bold green]:Launch  [bold cyan]D[/bold cyan]:Download  [bold red]X[/bold red]:Delete"
+            actions = "[bold yellow]Space[/bold yellow]:Select  [bold green]Enter[/bold green]:Launch  [bold cyan]D[/bold cyan]:Download  [bold magenta]O[/bold magenta]:Open Dir  [bold red]X[/bold red]:Delete"
             system = "[bold magenta]F[/bold magenta]:Fetch  [bold magenta]R[/bold magenta]:Reverse  [bold magenta]S[/bold magenta]:Settings  [bold magenta]Q[/bold magenta]:Quit"
 
             # Format in a visually balanced way
@@ -858,6 +860,7 @@ class BlenderTUI:
             "s": self._switch_to_settings,
             "q": lambda: False,  # Return False to exit
             "d": self._handle_download,
+            "o": self._open_build_directory,
             "x": self._delete_selected_build,
             "\x03": lambda: False,  # Ctrl-C (ASCII value 3) to exit
         }
@@ -1139,40 +1142,52 @@ class BlenderTUI:
                 # Find the corresponding online build
                 for build in self.state.builds:
                     if build.version == version:
-                        builds_to_download.append(build)
-                        download_indices.append(self.state.cursor_position)
-                        break
+                        # Only download if it's not local or has an update
+                        if (
+                            version not in self.state.local_builds
+                            or self._has_update_available(version)
+                        ):
+                            builds_to_download.append(build)
+                            download_indices.append(self.state.cursor_position)
+                            break
 
         if not builds_to_download:
-            self.console.print("No builds selected for download", style="yellow")
+            self.console.print(
+                "No valid online builds selected for download", style="yellow"
+            )
             return True
+
+        # Create temporary log files *before* starting the thread
+        temp_log_files: Dict[str, str] = {}
+        try:
+            for build in builds_to_download:
+                with tempfile.NamedTemporaryFile(
+                    prefix=f"blender_download_{build.version}_",
+                    suffix=".log",
+                    mode="w",
+                    delete=False,  # We need to manage deletion manually
+                ) as temp_log:
+                    temp_log_files[build.version] = temp_log.name
+        except Exception as e:
+            self.console.print(
+                f"Failed to create temporary log files: {e}", style="bold red"
+            )
+            # Clean up any partially created files
+            for path in temp_log_files.values():
+                try:
+                    Path(path).unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return True  # Abort download
 
         # Initialize download tracking
         self.state.download_progress = {}
         self.state.download_speed = {}
-        for build in builds_to_download:
-            self.state.download_progress[build.version] = 0
-            self.state.download_speed[build.version] = "Starting..."
-
-        # Create a panel with the download message
-        from rich.panel import Panel
-        from rich.align import Align
-
-        panel = Panel(
-            Align.center("Preparing download...please wait"),
-            border_style="green bold",
-            width=40,
-        )
-
-        # Display the centered panel
-        self._display_centered_panel(panel)
 
         # Start download in background thread
-        import threading
-
         download_thread = threading.Thread(
             target=self._download_with_progress_tracking,
-            args=(builds_to_download,),
+            args=(builds_to_download, temp_log_files),  # Pass log file paths
             daemon=True,
         )
         download_thread.start()
@@ -1181,11 +1196,14 @@ class BlenderTUI:
         # and update the UI accordingly
         return True
 
-    def _download_with_progress_tracking(self, builds: List[BlenderBuild]) -> None:
+    def _download_with_progress_tracking(
+        self, builds: List[BlenderBuild], log_file_paths: Dict[str, str]
+    ) -> None:
         """Download builds and track progress for display in the main table.
 
         Args:
             builds: The builds to download
+            log_file_paths: Dictionary of temporary log file paths for each build
         """
         import time
         import threading
@@ -1193,19 +1211,13 @@ class BlenderTUI:
         from ..utils.download import (
             download_multiple_builds,
             _get_progress_and_speed_from_log,
-            get_log_file_path,
         )
 
         # Start the downloads
         download_thread = threading.Thread(
-            target=download_multiple_builds, args=(builds,), daemon=True
+            target=download_multiple_builds, args=(builds, log_file_paths), daemon=True
         )
         download_thread.start()
-
-        # Get log file paths
-        temp_log_files = {}
-        for build in builds:
-            temp_log_files[build.version] = Path(get_log_file_path(build))
 
         # Track previous progress values
         previous_progress = {}
@@ -1216,24 +1228,37 @@ class BlenderTUI:
         last_refresh_request = time.time()
 
         try:
-            # Give download_multiple_builds a chance to create log files
-            time.sleep(1)
+            # Give download_multiple_builds a chance to start and potentially write to logs
+            time.sleep(0.5)  # Slightly reduced initial sleep
 
             running = True
             completed_builds = set()
+            all_logs_checked_at_least_once = False
 
-            while running and download_thread.is_alive():
+            while running:
+                # Check if the main download thread is still alive
+                if not download_thread.is_alive() and all_logs_checked_at_least_once:
+                    running = False  # Exit loop if download thread finished and we checked logs
+
                 any_progress_updated = False
                 significant_change = False
                 current_time = time.time()
+                all_logs_checked_this_cycle = True
 
                 for build in builds:
                     if build.version in completed_builds:
                         continue
 
-                    log_file = temp_log_files[build.version]
+                    log_file_path = log_file_paths.get(build.version)
+                    if not log_file_path:
+                        all_logs_checked_this_cycle = False
+                        continue  # Should not happen if created correctly
+
+                    log_file = Path(log_file_path)
                     if log_file.exists():
-                        result = _get_progress_and_speed_from_log(log_file)
+                        result = _get_progress_and_speed_from_log(
+                            str(log_file)
+                        )  # Pass string path
                         if result:
                             percentage, speed = result
 
@@ -1304,19 +1329,33 @@ class BlenderTUI:
             self.state.needs_refresh = True
 
         except Exception as e:
-            # Show error
+            self.console.print(
+                f"Error during download/progress tracking: {e}", style="bold red"
+            )
+            # Show error in UI
             for build in builds:
                 self.state.download_progress[build.version] = 0
-                self.state.download_speed[build.version] = f"Error: {e}"
-
-            # Force refresh to show error status
-            self.state.needs_refresh = True
-            time.sleep(2)
+                self.state.download_speed[build.version] = (
+                    f"Error"  # Simplified error message
+                )
 
             # Clean up
             self.state.download_progress = {}
             self.state.download_speed = {}
             self.state.needs_refresh = True
+        finally:
+            # --- Cleanup Temporary Log Files --- #
+            # Ensure log files created by _handle_download are deleted
+            for log_path_str in log_file_paths.values():
+                try:
+                    Path(log_path_str).unlink(missing_ok=True)  # Use missing_ok=True
+                except OSError as e:
+                    # Log potential cleanup error, but don't crash
+                    self.console.print(
+                        f"Warning: Could not delete temp log {log_path_str}: {e}",
+                        style="yellow",
+                    )
+                    pass
 
     def _has_update_available(self, version: str) -> bool:
         """Check if an update is available for a local build.
@@ -1536,3 +1575,97 @@ class BlenderTUI:
         from rich.align import Align
 
         self.console.print(Align.center(panel))
+
+    def _open_build_directory(self) -> bool:
+        """Open the directory of the selected local build in the file explorer.
+
+        Returns:
+            True to continue running.
+        """
+        import platform
+        import subprocess
+
+        if not self._has_visible_builds():
+            self.console.print("No builds available.", style="yellow")
+            return True
+
+        combined_build_list = self._get_combined_build_list()
+        if not (0 <= self.state.cursor_position < len(combined_build_list)):
+            self.console.print("Invalid cursor position.", style="red")
+            return True
+
+        build_type, version = combined_build_list[self.state.cursor_position]
+
+        if build_type != "local":
+            self.console.print(
+                "Cannot open directory for an online build.", style="yellow"
+            )
+            # Display message briefly
+            time.sleep(1.0)
+            self.display_tui(full_clear=False)  # Redraw to clear message
+            return True
+
+        build_dir = self._find_build_directory(version)
+        if not build_dir or not build_dir.is_dir():
+            self.console.print(
+                f"Directory not found for local build {version}.", style="red"
+            )
+            # Display message briefly
+            time.sleep(1.0)
+            self.display_tui(full_clear=False)  # Redraw to clear message
+            return True
+
+        command = []
+        system = platform.system()
+
+        if system == "Windows":
+            # Use 'start ""' to handle paths with spaces correctly via shell
+            command = ["start", '""', str(build_dir)]  # Pass empty title
+        elif system == "Darwin":  # macOS
+            command = ["open", str(build_dir)]
+        elif system == "Linux":
+            command = ["xdg-open", str(build_dir)]
+        else:
+            self.console.print(
+                f"Unsupported operating system ({system}) for opening directory.",
+                style="red",
+            )
+            # Display message briefly
+            time.sleep(1.0)
+            self.display_tui(full_clear=False)  # Redraw to clear message
+            return True
+
+        try:
+            # Clear screen and show opening message
+            self.clear_screen(full_clear=False)  # Use partial clear
+
+            self.print_navigation_bar()  # Keep nav bar visible
+
+            # Use Popen for non-blocking execution
+            # shell=True is generally needed for 'start' on Windows
+            subprocess.Popen(
+                " ".join(command) if system == "Windows" else command,
+                shell=(system == "Windows"),
+            )
+
+            # Brief pause allows the message to be seen before redraw by main loop
+            time.sleep(0.5)
+        except FileNotFoundError:
+            # Clear screen and show error message
+            self.clear_screen(full_clear=False)  # Use partial clear
+            self.console.print(
+                f"Error: Command '{command[0]}' not found. Cannot open directory.",
+                style="red",
+            )
+            self.print_navigation_bar()  # Keep nav bar visible
+            time.sleep(1.5)  # Allow user to see error
+        except Exception as e:
+            # Clear screen and show error message
+            self.clear_screen(full_clear=False)  # Use partial clear
+            self.console.print(f"Error opening directory: {e}", style="red")
+            self.print_navigation_bar()  # Keep nav bar visible
+            time.sleep(1.5)  # Allow user to see error
+
+        # Trigger a redraw from the main loop to restore the table
+        self.state.needs_refresh = True
+        return True

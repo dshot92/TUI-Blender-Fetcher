@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import threading
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Tuple
@@ -122,11 +123,15 @@ def download_build(
         return None
 
 
-def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
+def download_multiple_builds(
+    builds: List[BlenderBuild], log_file_paths: Optional[Dict[str, str]] = None
+) -> bool:
     """Download multiple builds in parallel.
 
     Args:
         builds: List of builds to download
+        log_file_paths: Optional dictionary mapping build version to pre-created log file path.
+                          If provided, these paths will be used for logging.
 
     Returns:
         True if all downloads were successful, False otherwise
@@ -180,8 +185,8 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
 
     # console.print(f"Files will be downloaded to: {download_dir}\n")
 
-    # Dictionary to track each download
-    temp_log_files = {}
+    # Dictionary to track each download (now stores temp file paths)
+    temp_log_files: Dict[str, str] = {}
     completed_versions = []
     successful_downloads = []
 
@@ -189,14 +194,25 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
         # Create a separate thread for each download
         threads = []
         for build in builds:
-            # Get the log file path for this build
-            log_file = get_log_file_path(build)
-            temp_log_files[build.version] = log_file
+            # Get the log file path for this build from the provided dictionary
+            log_file_path = (
+                log_file_paths.get(build.version) if log_file_paths else None
+            )
 
-            # Create thread for this download
+            if not log_file_path:
+                # Handle case where log path is not provided (e.g., fallback or error)
+                # For now, we might skip or raise an error if paths are expected
+                # If log_file_paths is None, this indicates an internal issue or misuse.
+                console.print(
+                    f"Error: Log file path not provided for {build.version}. Skipping download.",
+                    style="bold red",
+                )
+                continue  # Or raise ValueError("Log file paths must be provided")
+
+            # Create thread for this download, passing the temp file path
             thread = threading.Thread(
                 target=_download_file_with_log,
-                args=(build, download_dir, log_file, console),
+                args=(build, download_dir, log_file_path, console),  # Pass the path
             )
             threads.append((thread, build))
 
@@ -210,19 +226,29 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
 
         # Check results and collect successful downloads
         for _, build in threads:
-            log_file = Path(temp_log_files[build.version])
-            if log_file.exists():
-                if _check_download_success(str(log_file)):
-                    download_path = download_dir / build.file_name
-                    successful_downloads.append((build, download_path))
+            log_file_path = (
+                log_file_paths.get(build.version) if log_file_paths else None
+            )
+            if log_file_path:
+                log_path = Path(log_file_path)  # Work with Path object
+                if log_path.exists():
+                    if _check_download_success(str(log_path)):  # Pass string path
+                        download_path = download_dir / build.file_name
+                        successful_downloads.append((build, download_path))
+                    else:
+                        # console.print(
+                        #     f"Download of {build.version} failed (check log {log_file_path}).", style="bold red"
+                        # ) # Optional: print log path on failure
+                        pass
                 else:
                     # console.print(
-                    #     f"Download of {build.version} failed.", style="bold red"
+                    #     f"Log file {log_file_path} missing for {build.version}.", style="bold red"
                     # )
                     pass
             else:
+                # This case might happen if temp file creation failed earlier
                 # console.print(
-                #     f"No log file found for {build.version}.", style="bold red"
+                #     f"No log file path tracked for {build.version}.", style="bold red"
                 # )
                 pass
 
@@ -275,15 +301,6 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
                 # )
                 pass
 
-        # Clean up log files
-        for log_path in temp_log_files.values():
-            log_file = Path(log_path)
-            if log_file.exists():
-                try:
-                    log_file.unlink()
-                except:
-                    pass  # Ignore cleanup errors
-
         if completed_versions:
             # console.print(
             #     f"\nCompleted downloading {len(completed_versions)} builds: {', '.join(completed_versions)}"
@@ -300,10 +317,13 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
         #     "\nDownloads interrupted by user. Cleaning up...", style="bold yellow"
         # )
         # Clean up temp files
-        for log_path in temp_log_files.values():
-            log_file = Path(log_path)
+        for log_path_str in temp_log_files.values():
+            log_file = Path(log_path_str)
             if log_file.exists():
-                log_file.unlink()
+                try:
+                    log_file.unlink()
+                except OSError:
+                    pass  # Ignore cleanup errors on interrupt
         # We can't cancel the downloads directly, but we can inform the user
         # console.print(
         #     "Note: Download processes may still be running in the background."
@@ -314,35 +334,25 @@ def download_multiple_builds(builds: List[BlenderBuild]) -> bool:
     except Exception as e:
         # console.print(f"\nAn error occurred during downloads: {e}", style="bold red")
         # Clean up temp files
-        for log_path in temp_log_files.values():
-            log_file = Path(log_path)
+        for log_path_str in temp_log_files.values():
+            log_file = Path(log_path_str)
             if log_file.exists():
-                log_file.unlink()
+                try:
+                    log_file.unlink()
+                except OSError:
+                    pass  # Ignore cleanup errors on exception
         return False
 
 
-def get_log_file_path(build: BlenderBuild) -> str:
-    """Get the path to the log file for a build.
-
-    Args:
-        build: The build to get the log file path for
-
-    Returns:
-        Path to the log file
-    """
-    # Create a consistent temporary file name based on the build version
-    return f"/tmp/blender_download_{build.version}.log"
-
-
 def _download_file_with_log(
-    build: BlenderBuild, download_dir: Path, log_file: str, console: Console
+    build: BlenderBuild, download_dir: Path, log_file_path: str, console: Console
 ) -> bool:
     """Download a file using wget with output to a log file.
 
     Args:
         build: The build to download
         download_dir: Directory to save the file
-        log_file: Path to log file for download progress
+        log_file_path: Path to log file for download progress
         console: Console for output
 
     Returns:
@@ -353,7 +363,8 @@ def _download_file_with_log(
         # console.print(f"[bold]Starting download of {filename}...[/bold]")
 
         # console.print("[bold]Using wget for download[/bold]")
-        with open(log_file, "w") as f:
+        # Open the log file path in append mode for wget logging
+        with open(log_file_path, "w") as f:  # Use the provided path
             # Set environment variables for consistent output format
             env = os.environ.copy()
             env["LC_ALL"] = "C"
@@ -376,22 +387,37 @@ def _download_file_with_log(
 
         return True
     except subprocess.CalledProcessError as e:
-        with open(log_file, "a") as f:
-            f.write(f"Download failed: {e}\n")
+        # Append error to the existing log file
+        try:
+            with open(log_file_path, "a") as f:  # Use the provided path
+                f.write(f"\nDownload failed: {e}\n")
+        except IOError:
+            pass  # Ignore if we can't write to log
+        return False
+    except Exception as e:  # Catch other potential errors like file opening issues
+        # Append error to the existing log file
+        try:
+            with open(log_file_path, "a") as f:  # Use the provided path
+                f.write(f"\nAn error occurred during download setup: {e}\n")
+        except IOError:
+            pass  # Ignore if we can't write to log
         return False
 
 
-def _get_progress_and_speed_from_log(log_file: str) -> Optional[Tuple[float, str]]:
+def _get_progress_and_speed_from_log(log_file_path: str) -> Optional[Tuple[float, str]]:
     """Extract download progress percentage and speed from log file.
 
     Args:
-        log_file: Path to log file
+        log_file_path: Path to log file
 
     Returns:
         Tuple containing progress percentage (0-100) and speed in bytes/second
     """
     try:
-        log_path = Path(log_file)
+        log_path = Path(log_file_path)
+        # Ensure file exists before opening
+        if not log_path.exists():
+            return None
         with log_path.open("r") as f:
             content = f.read()
 
@@ -440,24 +466,27 @@ def _get_progress_and_speed_from_log(log_file: str) -> Optional[Tuple[float, str
         return None
 
 
-def _check_download_success(log_file: str) -> bool:
+def _check_download_success(log_file_path: str) -> bool:
     """Check if download completed successfully based on log file.
 
     Args:
-        log_file: Path to log file
+        log_file_path: Path to log file
 
     Returns:
         True if download was successful
     """
     try:
-        log_path = Path(log_file)
+        log_path = Path(log_file_path)
+        # Ensure file exists before opening
+        if not log_path.exists():
+            return False
         with log_path.open("r") as f:
             content = f.read()
 
         # Check for wget success (no error message and high percentage)
         if "ERROR" not in content and "failed" not in content.lower():
             # Check last percentage if available
-            result = _get_progress_and_speed_from_log(log_file)
+            result = _get_progress_and_speed_from_log(log_file_path)
             if result:
                 percentage, speed = result
                 if percentage > 99:
