@@ -1,0 +1,34 @@
+package util
+
+import (
+	"fmt"
+	// "math" // Removed unused import
+)
+
+// FormatSize converts bytes to a human-readable string (KB, MB, GB).
+func FormatSize(sizeBytes int64) string {
+	if sizeBytes < 1024 {
+		return fmt.Sprintf("%d B", sizeBytes)
+	}
+	sizeKB := float64(sizeBytes) / 1024
+	if sizeKB < 1024 {
+		return fmt.Sprintf("%.1f KB", sizeKB)
+	}
+	sizeMB := sizeKB / 1024
+	if sizeMB < 1024 {
+		return fmt.Sprintf("%.1f MB", sizeMB)
+	}
+	sizeGB := sizeMB / 1024
+	return fmt.Sprintf("%.1f GB", sizeGB)
+}
+
+// TruncateString shortens a string to a max length, adding ellipsis if needed.
+func TruncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return "..."
+	}
+	return s[:maxLen-3] + "..."
+}
