@@ -1414,25 +1414,60 @@ Press f to try fetching online builds, s for settings, q to quit.`, m.err)
 	// --- Header rendering ---
 	var headerCols []string
 	if m.visibleColumns["Version"] {
-		headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthVersion).Render(getSortIndicator(m, 0, "Version")))
+		if m.sortColumn == 0 {
+			// Selected column - use inverse colors
+			headerCols = append(headerCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthVersion).Render(getSortIndicator(m, 0, "Version")))
+		} else {
+			headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthVersion).Render(getSortIndicator(m, 0, "Version")))
+		}
 	}
 	if m.visibleColumns["Status"] {
-		headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthStatus).Render(getSortIndicator(m, 1, "Status")))
+		if m.sortColumn == 1 {
+			// Selected column - use inverse colors
+			headerCols = append(headerCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthStatus).Render(getSortIndicator(m, 1, "Status")))
+		} else {
+			headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthStatus).Render(getSortIndicator(m, 1, "Status")))
+		}
 	}
 	if m.visibleColumns["Branch"] {
-		headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthBranch).Render(getSortIndicator(m, 2, "Branch")))
+		if m.sortColumn == 2 {
+			// Selected column - use inverse colors
+			headerCols = append(headerCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthBranch).Render(getSortIndicator(m, 2, "Branch")))
+		} else {
+			headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthBranch).Render(getSortIndicator(m, 2, "Branch")))
+		}
 	}
 	if m.visibleColumns["Type"] {
-		headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthType).Render(getSortIndicator(m, 3, "Type")))
+		if m.sortColumn == 3 {
+			// Selected column - use inverse colors
+			headerCols = append(headerCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthType).Render(getSortIndicator(m, 3, "Type")))
+		} else {
+			headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthType).Render(getSortIndicator(m, 3, "Type")))
+		}
 	}
 	if m.visibleColumns["Hash"] {
-		headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthHash).Render(getSortIndicator(m, 4, "Hash")))
+		if m.sortColumn == 4 {
+			// Selected column - use inverse colors
+			headerCols = append(headerCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthHash).Render(getSortIndicator(m, 4, "Hash")))
+		} else {
+			headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthHash).Render(getSortIndicator(m, 4, "Hash")))
+		}
 	}
 	if m.visibleColumns["Size"] {
-		headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthSize).Render(getSortIndicator(m, 5, "Size")))
+		if m.sortColumn == 5 {
+			// Selected column - use inverse colors
+			headerCols = append(headerCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthSize).Render(getSortIndicator(m, 5, "Size")))
+		} else {
+			headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthSize).Render(getSortIndicator(m, 5, "Size")))
+		}
 	}
 	if m.visibleColumns["Build Date"] {
-		headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthDate).Render(getSortIndicator(m, 6, "Build Date")))
+		if m.sortColumn == 6 {
+			// Selected column - use inverse colors
+			headerCols = append(headerCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthDate).Render(getSortIndicator(m, 6, "Build Date")))
+		} else {
+			headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthDate).Render(getSortIndicator(m, 6, "Build Date")))
+		}
 	}
 
 	tableBuilder.WriteString(headerStyle.Render(lp.JoinHorizontal(lp.Left, headerCols...)))
