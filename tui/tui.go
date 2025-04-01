@@ -26,29 +26,29 @@ import (
 // Constants for UI styling and configuration
 const (
 	// Color constants
-	colorSuccess     = "10" // Green for success states
-	colorWarning     = "11" // Yellow for warnings
-	colorInfo        = "12" // Blue for info
-	colorError       = "9"  // Red for errors
-	colorNeutral     = "15" // White for neutral text
-	colorBackground  = "240" // Gray background
-	colorForeground  = "255" // White foreground
-	
+	colorSuccess    = "10"  // Green for success states
+	colorWarning    = "11"  // Yellow for warnings
+	colorInfo       = "12"  // Blue for info
+	colorError      = "9"   // Red for errors
+	colorNeutral    = "15"  // White for neutral text
+	colorBackground = "240" // Gray background
+	colorForeground = "255" // White foreground
+
 	// Dialog size constants
 	deleteDialogWidth  = 50
 	cleanupDialogWidth = 60
-	
+
 	// Safety limits
-	maxTickCounter     = 1000 // Maximum ticks to prevent infinite loops
-	
+	maxTickCounter = 1000 // Maximum ticks to prevent infinite loops
+
 	// Performance constants
-	downloadTickRate   = 100 * time.Millisecond // How often to update download progress
-	
+	downloadTickRate = 100 * time.Millisecond // How often to update download progress
+
 	// Path constants
-	launcherPathFile   = "blender_launch_command.txt"
-	
+	launcherPathFile = "blender_launch_command.txt"
+
 	// Environment variables
-	envLaunchVariable  = "TUI_BLENDER_LAUNCH"
+	envLaunchVariable = "TUI_BLENDER_LAUNCH"
 )
 
 // View states
@@ -103,10 +103,10 @@ type (
 		Percent      float64 // Calculated percentage 0.0 to 1.0
 		Speed        float64 // Bytes per second
 	}
-	
+
 	// Error message
 	errMsg struct{ err error }
-	
+
 	// Timer message
 	tickMsg time.Time
 )
@@ -122,30 +122,30 @@ type Model struct {
 	// programRef *tea.Program // Ensure this is removed or commented out
 
 	// UI state
-	cursor         int
-	isLoading      bool
-	downloadStates map[string]*DownloadState // Map version to download state
-	downloadMutex  sync.Mutex                // Mutex for downloadStates
-	cancelDownloads chan struct{}            // Channel to signal download cancellation
-	err            error
-	currentView    viewState
-	progressBar    progress.Model // Progress bar component
-	buildToDelete  string         // Store version of build to delete for confirmation
-	blenderRunning string         // Version of Blender currently running, empty if none
-	
+	cursor          int
+	isLoading       bool
+	downloadStates  map[string]*DownloadState // Map version to download state
+	downloadMutex   sync.Mutex                // Mutex for downloadStates
+	cancelDownloads chan struct{}             // Channel to signal download cancellation
+	err             error
+	currentView     viewState
+	progressBar     progress.Model // Progress bar component
+	buildToDelete   string         // Store version of build to delete for confirmation
+	blenderRunning  string         // Version of Blender currently running, empty if none
+
 	// Old builds information
-	oldBuildsCount int  // Number of old builds
+	oldBuildsCount int   // Number of old builds
 	oldBuildsSize  int64 // Size of old builds in bytes
-	
+
 	// Sorting state
-	sortColumn    int // Which column index is being sorted
-	sortReversed  bool // Whether sorting is reversed
-	
+	sortColumn   int  // Which column index is being sorted
+	sortReversed bool // Whether sorting is reversed
+
 	// Settings/Setup specific state
 	settingsInputs []textinput.Model
 	focusIndex     int
 	editMode       bool // Whether we're in edit mode in settings
-	terminalWidth  int // Store terminal width
+	terminalWidth  int  // Store terminal width
 }
 
 // DownloadState holds progress info for an active download
@@ -194,15 +194,15 @@ func InitialModel(cfg config.Config, needsSetup bool) Model {
 		progress.WithGradient("#00FF00", "#008800"), // Green gradient
 	)
 	m := Model{
-		config:         cfg,
-		isLoading:      !needsSetup,
-		downloadStates: make(map[string]*DownloadState),
-		progressBar:    progModel,
+		config:          cfg,
+		isLoading:       !needsSetup,
+		downloadStates:  make(map[string]*DownloadState),
+		progressBar:     progModel,
 		cancelDownloads: make(chan struct{}),
-		sortColumn:     0, // Default sort by Version
-		sortReversed:   true, // Default descending sort (newest versions first)
-		blenderRunning: "", // No Blender running initially
-		editMode:       false, // Start in navigation mode, not edit mode
+		sortColumn:      0,     // Default sort by Version
+		sortReversed:    true,  // Default descending sort (newest versions first)
+		blenderRunning:  "",    // No Blender running initially
+		editMode:        false, // Start in navigation mode, not edit mode
 	}
 
 	if needsSetup {
@@ -263,7 +263,7 @@ func scanLocalBuildsCmd(cfg config.Config) tea.Cmd {
 // Command to re-scan local builds and update status of the provided (online) list
 func updateStatusFromLocalScanCmd(onlineBuilds []model.BlenderBuild, cfg config.Config) tea.Cmd {
 	return func() tea.Msg {
-		// Get all local builds - use full scan to compare hash values 
+		// Get all local builds - use full scan to compare hash values
 		localBuilds, err := local.ScanLocalBuilds(cfg.DownloadDir)
 		if err != nil {
 			// Propagate error if scanning fails
@@ -351,7 +351,7 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 			default:
 				// Continue with progress update
 			}
-			
+
 			currentTime := time.Now()
 			percent := 0.0
 			if total > 0 {
@@ -381,7 +381,7 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 				// Use a virtual size threshold to detect extraction phase
 				// Virtual size is 100MB for extraction as set in download.go
 				const extractionVirtualSize int64 = 100 * 1024 * 1024
-				
+
 				// Check if we're getting extraction progress updates
 				if total == extractionVirtualSize {
 					// If we detect extraction progress based on the virtual size,
@@ -418,7 +418,7 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 			}
 		} // else: state might have been removed if cancelled?
 		mutex.Unlock()
-		
+
 		// Signal completion
 		close(done)
 	}()
@@ -434,7 +434,7 @@ func (m Model) Init() tea.Cmd {
 	// NOTE: This won't work as Program is not passed here. Alternative needed.
 	// We'll set it in Update on the first FrameMsg instead.
 	var cmds []tea.Cmd
-	
+
 	if m.currentView == viewList {
 		cmds = append(cmds, scanLocalBuildsCmd(m.config))
 		// Get info about old builds
@@ -443,7 +443,7 @@ func (m Model) Init() tea.Cmd {
 	if m.currentView == viewInitialSetup && len(m.settingsInputs) > 0 {
 		cmds = append(cmds, textinput.Blink)
 	}
-	
+
 	if len(cmds) > 0 {
 		return tea.Batch(cmds...)
 	}
@@ -456,7 +456,7 @@ func (m *Model) updateInputs(msg tea.Msg) tea.Cmd {
 	if len(m.settingsInputs) == 0 {
 		return nil
 	}
-	
+
 	var cmds []tea.Cmd
 	for i := range m.settingsInputs {
 		m.settingsInputs[i], cmds[i] = m.settingsInputs[i].Update(msg)
@@ -593,7 +593,7 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	
+
 	// Only pass message to the focused input if in edit mode
 	if m.editMode {
 		currentFocus := m.focusIndex
@@ -728,7 +728,7 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentView = viewList
 		return m, nil
 	}
-	
+
 	return m, nil
 }
 
@@ -752,13 +752,13 @@ func (m Model) updateDeleteConfirmView(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Clear any previous error
 				m.err = nil
 			}
-			
+
 			// Return to builds view and refresh the builds list
 			m.buildToDelete = ""
 			m.currentView = viewList
 			m.isLoading = true
 			return m, scanLocalBuildsCmd(m.config)
-			
+
 		case "n", "N", "esc", "escape":
 			// User cancelled deletion
 			m.buildToDelete = ""
@@ -766,7 +766,7 @@ func (m Model) updateDeleteConfirmView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	
+
 	return m, nil
 }
 
@@ -779,14 +779,14 @@ func (m Model) updateCleanupConfirmView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// User confirmed cleanup
 			m.currentView = viewList
 			return m, cleanupOldBuildsCmd(m.config)
-			
+
 		case "n", "N", "esc", "escape":
 			// User cancelled cleanup
 			m.currentView = viewList
 			return m, nil
 		}
 	}
-	
+
 	return m, nil
 }
 
@@ -825,11 +825,11 @@ func (m Model) handleStartDownload() (tea.Model, tea.Cmd) {
 func (m Model) handleShowSettings() (tea.Model, tea.Cmd) {
 	m.currentView = viewSettings
 	m.editMode = false // Ensure we start in navigation mode
-	
+
 	// Initialize settings inputs if not already done
 	if len(m.settingsInputs) == 0 {
 		m.settingsInputs = make([]textinput.Model, 2)
-		
+
 		// Download Dir input
 		var t textinput.Model
 		t = textinput.New()
@@ -837,7 +837,7 @@ func (m Model) handleShowSettings() (tea.Model, tea.Cmd) {
 		t.CharLimit = 256
 		t.Width = 50
 		m.settingsInputs[0] = t
-		
+
 		// Version Filter input
 		t = textinput.New()
 		t.Placeholder = "e.g., 4.0, 3.6 (leave empty for none)"
@@ -845,15 +845,15 @@ func (m Model) handleShowSettings() (tea.Model, tea.Cmd) {
 		t.Width = 50
 		m.settingsInputs[1] = t
 	}
-	
+
 	// Copy current config values
 	m.settingsInputs[0].SetValue(m.config.DownloadDir)
 	m.settingsInputs[1].SetValue(m.config.VersionFilter)
-	
+
 	// Focus first input (but don't focus for editing yet)
 	m.focusIndex = 0
 	updateFocusStyles(&m, -1)
-	
+
 	return m, nil
 }
 
@@ -927,11 +927,11 @@ func (m Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleBlenderExec(msg model.BlenderExecMsg) (tea.Model, tea.Cmd) {
 	// Store Blender info
 	execInfo := msg
-	
+
 	// Write a command file that the main.go program will execute after the TUI exits
 	// This ensures Blender runs in the same terminal session after the TUI is fully terminated
 	launcherPath := filepath.Join(os.TempDir(), "blender_launch_command.txt")
-	
+
 	// First try to save the command
 	err := os.WriteFile(launcherPath, []byte(execInfo.Executable), 0644)
 	if err != nil {
@@ -939,33 +939,33 @@ func (m Model) handleBlenderExec(msg model.BlenderExecMsg) (tea.Model, tea.Cmd) 
 			return errMsg{fmt.Errorf("failed to save launch info: %w", err)}
 		}
 	}
-	
+
 	// Set an environment variable to tell the main program to run Blender on exit
 	os.Setenv("TUI_BLENDER_LAUNCH", launcherPath)
-	
+
 	// Display exit message with info about Blender launch
 	m.err = nil
 	m.blenderRunning = execInfo.Version
-	
+
 	// Simply quit - the main program will handle launching Blender
 	return m, tea.Quit
 }
 
 func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	
+
 	m.downloadMutex.Lock()
 	activeDownloads := 0
 	var progressCmds []tea.Cmd
 	completedDownloads := []string{}
-	
+
 	// Add a safety counter to prevent infinite ticks
 	tickCounter, ok := m.downloadStates["_tickCounter"]
 	if !ok {
 		tickCounter = &DownloadState{Current: 0}
 		m.downloadStates["_tickCounter"] = tickCounter
 	}
-	
+
 	tickCounter.Current++
 	if tickCounter.Current > int64(maxTickCounter) {
 		// Too many ticks, clear all downloads to prevent freeze
@@ -981,7 +981,7 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 		if version == "_tickCounter" {
 			continue
 		}
-		
+
 		if state.Message == "Local" || strings.HasPrefix(state.Message, "Failed") || state.Message == "Cancelled" {
 			completedDownloads = append(completedDownloads, version)
 			// Update main build list status
@@ -1019,12 +1019,12 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	if activeDownloads > 0 {
 		// Create a combined command that includes tick and progress commands
 		var commands []tea.Cmd = []tea.Cmd{tickCmd()}
-		
+
 		if len(progressCmds) > 0 {
 			commands = append(commands, progressCmds...)
 			return m, tea.Batch(commands...)
 		}
-		
+
 		return m, tickCmd()
 	} else {
 		// No active downloads, reset the tick counter
@@ -1034,12 +1034,12 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 		}
 		m.downloadMutex.Unlock()
 	}
-	
+
 	// Handle progress commands even if no active downloads
 	if len(progressCmds) > 0 {
 		return m, tea.Batch(progressCmds...)
 	}
-	
+
 	return m, cmd
 }
 
@@ -1076,14 +1076,14 @@ func (m Model) View() string {
 // renderSettingsView handles rendering the settings and initial setup views
 func (m Model) renderSettingsView() string {
 	var viewBuilder strings.Builder
-	
+
 	title := "Initial Setup"
 	if m.currentView == viewSettings {
 		title = "Settings"
 	}
 	viewBuilder.WriteString(fmt.Sprintf("%s\n\n", title))
 	viewBuilder.WriteString("Download Directory:\n")
-	
+
 	// Only render inputs if they exist
 	if len(m.settingsInputs) >= 2 {
 		viewBuilder.WriteString(m.settingsInputs[0].View() + "\n\n")
@@ -1095,11 +1095,11 @@ func (m Model) renderSettingsView() string {
 		viewBuilder.WriteString("Minimum Blender Version Filter (e.g., 4.0, 3.6 - empty for none):\n")
 		viewBuilder.WriteString(m.config.VersionFilter + "\n\n")
 	}
-	
+
 	if m.err != nil {
 		viewBuilder.WriteString(lp.NewStyle().Foreground(lp.Color(colorError)).Render(fmt.Sprintf("Error: %v\n\n", m.err)))
 	}
-	
+
 	// Show different help text based on current mode
 	var helpText string
 	if m.editMode {
@@ -1122,14 +1122,14 @@ func (m Model) renderSettingsView() string {
 		viewBuilder.WriteString(modeIndicator + "\n\n")
 	}
 	viewBuilder.WriteString(footerStyle.Render(helpText))
-	
+
 	return viewBuilder.String()
 }
 
 // renderListView handles rendering the main builds list view
 func (m Model) renderListView() string {
 	var viewBuilder strings.Builder
-	
+
 	loadingMsg := ""
 	if m.isLoading {
 		if len(m.builds) == 0 {
@@ -1193,17 +1193,17 @@ Press f to fetch online builds, s for settings, q to quit.`
 		if isDownloadingThis {
 			statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorWarning)) // Keep text style separate from alignment
 			statusCell := cellStyleCenter.Copy().Width(colWidthStatus).Render(downloadState.Message)
-			
+
 			// Calculate the combined width for a true spanning cell
 			combinedWidth := colWidthSize + colWidthDate
-			
+
 			// Create a wider progress bar
 			m.progressBar.Width = combinedWidth
 			progressBarOutput := m.progressBar.ViewAs(downloadState.Progress)
-			
+
 			// Create a wider cell that spans both size and date columns
 			combinedCell := lp.NewStyle().Width(combinedWidth).Render(progressBarOutput)
-			
+
 			// Display different content based on download state
 			hashText := util.FormatSpeed(downloadState.Speed)
 			if downloadState.Message == "Extracting..." {
@@ -1211,7 +1211,7 @@ Press f to fetch online builds, s for settings, q to quit.`
 				hashText = "Extracting..."
 			}
 			hashCell := cellStyleCenter.Copy().Width(colWidthHash).Render(hashText)
-			
+
 			// First render the individual cells
 			specialRowCols := []string{
 				versionCell,
@@ -1221,10 +1221,10 @@ Press f to fetch online builds, s for settings, q to quit.`
 				hashCell,
 				combinedCell, // This cell spans both size and date columns
 			}
-			
+
 			// Join cells into a single row
 			rowContent := lp.JoinHorizontal(lp.Left, specialRowCols...)
-			
+
 			// Then apply selection style to the entire row
 			if m.cursor == i {
 				tableBuilder.WriteString(selectedRowStyle.Render(rowContent))
@@ -1232,32 +1232,72 @@ Press f to fetch online builds, s for settings, q to quit.`
 				tableBuilder.WriteString(rowContent)
 			}
 			tableBuilder.WriteString("\n")
-			
+
 			// Skip the regular row assembly
 			continue
 		}
 
-		// First create cell content with their individual styles
-		statusCell := statusTextStyle.Copy().Inherit(cellStyleCenter).Width(colWidthStatus).Render(util.TruncateString(build.Status, colWidthStatus))
-		
-		// Render each cell individually with appropriate styles
-		rowCols := []string{
-			versionCell,
-			statusCell,
-			cellStyleCenter.Copy().Width(colWidthBranch).Render(util.TruncateString(build.Branch, colWidthBranch)),
-			cellStyleCenter.Copy().Width(colWidthType).Render(util.TruncateString(build.ReleaseCycle, colWidthType)),
-			cellStyleCenter.Copy().Width(colWidthHash).Render(util.TruncateString(build.Hash, colWidthHash)),
-			cellStyleCenter.Copy().Width(colWidthSize).Render(util.FormatSize(build.Size)),
-			cellStyleCenter.Copy().Width(colWidthDate).Render(build.BuildDate.Time().Format("2006-01-02 15:04")),
-		}
-		
-		// Join the content horizontally into a single string
-		rowContent := lp.JoinHorizontal(lp.Left, rowCols...)
-
-		// Apply selection style to the entire row if it's selected
+		// For non-downloading rows, we need to ensure the highlight extends across colored cells
 		if m.cursor == i {
-			tableBuilder.WriteString(selectedRowStyle.Render(rowContent))
+			// When this row is selected, we need to:
+			// 1. Create unstyled content for each cell first
+			// 2. Apply the selection background to all cells first
+			// 3. Then apply the individual text colors on top
+
+			// Create unstyled content for status (will apply selection + text color later)
+			statusContent := util.TruncateString(build.Status, colWidthStatus)
+
+			// Prepare all cells with uncolored text
+			versionContent := util.TruncateString("Blender "+build.Version, colWidthVersion)
+			branchContent := util.TruncateString(build.Branch, colWidthBranch)
+			typeContent := util.TruncateString(build.ReleaseCycle, colWidthType)
+			hashContent := util.TruncateString(build.Hash, colWidthHash)
+			sizeContent := util.FormatSize(build.Size)
+			dateContent := build.BuildDate.Time().Format("2006-01-02 15:04")
+
+			// Apply selection background style to each cell's content
+			versionCellSelected := selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthVersion).Render(versionContent)
+
+			// Apply selection background + appropriate text color to status cell
+			statusCellSelected := selectedRowStyle.Copy().
+				Inherit(cellStyleCenter).
+				Width(colWidthStatus).
+				Foreground(statusTextStyle.GetForeground()).
+				Render(statusContent)
+
+			branchCellSelected := selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthBranch).Render(branchContent)
+			typeCellSelected := selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthType).Render(typeContent)
+			hashCellSelected := selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthHash).Render(hashContent)
+			sizeCellSelected := selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthSize).Render(sizeContent)
+			dateCellSelected := selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthDate).Render(dateContent)
+
+			// Join all highlighted cells into a row
+			rowSelected := lp.JoinHorizontal(lp.Left,
+				versionCellSelected,
+				statusCellSelected,
+				branchCellSelected,
+				typeCellSelected,
+				hashCellSelected,
+				sizeCellSelected,
+				dateCellSelected,
+			)
+
+			tableBuilder.WriteString(rowSelected)
 		} else {
+			// For unselected rows, we can use the original cell rendering
+			statusCell := statusTextStyle.Copy().Inherit(cellStyleCenter).Width(colWidthStatus).Render(util.TruncateString(build.Status, colWidthStatus))
+
+			rowCols := []string{
+				versionCell,
+				statusCell,
+				cellStyleCenter.Copy().Width(colWidthBranch).Render(util.TruncateString(build.Branch, colWidthBranch)),
+				cellStyleCenter.Copy().Width(colWidthType).Render(util.TruncateString(build.ReleaseCycle, colWidthType)),
+				cellStyleCenter.Copy().Width(colWidthHash).Render(util.TruncateString(build.Hash, colWidthHash)),
+				cellStyleCenter.Copy().Width(colWidthSize).Render(util.FormatSize(build.Size)),
+				cellStyleCenter.Copy().Width(colWidthDate).Render(build.BuildDate.Time().Format("2006-01-02 15:04")),
+			}
+
+			rowContent := lp.JoinHorizontal(lp.Left, rowCols...)
 			tableBuilder.WriteString(rowContent)
 		}
 		tableBuilder.WriteString("\n")
@@ -1284,45 +1324,45 @@ Press f to fetch online builds, s for settings, q to quit.`
 	footerKeybinds3 := "←→:Column  R:Reverse"
 	keybindSeparator := "│"
 	footerKeys := fmt.Sprintf("%s  %s  %s  %s  %s", footerKeybinds1, keybindSeparator, footerKeybinds2, keybindSeparator, footerKeybinds3)
-	
+
 	// Create colored status indicators for the legend
 	localStatus := lp.NewStyle().Foreground(lp.Color(colorSuccess)).Render("■ Local")
 	updateStatus := lp.NewStyle().Foreground(lp.Color(colorInfo)).Render("■ Update Available")
 	onlineStatus := lp.NewStyle().Foreground(lp.Color(colorNeutral)).Render("■ Online")
-	
+
 	footerLegend := fmt.Sprintf("%s   %s   %s   ↑↓ Sort Direction", localStatus, updateStatus, onlineStatus)
 	viewBuilder.WriteString(footerStyle.Render(footerKeys))
 	viewBuilder.WriteString("\n")
 	viewBuilder.WriteString(footerStyle.Render(footerLegend))
-	
+
 	return viewBuilder.String()
 }
 
 // renderConfirmationDialog creates a standard confirmation dialog
 func (m Model) renderConfirmationDialog(title string, messageLines []string, yesText string, noText string, width int) string {
 	var viewBuilder strings.Builder
-	
+
 	// Create a styled border box
 	boxStyle := lp.NewStyle().
 		BorderStyle(lp.RoundedBorder()).
 		BorderForeground(lp.Color("11")). // Yellow border
 		Padding(1, 2)
-	
+
 	// Title with warning styling
 	titleStyle := lp.NewStyle().
 		Foreground(lp.Color("11")). // Yellow text
 		Bold(true)
-	
+
 	// Create the content
 	var contentBuilder strings.Builder
 	contentBuilder.WriteString(titleStyle.Render(title) + "\n\n")
-	
+
 	// Add all message lines
 	for _, line := range messageLines {
 		contentBuilder.WriteString(line + "\n")
 	}
 	contentBuilder.WriteString("\n")
-	
+
 	// Button styling
 	yesStyle := lp.NewStyle().
 		Foreground(lp.Color("9")). // Red for delete
@@ -1330,20 +1370,20 @@ func (m Model) renderConfirmationDialog(title string, messageLines []string, yes
 	noStyle := lp.NewStyle().
 		Foreground(lp.Color("10")). // Green for cancel
 		Bold(true)
-		
+
 	contentBuilder.WriteString(yesStyle.Render(yesText) + "    ")
 	contentBuilder.WriteString(noStyle.Render(noText))
-	
+
 	// Combine everything in the box
 	confirmBox := boxStyle.Width(width).Render(contentBuilder.String())
-	
+
 	// Center the box in the terminal
 	viewBuilder.WriteString("\n\n") // Add some top spacing
 	viewBuilder.WriteString(lp.Place(m.terminalWidth, 20,
 		lp.Center, lp.Center,
 		confirmBox))
 	viewBuilder.WriteString("\n\n")
-	
+
 	return viewBuilder.String()
 }
 
@@ -1353,14 +1393,14 @@ func (m Model) renderDeleteConfirmView() string {
 	buildStyle := lp.NewStyle().
 		Foreground(lp.Color("15")). // White text
 		Bold(true)
-	
+
 	// Create the message with styled build name
 	buildText := buildStyle.Render("Blender " + m.buildToDelete)
 	messageLines := []string{
 		"Are you sure you want to delete " + buildText + "?",
 		"This will permanently remove this build from your system.",
 	}
-	
+
 	return m.renderConfirmationDialog(
 		"Confirm Deletion",
 		messageLines,
@@ -1377,7 +1417,7 @@ func (m Model) renderCleanupConfirmView() string {
 		fmt.Sprintf("This will free up %s of disk space.", util.FormatSize(m.oldBuildsSize)),
 		"All backed up builds in the .oldbuilds directory will be permanently deleted.",
 	}
-	
+
 	return m.renderConfirmationDialog(
 		"Confirm Cleanup",
 		messageLines,
