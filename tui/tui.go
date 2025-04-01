@@ -711,6 +711,9 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "s", "S":
 				// Save settings and go back to list view
 				return saveSettings(m)
+			case "o", "O":
+				// Open download directory
+				return m, local.OpenDirCmd(m.config.DownloadDir)
 			case "j", "down":
 				// Move focus down
 				oldFocus := m.focusIndex
@@ -850,9 +853,8 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Cancel download of the selected build
 			return m.handleCancelDownload()
 		case "o", "O":
-			// Open download directory
-			cmd := local.OpenDownloadDirCmd(m.config.DownloadDir)
-			return m, cmd
+			// Open build directory for selected build
+			return m.handleOpenBuildDir()
 		case "s", "S":
 			// Show settings
 			return m.handleShowSettings()
@@ -1004,6 +1006,47 @@ func (m Model) handleLaunchBlender() (tea.Model, tea.Cmd) {
 			log.Printf("Launching Blender %s", selectedBuild.Version)
 			cmd := local.LaunchBlenderCmd(m.config.DownloadDir, selectedBuild.Version)
 			return m, cmd
+		}
+	}
+	return m, nil
+}
+
+// New function to handle opening the build directory for a specific version
+func (m Model) handleOpenBuildDir() (tea.Model, tea.Cmd) {
+	if len(m.builds) > 0 && m.cursor < len(m.builds) {
+		selectedBuild := m.builds[m.cursor]
+		// Only open dir if it's a local build
+		if selectedBuild.Status == "Local" {
+			// Create a command that locates the correct build directory by version
+			return m, func() tea.Msg {
+				entries, err := os.ReadDir(m.config.DownloadDir)
+				if err != nil {
+					return errMsg{fmt.Errorf("failed to read download directory %s: %w", m.config.DownloadDir, err)}
+				}
+
+				version := selectedBuild.Version
+				for _, entry := range entries {
+					if entry.IsDir() && entry.Name() != ".downloading" && entry.Name() != ".oldbuilds" {
+						dirPath := filepath.Join(m.config.DownloadDir, entry.Name())
+						buildInfo, err := local.ReadBuildInfo(dirPath)
+						if err != nil {
+							// Error reading build info, but continue checking other directories
+							continue
+						}
+
+						// Check if this is the build we want to open
+						if buildInfo != nil && buildInfo.Version == version {
+							// Open this directory
+							if err := local.OpenFileExplorer(dirPath); err != nil {
+								return errMsg{fmt.Errorf("failed to open directory: %w", err)}
+							}
+							return nil // Success
+						}
+					}
+				}
+
+				return errMsg{fmt.Errorf("build directory for Blender version %s not found", version)}
+			}
 		}
 	}
 	return m, nil
@@ -1359,7 +1402,7 @@ func (m Model) renderSettingsView() string {
 		footerKeybinds1 = "Enter:Save  Esc:Cancel"
 		footerKeybinds2 = "Tab:Next Field"
 	} else {
-		footerKeybinds1 = "Enter:Edit Field  S:Save & Back"
+		footerKeybinds1 = "Enter:Edit Field  S:Save & Back  O:Open Dir"
 		if m.oldBuildsCount > 0 {
 			footerKeybinds2 = fmt.Sprintf("C:Cleanup old Builds (%d)", m.oldBuildsCount)
 		}
@@ -1695,11 +1738,7 @@ Press f to try fetching online builds, s for settings, q to quit.`, m.err)
 	}
 
 	// Second footer line: global commands and column navigation - always consistent
-	if m.sortReversed {
-		footerKeybinds2 = "F:Fetch  S:Settings  Q:Quit  R:Sort Ascending  ←→:Column"
-	} else {
-		footerKeybinds2 = "F:Fetch  S:Settings  Q:Quit  R:Sort Descending  ←→:Column"
-	}
+	footerKeybinds2 = "F:Fetch  S:Settings  Q:Quit  R:Sort  ←→:Column"
 
 	// Render the footer (both lines with no spacing between them)
 	footerContent := footerKeybinds1 + "\n" + footerKeybinds2

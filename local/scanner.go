@@ -18,8 +18,9 @@ const versionMetaFilename = "version.json" // Consistency with download package
 
 var versionRegexFallback = regexp.MustCompile(`\b(\d+\.\d+(\.\d+)?)\b`) // More specific regex
 
-// Tries to read version.json, falls back to parsing directory name.
-func readBuildInfo(dirPath string) (*model.BlenderBuild, error) {
+// ReadBuildInfo tries to read version.json, falls back to parsing directory name.
+// Exported version of readBuildInfo to be used from other packages.
+func ReadBuildInfo(dirPath string) (*model.BlenderBuild, error) {
 	metaPath := filepath.Join(dirPath, versionMetaFilename)
 	build := &model.BlenderBuild{}
 
@@ -78,7 +79,7 @@ func ScanLocalBuilds(downloadDir string) ([]model.BlenderBuild, error) {
 		// Skip temp download dir and oldbuilds dir
 		if entry.IsDir() && entry.Name() != ".downloading" && entry.Name() != ".oldbuilds" {
 			dirPath := filepath.Join(downloadDir, entry.Name())
-			buildInfo, err := readBuildInfo(dirPath)
+			buildInfo, err := ReadBuildInfo(dirPath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error processing directory %s: %v\n", dirPath, err)
 				continue
@@ -114,7 +115,7 @@ func BuildLocalLookupMap(downloadDir string) (map[string]bool, error) {
 		// Skip temp download dir and oldbuilds dir
 		if entry.IsDir() && entry.Name() != ".downloading" && entry.Name() != ".oldbuilds" {
 			dirPath := filepath.Join(downloadDir, entry.Name())
-			buildInfo, err := readBuildInfo(dirPath)
+			buildInfo, err := ReadBuildInfo(dirPath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error processing directory %s for map: %v\n", dirPath, err)
 				continue
@@ -138,12 +139,12 @@ func DeleteBuild(downloadDir string, version string) (bool, error) {
 	for _, entry := range entries {
 		if entry.IsDir() && entry.Name() != ".downloading" {
 			dirPath := filepath.Join(downloadDir, entry.Name())
-			buildInfo, err := readBuildInfo(dirPath)
+			buildInfo, err := ReadBuildInfo(dirPath)
 			if err != nil {
 				// Error reading build info, but continue checking other directories
 				continue
 			}
-			
+
 			// Check if this is the build we want to delete
 			if buildInfo != nil && buildInfo.Version == version {
 				// Found the build to delete, remove the directory
@@ -154,7 +155,7 @@ func DeleteBuild(downloadDir string, version string) (bool, error) {
 			}
 		}
 	}
-	
+
 	// Build not found
 	return false, nil
 }
@@ -170,12 +171,12 @@ func LaunchBlenderCmd(downloadDir string, version string) tea.Cmd {
 		for _, entry := range entries {
 			if entry.IsDir() && entry.Name() != ".downloading" {
 				dirPath := filepath.Join(downloadDir, entry.Name())
-				buildInfo, err := readBuildInfo(dirPath)
+				buildInfo, err := ReadBuildInfo(dirPath)
 				if err != nil {
 					// Error reading build info, but continue checking other directories
 					continue
 				}
-				
+
 				// Check if this is the build we want to launch
 				if buildInfo != nil && buildInfo.Version == version {
 					// Find the blender executable
@@ -183,7 +184,7 @@ func LaunchBlenderCmd(downloadDir string, version string) tea.Cmd {
 					if blenderExe == "" {
 						return fmt.Errorf("could not find Blender executable in %s", dirPath)
 					}
-					
+
 					// Return a message to the TUI to exit gracefully and run Blender
 					// This will allow Blender to take over the terminal completely
 					return model.BlenderExecMsg{
@@ -193,7 +194,7 @@ func LaunchBlenderCmd(downloadDir string, version string) tea.Cmd {
 				}
 			}
 		}
-		
+
 		return fmt.Errorf("Blender version %s not found", version)
 	}
 }
@@ -207,12 +208,31 @@ func OpenDownloadDirCmd(downloadDir string) tea.Cmd {
 				return fmt.Errorf("failed to create directory %s: %w", downloadDir, err)
 			}
 		}
-		
+
 		// Launch the file explorer
 		if err := openFileExplorer(downloadDir); err != nil {
 			return fmt.Errorf("failed to open directory: %w", err)
 		}
-		
+
+		return nil // Success, no message needed
+	}
+}
+
+// OpenDirCmd creates a command to open any directory
+func OpenDirCmd(dir string) tea.Cmd {
+	return func() tea.Msg {
+		// Create the directory if it doesn't exist
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fmt.Errorf("failed to create directory %s: %w", dir, err)
+			}
+		}
+
+		// Launch the file explorer
+		if err := openFileExplorer(dir); err != nil {
+			return fmt.Errorf("failed to open directory: %w", err)
+		}
+
 		return nil // Success, no message needed
 	}
 }
@@ -225,20 +245,20 @@ func findBlenderExecutable(installDir string) string {
 		filepath.Join(installDir, "blender"),
 		filepath.Join(installDir, "blender.sh"),
 	}
-	
+
 	for _, candidate := range linuxCandidates {
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate
 		}
 	}
-	
+
 	// If not found in common locations, search recursively
 	var result string
 	filepath.Walk(installDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // Skip and continue
 		}
-		
+
 		if !info.IsDir() && (info.Name() == "blender" || info.Name() == "blender.sh") {
 			// Check if it's executable
 			if info.Mode()&0111 != 0 {
@@ -248,12 +268,13 @@ func findBlenderExecutable(installDir string) string {
 		}
 		return nil
 	})
-	
+
 	return result
 }
 
-// openFileExplorer opens the default file explorer to the specified directory
-func openFileExplorer(dir string) error {
+// OpenFileExplorer opens the default file explorer to the specified directory
+// Exported version of openFileExplorer to be used from other packages.
+func OpenFileExplorer(dir string) error {
 	// For Linux, try xdg-open first
 	var cmd *exec.Cmd
 	if _, err := exec.LookPath("xdg-open"); err == nil {
@@ -266,63 +287,68 @@ func openFileExplorer(dir string) error {
 		// Fallback: Just try xdg-open anyway
 		cmd = exec.Command("xdg-open", dir)
 	}
-	
+
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	
+
 	// Detach process from terminal
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid: true,
 	}
-	
+
 	return cmd.Start()
+}
+
+// openFileExplorer is a wrapper around OpenFileExplorer for backward compatibility
+func openFileExplorer(dir string) error {
+	return OpenFileExplorer(dir)
 }
 
 // DeleteAllOldBuilds removes all contents of the .oldbuilds directory
 func DeleteAllOldBuilds(downloadDir string) error {
 	oldBuildsDir := filepath.Join(downloadDir, ".oldbuilds")
-	
+
 	// Check if the directory exists first
 	if _, err := os.Stat(oldBuildsDir); os.IsNotExist(err) {
 		// Directory doesn't exist, nothing to do
 		return nil
 	}
-	
+
 	// Remove all contents of the .oldbuilds directory
 	entries, err := os.ReadDir(oldBuildsDir)
 	if err != nil {
 		return fmt.Errorf("failed to read .oldbuilds directory: %w", err)
 	}
-	
+
 	for _, entry := range entries {
 		entryPath := filepath.Join(oldBuildsDir, entry.Name())
 		if err := os.RemoveAll(entryPath); err != nil {
 			return fmt.Errorf("failed to remove old build %s: %w", entry.Name(), err)
 		}
 	}
-	
+
 	return nil
 }
 
 // GetOldBuildsInfo returns information about backed up builds
 func GetOldBuildsInfo(downloadDir string) (int, int64, error) {
 	oldBuildsDir := filepath.Join(downloadDir, ".oldbuilds")
-	
+
 	// Check if the directory exists first
 	if _, err := os.Stat(oldBuildsDir); os.IsNotExist(err) {
 		// Directory doesn't exist
 		return 0, 0, nil
 	}
-	
+
 	// Get list of old builds
 	entries, err := os.ReadDir(oldBuildsDir)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to read .oldbuilds directory: %w", err)
 	}
-	
+
 	count := len(entries)
 	var totalSize int64 = 0
-	
+
 	// Calculate total size
 	for _, entry := range entries {
 		entryPath := filepath.Join(oldBuildsDir, entry.Name())
@@ -334,7 +360,7 @@ func GetOldBuildsInfo(downloadDir string) (int, int64, error) {
 		}
 		totalSize += size
 	}
-	
+
 	return count, totalSize, nil
 }
 
@@ -360,17 +386,22 @@ func CheckUpdateAvailable(localBuild, onlineBuild model.BlenderBuild) bool {
 	if localBuild.Version != onlineBuild.Version {
 		return false
 	}
-	
+
 	// If local build has no build date, consider it outdated
 	if localBuild.BuildDate.Time().IsZero() {
 		return true
 	}
-	
+
 	// If online build has no build date, don't consider it an update
 	if onlineBuild.BuildDate.Time().IsZero() {
 		return false
 	}
-	
+
 	// Compare build dates - if online is newer, an update is available
 	return onlineBuild.BuildDate.Time().After(localBuild.BuildDate.Time())
+}
+
+// wrapper function for backward compatibility
+func readBuildInfo(dirPath string) (*model.BlenderBuild, error) {
+	return ReadBuildInfo(dirPath)
 }
