@@ -42,7 +42,9 @@ const (
 	maxTickCounter = 1000 // Maximum ticks to prevent infinite loops
 
 	// Performance constants
-	downloadTickRate = 100 * time.Millisecond // How often to update download progress
+	downloadTickRate    = 100 * time.Millisecond // How often to update download progress
+	downloadStallTime   = 3 * time.Minute        // Default timeout for detecting stalled downloads
+	extractionStallTime = 10 * time.Minute       // Longer timeout for extraction which can take longer
 
 	// Path constants
 	launcherPathFile = "blender_launch_command.txt"
@@ -150,11 +152,14 @@ type Model struct {
 
 // DownloadState holds progress info for an active download
 type DownloadState struct {
-	Progress float64 // 0.0 to 1.0
-	Current  int64
-	Total    int64
-	Speed    float64 // Bytes per second
-	Message  string  // e.g., "Preparing...", "Downloading...", "Extracting...", "Local", "Failed: ..."
+	Progress      float64 // 0.0 to 1.0
+	Current       int64
+	Total         int64
+	Speed         float64       // Bytes per second
+	Message       string        // e.g., "Preparing...", "Downloading...", "Extracting...", "Local", "Failed: ..."
+	LastUpdated   time.Time     // Timestamp of last progress update
+	StartTime     time.Time     // When the download started
+	StallDuration time.Duration // How long download can stall before timeout
 }
 
 // Styles using lipgloss
@@ -297,17 +302,46 @@ func updateStatusFromLocalScanCmd(onlineBuilds []model.BlenderBuild, cfg config.
 }
 
 // tickCmd sends a tickMsg after a short delay.
+// Now it supports dynamic tick rates based on download activity
 func tickCmd() tea.Cmd {
 	return tea.Tick(downloadTickRate, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
 
+// Create a new function for adaptive tick rate
+func adaptiveTickCmd(activeCount int, isExtracting bool) tea.Cmd {
+	// Base rate is our standard download tick rate
+	rate := downloadTickRate
+
+	// If there are no active downloads, we can slow down the tick rate
+	if activeCount == 0 {
+		rate = 500 * time.Millisecond // Slower when idle
+	} else if isExtracting {
+		// During extraction, we can use a slightly slower rate
+		rate = 250 * time.Millisecond
+	} else if activeCount > 1 {
+		// With multiple downloads, we can use a slightly faster rate
+		// to make the UI more responsive, but not too fast to cause system load
+		rate = 80 * time.Millisecond
+	}
+
+	return tea.Tick(rate, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
+}
+
 // doDownloadCmd starts the download in a goroutine which updates shared state.
 func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[string]*DownloadState, mutex *sync.Mutex, cancelCh <-chan struct{}) tea.Cmd {
+	now := time.Now()
 	mutex.Lock()
 	if _, exists := downloadMap[build.Version]; !exists {
-		downloadMap[build.Version] = &DownloadState{Message: "Preparing..."}
+		downloadMap[build.Version] = &DownloadState{
+			Message:       "Preparing...",
+			StartTime:     now,
+			LastUpdated:   now,
+			StallDuration: downloadStallTime, // Initial stall timeout
+		}
 	} else {
 		mutex.Unlock()
 		return nil
@@ -318,8 +352,6 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 	done := make(chan struct{})
 
 	go func() {
-		// log.Printf("[Goroutine %s] Starting download...", build.Version)
-
 		// Variables to track progress for speed calculation (persist across calls)
 		var lastUpdateTime time.Time
 		var lastUpdateBytes int64
@@ -378,6 +410,9 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 
 			mutex.Lock()
 			if state, ok := downloadMap[build.Version]; ok {
+				// Update LastUpdated timestamp on every progress update
+				state.LastUpdated = currentTime
+
 				// Use a virtual size threshold to detect extraction phase
 				// Virtual size is 100MB for extraction as set in download.go
 				const extractionVirtualSize int64 = 100 * 1024 * 1024
@@ -389,6 +424,9 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 					state.Message = "Extracting..."
 					state.Progress = percent
 					state.Speed = 0 // No download speed during extraction
+
+					// Update stall duration to use longer timeout for extraction
+					state.StallDuration = extractionStallTime
 				} else if state.Message == "Extracting..." {
 					// During extraction phase, update progress but keep the "Extracting..." message
 					state.Progress = percent
@@ -400,6 +438,9 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 					state.Total = total
 					state.Speed = currentSpeed
 					state.Message = "Downloading..."
+
+					// Use standard download stall time
+					state.StallDuration = downloadStallTime
 				}
 			}
 			mutex.Unlock()
@@ -423,7 +464,8 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 		close(done)
 	}()
 
-	return tickCmd()
+	// Start with a single active download, not extracting yet
+	return adaptiveTickCmd(1, false)
 }
 
 // Init initializes the TUI model.
@@ -953,31 +995,17 @@ func (m Model) handleBlenderExec(msg model.BlenderExecMsg) (tea.Model, tea.Cmd) 
 
 func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+	now := time.Now()
 
 	m.downloadMutex.Lock()
 	activeDownloads := 0
 	var progressCmds []tea.Cmd
 	completedDownloads := []string{}
-
-	// Add a safety counter to prevent infinite ticks
-	tickCounter, ok := m.downloadStates["_tickCounter"]
-	if !ok {
-		tickCounter = &DownloadState{Current: 0}
-		m.downloadStates["_tickCounter"] = tickCounter
-	}
-
-	tickCounter.Current++
-	if tickCounter.Current > int64(maxTickCounter) {
-		// Too many ticks, clear all downloads to prevent freeze
-		log.Printf("WARNING: Too many ticks (%d) detected, clearing download states to prevent freeze", maxTickCounter)
-		m.downloadStates = make(map[string]*DownloadState)
-		m.downloadStates["_tickCounter"] = &DownloadState{Current: 0}
-		m.downloadMutex.Unlock()
-		return m, nil
-	}
+	stalledDownloads := []string{}
+	extractingInProgress := false
 
 	for version, state := range m.downloadStates {
-		// Skip the counter
+		// Skip the counter entry if it exists
 		if version == "_tickCounter" {
 			continue
 		}
@@ -997,42 +1025,62 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 				log.Printf("[Update tick] Completed download %s not found in m.builds list!", version)
 			}
 		} else if strings.HasPrefix(state.Message, "Downloading") || state.Message == "Preparing..." || state.Message == "Extracting..." {
-			// Still active (includes Extracting now)
-			activeDownloads++
-			// Update progress bar for both downloading and extracting
-			progressCmds = append(progressCmds, m.progressBar.SetPercent(state.Progress))
+			// Check for stalled downloads - if no updates for the stall duration
+			timeSinceUpdate := now.Sub(state.LastUpdated)
+			if timeSinceUpdate > state.StallDuration {
+				log.Printf("WARNING: Download for %s stalled (no updates for %v), marking as failed",
+					version, timeSinceUpdate.Round(time.Second))
+				state.Message = fmt.Sprintf("Failed: Download stalled for %v", timeSinceUpdate.Round(time.Second))
+				stalledDownloads = append(stalledDownloads, version)
+
+				// Update main build list status
+				for i := range m.builds {
+					if m.builds[i].Version == version {
+						m.builds[i].Status = state.Message
+						break
+					}
+				}
+			} else {
+				// Still active (not stalled)
+				activeDownloads++
+
+				// Track if any downloads are in extraction phase
+				if state.Message == "Extracting..." {
+					extractingInProgress = true
+				}
+
+				// Update progress bar for both downloading and extracting
+				progressCmds = append(progressCmds, m.progressBar.SetPercent(state.Progress))
+			}
 		}
 	}
 
 	// Clean up completed downloads from the state map
-	if len(completedDownloads) > 0 {
-		for _, version := range completedDownloads {
-			delete(m.downloadStates, version)
-		}
-		// Reset the tick counter when downloads complete
-		tickCounter.Current = 0
+	for _, version := range completedDownloads {
+		delete(m.downloadStates, version)
 	}
+
+	// Also clean up any stalled downloads
+	for _, version := range stalledDownloads {
+		delete(m.downloadStates, version)
+	}
+
+	// We no longer need the _tickCounter, remove if it exists
+	delete(m.downloadStates, "_tickCounter")
 
 	m.downloadMutex.Unlock()
 
 	// Handle active downloads with proper command creation
 	if activeDownloads > 0 {
 		// Create a combined command that includes tick and progress commands
-		var commands []tea.Cmd = []tea.Cmd{tickCmd()}
+		var commands []tea.Cmd = []tea.Cmd{adaptiveTickCmd(activeDownloads, extractingInProgress)}
 
 		if len(progressCmds) > 0 {
 			commands = append(commands, progressCmds...)
 			return m, tea.Batch(commands...)
 		}
 
-		return m, tickCmd()
-	} else {
-		// No active downloads, reset the tick counter
-		m.downloadMutex.Lock()
-		if counter, exists := m.downloadStates["_tickCounter"]; exists {
-			counter.Current = 0
-		}
-		m.downloadMutex.Unlock()
+		return m, adaptiveTickCmd(activeDownloads, extractingInProgress)
 	}
 
 	// Handle progress commands even if no active downloads
@@ -1104,22 +1152,8 @@ func (m Model) renderSettingsView() string {
 	var helpText string
 	if m.editMode {
 		helpText = "Enter: Save Edits | Esc: Cancel Edit | Tab: Next Field"
-		// Add a visual indicator that edit mode is active
-		modeIndicator := lp.NewStyle().
-			Background(lp.Color(colorWarning)).
-			Foreground(lp.Color("0")).
-			Padding(0, 1).
-			Render(" EDIT MODE ")
-		viewBuilder.WriteString(modeIndicator + "\n\n")
 	} else {
 		helpText = "Enter: Edit Field | h: Back | j/k: Navigate | s: Save Settings"
-		// Add a visual indicator that navigation mode is active
-		modeIndicator := lp.NewStyle().
-			Background(lp.Color(colorInfo)).
-			Foreground(lp.Color("0")).
-			Padding(0, 1).
-			Render(" NAVIGATION MODE ")
-		viewBuilder.WriteString(modeIndicator + "\n\n")
 	}
 	viewBuilder.WriteString(footerStyle.Render(helpText))
 
@@ -1326,14 +1360,14 @@ Press f to fetch online builds, s for settings, q to quit.`
 	footerKeys := fmt.Sprintf("%s  %s  %s  %s  %s", footerKeybinds1, keybindSeparator, footerKeybinds2, keybindSeparator, footerKeybinds3)
 
 	// Create colored status indicators for the legend
-	localStatus := lp.NewStyle().Foreground(lp.Color(colorSuccess)).Render("■ Local")
-	updateStatus := lp.NewStyle().Foreground(lp.Color(colorInfo)).Render("■ Update Available")
-	onlineStatus := lp.NewStyle().Foreground(lp.Color(colorNeutral)).Render("■ Online")
+	// localStatus := lp.NewStyle().Foreground(lp.Color(colorSuccess)).Render("■ Local")
+	// updateStatus := lp.NewStyle().Foreground(lp.Color(colorInfo)).Render("■ Update Available")
+	// onlineStatus := lp.NewStyle().Foreground(lp.Color(colorNeutral)).Render("■ Online")
 
-	footerLegend := fmt.Sprintf("%s   %s   %s   ↑↓ Sort Direction", localStatus, updateStatus, onlineStatus)
+	// footerLegend := fmt.Sprintf("%s   %s   %s   ↑↓ Sort Direction", localStatus, updateStatus, onlineStatus)
 	viewBuilder.WriteString(footerStyle.Render(footerKeys))
-	viewBuilder.WriteString("\n")
-	viewBuilder.WriteString(footerStyle.Render(footerLegend))
+	// viewBuilder.WriteString("\n")
+	// viewBuilder.WriteString(footerStyle.Render(footerLegend))
 
 	return viewBuilder.String()
 }
