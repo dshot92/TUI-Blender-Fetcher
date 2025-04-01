@@ -1365,22 +1365,9 @@ func (m Model) renderSettingsView() string {
 		}
 	}
 
-	keybindSeparator := "│"
-
-	// Calculate total width needed for the footer
-	totalWidth := len(footerKeybinds1) + len(keybindSeparator) + len(footerKeybinds2)
-
-	// If the total width is greater than the terminal width, wrap the footer
-	if totalWidth > m.terminalWidth {
-		// Two line footer
-		viewBuilder.WriteString(footerStyle.Render(footerKeybinds1))
-		viewBuilder.WriteString("\n")
-		viewBuilder.WriteString(footerStyle.Render(footerKeybinds2))
-	} else {
-		// Single line footer with separator
-		footerKeys := fmt.Sprintf("%s  %s  %s", footerKeybinds1, keybindSeparator, footerKeybinds2)
-		viewBuilder.WriteString(footerStyle.Render(footerKeys))
-	}
+	// Always render two lines for the footer
+	footerContent := footerKeybinds1 + "\n" + footerKeybinds2
+	viewBuilder.WriteString(footerStyle.Render(footerContent))
 
 	return viewBuilder.String()
 }
@@ -1669,26 +1656,54 @@ Press f to try fetching online builds, s for settings, q to quit.`, m.err)
 	}
 
 	// ... Footer rendering ...
-	footerKeybinds1 := "Enter:Launch  D:Download  C:Cancel  O:Open Dir  X:Delete"
-	footerKeybinds2 := "F:Fetch  R:Reverse  S:Settings  Q:Quit"
-	footerKeybinds3 := "←→:Column  R:Reverse"
-	keybindSeparator := "│"
+	// Contextual commands based on selected build
+	var footerKeybinds1 string
+	var footerKeybinds2 string
 
-	// Calculate total width needed for the footer
-	totalWidth := len(footerKeybinds1) + len(keybindSeparator) + len(footerKeybinds2) + len(keybindSeparator) + len(footerKeybinds3)
+	// Command items for the first line - contextual based on build status
+	if len(m.builds) > 0 && m.cursor < len(m.builds) {
+		// Command set for the selected build based on its status
+		selectedBuild := m.builds[m.cursor]
+		status := selectedBuild.Status
 
-	// If the total width is greater than the terminal width, wrap the footer
-	if totalWidth > m.terminalWidth {
-		// Combine all footer lines into a single styled string
-		footerContent := footerStyle.Render(footerKeybinds1) +
-			footerStyle.Render(footerKeybinds2) +
-			footerStyle.Render(footerKeybinds3)
-		viewBuilder.WriteString(footerContent)
+		// First footer line: actions specific to the selected build
+		var commands []string
+
+		// Only show Launch for local builds
+		if status == "Local" {
+			commands = append(commands, "Enter:Launch")
+			commands = append(commands, "X:Delete")
+		}
+
+		// Only show Download for "Online" or "Update" builds
+		if status == "Online" || status == "Update" {
+			commands = append(commands, "D:Download")
+		}
+
+		// Only show Cancel for builds in progress (Downloading, Preparing, Extracting)
+		if strings.HasPrefix(status, "Downloading") || status == "Preparing..." || status == "Extracting..." {
+			commands = append(commands, "C:Cancel")
+		}
+
+		// Always show Open Dir option if there are any builds
+		commands = append(commands, "O:Open Dir")
+
+		footerKeybinds1 = strings.Join(commands, "  ")
 	} else {
-		// Single line footer with separators
-		footerKeys := fmt.Sprintf("%s  %s  %s  %s  %s", footerKeybinds1, keybindSeparator, footerKeybinds2, keybindSeparator, footerKeybinds3)
-		viewBuilder.WriteString(footerStyle.Render(footerKeys))
+		// No builds selected or no builds available
+		footerKeybinds1 = "O:Open Dir"
 	}
+
+	// Second footer line: global commands and column navigation - always consistent
+	if m.sortReversed {
+		footerKeybinds2 = "F:Fetch  S:Settings  Q:Quit  R:Sort Ascending  ←→:Column"
+	} else {
+		footerKeybinds2 = "F:Fetch  S:Settings  Q:Quit  R:Sort Descending  ←→:Column"
+	}
+
+	// Render the footer (both lines with no spacing between them)
+	footerContent := footerKeybinds1 + "\n" + footerKeybinds2
+	viewBuilder.WriteString(footerStyle.Render(footerContent))
 
 	return viewBuilder.String()
 }
