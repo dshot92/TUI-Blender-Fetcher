@@ -1015,8 +1015,8 @@ func (m Model) handleLaunchBlender() (tea.Model, tea.Cmd) {
 func (m Model) handleOpenBuildDir() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
-		// Only open dir if it's a local build
-		if selectedBuild.Status == "Local" {
+		// Only open dir if it's a local build or has an update available
+		if selectedBuild.Status == "Local" || selectedBuild.Status == "Update" {
 			// Create a command that locates the correct build directory by version
 			return m, func() tea.Msg {
 				entries, err := os.ReadDir(m.config.DownloadDir)
@@ -1107,8 +1107,8 @@ func (m Model) handleShowSettings() (tea.Model, tea.Cmd) {
 func (m Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
-		// Only allow deleting local builds
-		if selectedBuild.Status == "Local" {
+		// Only allow deleting local builds or builds that can be updated
+		if selectedBuild.Status == "Local" || selectedBuild.Status == "Update" {
 			m.deleteCandidate = selectedBuild.Version
 			m.currentView = viewDeleteConfirm
 			return m, nil
@@ -1706,28 +1706,61 @@ Press f to try fetching online builds, s for settings, q to quit.`, m.err)
 		// Command set for the selected build based on its status
 		selectedBuild := m.builds[m.cursor]
 		status := selectedBuild.Status
+		isLocalOrUpdate := status == "Local" || status == "Update"
+		isDownloading := strings.HasPrefix(status, "Downloading") || status == "Preparing..." || status == "Extracting..."
 
-		// First footer line: actions specific to the selected build
-		var commands []string
+		// --- Determine which commands are applicable ---
+		var launchCmd, downloadCmd, openCmd, deleteCmd, cancelCmd string
 
-		// Only show Launch for local builds
-		if status == "Local" {
-			commands = append(commands, "Enter:Launch")
-			commands = append(commands, "X:Delete")
-			commands = append(commands, "O:Open Dir")
+		// Launch: Applicable if local or update exists
+		if isLocalOrUpdate {
+			launchCmd = "Enter:Launch"
 		}
 
-		// Only show Download for "Online" or "Update" builds
+		// Download: Applicable if Online or an Update is available
 		if status == "Online" || status == "Update" {
-			commands = append(commands, "D:Download")
+			downloadCmd = "D:Download"
 		}
 
-		// Only show Cancel for builds in progress (Downloading, Preparing, Extracting)
-		if strings.HasPrefix(status, "Downloading") || status == "Preparing..." || status == "Extracting..." {
-			commands = append(commands, "C:Cancel")
+		// Open Dir: Applicable if local or update exists
+		if isLocalOrUpdate {
+			openCmd = "O:Open Dir"
 		}
 
-		footerKeybinds1 = strings.Join(commands, "  ")
+		// Delete: Applicable if local or update exists
+		if isLocalOrUpdate {
+			deleteCmd = "X:Delete"
+		}
+
+		// Cancel: Applicable only if a download/extraction is in progress
+		if isDownloading {
+			cancelCmd = "C:Cancel"
+			// Typically, other actions aren't available during download/extraction
+			launchCmd = ""
+			downloadCmd = ""
+			openCmd = ""
+			deleteCmd = ""
+		}
+
+		// --- Assemble commands in the desired order ---
+		orderedCmds := []string{
+			launchCmd,
+			downloadCmd,
+			openCmd,
+			deleteCmd,
+			cancelCmd,
+		}
+
+		// --- Filter out empty commands ---
+		var finalCmds []string
+		for _, cmd := range orderedCmds {
+			if cmd != "" {
+				finalCmds = append(finalCmds, cmd)
+			}
+		}
+
+		// --- Join the final commands for display ---
+		footerKeybinds1 = strings.Join(finalCmds, "  ")
 	}
 
 	// Second footer line: global commands and column navigation - always consistent
