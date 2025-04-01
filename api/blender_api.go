@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 
+	"TUI-Blender-Launcher/types"
+
 	version "github.com/hashicorp/go-version" // Import version library
 )
 
@@ -125,7 +127,7 @@ func FetchBuilds(versionFilter string) ([]model.BlenderBuild, error) { // Added 
 		}
 
 		// Passed all filters
-		build.Status = "Online"
+		build.Status = types.StateOnline
 		filteredBuilds = append(filteredBuilds, build)
 	}
 

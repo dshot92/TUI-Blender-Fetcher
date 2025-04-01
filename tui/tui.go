@@ -1,4 +1,4 @@
-package tui
+package tui // Add this line
 
 import (
 	"TUI-Blender-Launcher/api" // Import the api package
@@ -6,18 +6,28 @@ import (
 	"TUI-Blender-Launcher/download" // Import download package
 	"TUI-Blender-Launcher/local"    // Import local package
 	"TUI-Blender-Launcher/model"    // Import the model package
+	"TUI-Blender-Launcher/types"    // Import the types package
 	"TUI-Blender-Launcher/util"     // Import util package
+
+	// Import context
 	"errors"
 	"fmt"
-	"log"
-	"os"
-	"path/filepath"
-	"sort"
-	"strings" // Import strings
-	"sync"
-	"time"
+	"log" // Import log package
 
-	"github.com/charmbracelet/bubbles/progress"
+	// Import math package
+	"os" // Import os package
+	"path/filepath"
+	"sort" // Import sort package
+
+	// Import strconv package
+	"strings" // Import strings package
+	"sync"    // Import sync package
+	"time"    // Import time package
+
+	// Import help
+	// Import key
+	"github.com/charmbracelet/bubbles/progress" // Import progress
+	// Import table
 	"github.com/charmbracelet/bubbles/textinput" // Import textinput
 	tea "github.com/charmbracelet/bubbletea"
 	lp "github.com/charmbracelet/lipgloss" // Import lipgloss
@@ -303,15 +313,15 @@ type Model struct {
 
 // DownloadState holds progress info for an active download
 type DownloadState struct {
-	Progress      float64 // 0.0 to 1.0
-	Current       int64
-	Total         int64
-	Speed         float64       // Bytes per second
-	Message       string        // e.g., "Preparing", "Downloading", "Extracting", "Local", "Failed: "
-	LastUpdated   time.Time     // Timestamp of last progress update
-	StartTime     time.Time     // When the download started
-	StallDuration time.Duration // How long download can stall before timeout
-	CancelCh      chan struct{} // Per-download cancel channel
+	Progress      float64          // Progress from 0.0 to 1.0
+	Current       int64            // Bytes downloaded so far (renamed from CurrentBytes)
+	Total         int64            // Total bytes to download (renamed from TotalBytes)
+	Speed         float64          // Download speed in bytes/sec
+	BuildState    types.BuildState // Changed from Message to BuildState
+	LastUpdated   time.Time        // Timestamp of last progress update
+	StartTime     time.Time        // When the download started
+	StallDuration time.Duration    // How long download can stall before timeout
+	CancelCh      chan struct{}    // Per-download cancel channel
 }
 
 // Styles using lipgloss
@@ -445,12 +455,12 @@ func updateStatusFromLocalScanCmd(onlineBuilds []model.BlenderBuild, cfg config.
 				// We found a matching version locally
 				if local.CheckUpdateAvailable(localBuild, updatedBuilds[i]) {
 					// Using our new function to check if update is available based on build date
-					updatedBuilds[i].Status = "Update"
+					updatedBuilds[i].Status = types.StateUpdate
 				} else {
-					updatedBuilds[i].Status = "Local"
+					updatedBuilds[i].Status = types.StateLocal
 				}
 			} else {
-				updatedBuilds[i].Status = "Online" // Not installed
+				updatedBuilds[i].Status = types.StateOnline // Not installed
 			}
 		}
 		return buildsUpdatedMsg{builds: updatedBuilds}
@@ -498,7 +508,7 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 	if _, exists := downloadMap[build.Version]; !exists {
 		// Initialize download state with defaults
 		downloadMap[build.Version] = &DownloadState{
-			Message:       "Preparing",
+			BuildState:    types.StatePreparing,
 			StartTime:     now,
 			LastUpdated:   now,
 			Progress:      0.0,
@@ -569,7 +579,7 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 
 			if state, ok := downloadMap[build.Version]; ok {
 				// If already cancelled, don't update progress
-				if state.Message == "Cancelled" {
+				if state.BuildState == types.StateNone {
 					return
 				}
 
@@ -582,11 +592,11 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 				// Determine state based on progress info
 				if total == extractionVirtualSize {
 					// Extraction phase
-					state.Message = "Extracting"
+					state.BuildState = types.StateExtracting
 					state.Progress = percent
 					state.Speed = 0                           // No download speed during extraction
 					state.StallDuration = extractionStallTime // Longer timeout for extraction
-				} else if state.Message == "Extracting" {
+				} else if state.BuildState == types.StateExtracting {
 					// Continue extraction progress updates
 					state.Progress = percent
 				} else {
@@ -595,7 +605,7 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 					state.Current = downloaded
 					state.Total = total
 					state.Speed = currentSpeed
-					state.Message = "Downloading"
+					state.BuildState = types.StateDownloading
 					state.StallDuration = downloadStallTime
 				}
 			}
@@ -607,7 +617,7 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 			// Download canceled before starting
 			mutex.Lock()
 			if state, ok := downloadMap[build.Version]; ok {
-				state.Message = "Cancelled"
+				state.BuildState = types.StateNone
 			}
 			mutex.Unlock()
 			close(done)
@@ -625,7 +635,7 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 			// Download was cancelled during execution
 			mutex.Lock()
 			if state, ok := downloadMap[build.Version]; ok {
-				state.Message = "Cancelled"
+				state.BuildState = types.StateNone
 			}
 			mutex.Unlock()
 			close(done)
@@ -637,16 +647,17 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 		// Update final status based on result
 		mutex.Lock()
 		if state, ok := downloadMap[build.Version]; ok {
-			if state.Message == "Cancelled" {
+			if state.BuildState == types.StateNone {
 				// Keep as cancelled
 			} else if err != nil {
 				if errors.Is(err, download.ErrCancelled) {
-					state.Message = "Cancelled"
+					state.BuildState = types.StateNone
 				} else {
-					state.Message = fmt.Sprintf("Failed: %v", err)
+					// StateNone for error states, will be displayed with additional context in UI
+					state.BuildState = types.StateNone
 				}
 			} else {
-				state.Message = "Local"
+				state.BuildState = types.StateLocal
 			}
 		}
 		mutex.Unlock()
@@ -994,8 +1005,8 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for i := range m.builds {
 			if m.builds[i].Version == msg.version {
 				// Only reset if it's still marked as Cancelled
-				if m.builds[i].Status == "Cancelled" {
-					m.builds[i].Status = "Online" // Or potentially "Update" if applicable?
+				if m.builds[i].Status == types.StateNone {
+					m.builds[i].Status = types.StateOnline // Or potentially "Update" if applicable?
 					// TODO: Re-check if an update is available for this build?
 					// For now, just set to Online. If user fetches again, it will update.
 					needsSort = true // Re-sort if status changed
@@ -1075,7 +1086,7 @@ func (m Model) handleLaunchBlender() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
 		// Only attempt to launch if it's a local build
-		if selectedBuild.Status == "Local" {
+		if selectedBuild.Status == types.StateLocal {
 			// Add launch logic here
 			log.Printf("Launching Blender %s", selectedBuild.Version)
 			cmd := local.LaunchBlenderCmd(m.config.DownloadDir, selectedBuild.Version)
@@ -1090,7 +1101,7 @@ func (m Model) handleOpenBuildDir() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
 		// Only open dir if it's a local build or has an update available
-		if selectedBuild.Status == "Local" || selectedBuild.Status == "Update" {
+		if selectedBuild.Status == types.StateLocal || selectedBuild.Status == types.StateUpdate {
 			// Create a command that locates the correct build directory by version
 			return m, func() tea.Msg {
 				entries, err := os.ReadDir(m.config.DownloadDir)
@@ -1130,9 +1141,9 @@ func (m Model) handleStartDownload() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
 		// Allow downloading both Online builds and Updates
-		if selectedBuild.Status == "Online" || selectedBuild.Status == "Update" {
+		if selectedBuild.Status == types.StateOnline || selectedBuild.Status == types.StateUpdate {
 			// Update status to avoid duplicate downloads
-			selectedBuild.Status = "Preparing"
+			selectedBuild.Status = types.StatePreparing
 			m.builds[m.cursor] = selectedBuild
 			// Send message to start download
 			return m, func() tea.Msg {
@@ -1182,7 +1193,7 @@ func (m Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
 		// Only allow deleting local builds or builds that can be updated
-		if selectedBuild.Status == "Local" || selectedBuild.Status == "Update" {
+		if selectedBuild.Status == types.StateLocal || selectedBuild.Status == types.StateUpdate {
 			m.deleteCandidate = selectedBuild.Version
 			m.currentView = viewDeleteConfirm
 			return m, nil
@@ -1309,15 +1320,15 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	for version, state := range m.downloadStates {
 		tempStates[version] = *state // Store a copy
 
-		if state.Message == "Local" || strings.HasPrefix(state.Message, "Failed") {
+		if state.BuildState == types.StateLocal || strings.HasPrefix(state.BuildState.String(), "Failed") {
 			// Download completed or failed
 			completedDownloads = append(completedDownloads, version)
-		} else if state.Message == "Cancelled" {
+		} else if state.BuildState == types.StateNone {
 			// Download was cancelled
 			cancelledDownloads = append(cancelledDownloads, version)
-		} else if state.Message == "Downloading" ||
-			state.Message == "Preparing" ||
-			state.Message == "Extracting" {
+		} else if state.BuildState == types.StateDownloading ||
+			state.BuildState == types.StatePreparing ||
+			state.BuildState == types.StateExtracting {
 			// Active download
 			timeSinceUpdate := now.Sub(state.LastUpdated)
 			if timeSinceUpdate > state.StallDuration {
@@ -1327,14 +1338,13 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 
 				// Update status in our temporary copy
 				tempStateCopy := *state
-				tempStateCopy.Message = fmt.Sprintf("Failed: Download stalled for %v",
-					timeSinceUpdate.Round(time.Second))
+				tempStateCopy.BuildState = types.StateFailed
 				tempStates[version] = tempStateCopy
 				stalledDownloads = append(stalledDownloads, version)
 			} else {
 				// Active download that's not stalled
 				activeDownloads++
-				if state.Message == "Extracting" {
+				if state.BuildState == types.StateExtracting {
 					extractingInProgress = true
 				}
 				// Queue progress bar update
@@ -1362,7 +1372,7 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 		for i := range m.builds {
 			if m.builds[i].Version == version {
 				if tempState, ok := tempStates[version]; ok {
-					m.builds[i].Status = tempState.Message
+					m.builds[i].Status = tempState.BuildState
 					needsSort = true
 				}
 				break
@@ -1373,7 +1383,7 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 		for i := range m.builds {
 			if m.builds[i].Version == version {
 				if tempState, ok := tempStates[version]; ok {
-					m.builds[i].Status = tempState.Message
+					m.builds[i].Status = tempState.BuildState
 					needsSort = true
 				}
 				break
@@ -1383,7 +1393,7 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	for _, version := range cancelledDownloads {
 		for i := range m.builds {
 			if m.builds[i].Version == version {
-				m.builds[i].Status = "Cancelled"
+				m.builds[i].Status = types.StateNone
 				needsSort = true
 				break
 			}
@@ -1610,14 +1620,14 @@ func (m Model) renderListView() string {
 			// Determine status style
 			statusStyle := cellStyle.Copy()
 			switch build.Status {
-			case "Local":
+			case types.StateLocal:
 				statusStyle = statusStyle.Copy().Inherit(localStyle)
-			case "Update":
+			case types.StateUpdate:
 				statusStyle = statusStyle.Copy().Inherit(updateStyle)
-			case "Cancelled":
+			case types.StateNone:
 				statusStyle = statusStyle.Copy().Inherit(warningStyle)
 			default:
-				if strings.HasPrefix(build.Status, "Failed") {
+				if build.Status == types.StateFailed {
 					statusStyle = statusStyle.Copy().Inherit(errorStyle)
 				} else if isDownloading {
 					statusStyle = statusStyle.Copy().Inherit(warningStyle)
@@ -1634,12 +1644,12 @@ func (m Model) renderListView() string {
 				versionCell := cellStyle.Copy().Align(lp.Center).Width(columns[0].width).Render(versionText)
 
 				// Status (always visible)
-				statusCell := statusStyle.Copy().Align(lp.Center).Width(columns[1].width).Render(downloadState.Message)
+				statusCell := statusStyle.Copy().Align(lp.Center).Width(columns[1].width).Render(downloadState.BuildState.String())
 
 				// Branch (speed display for downloads)
 				branchContent := ""
 				if columns[2].visible {
-					if downloadState.Message == "Downloading" {
+					if downloadState.BuildState == types.StateDownloading {
 						branchContent = util.FormatSpeed(downloadState.Speed)
 					}
 					branchCell := cellStyle.Copy().Align(lp.Center).Width(columns[2].width).Render(branchContent)
@@ -1661,7 +1671,7 @@ func (m Model) renderListView() string {
 				}
 
 				// Only render progress bar if we have space
-				if remainingWidth > 0 && (downloadState.Message == "Downloading" || downloadState.Message == "Extracting") {
+				if remainingWidth > 0 && (downloadState.BuildState == types.StateDownloading || downloadState.BuildState == types.StateExtracting) {
 					// Create the progress bar
 					pb := m.progressBar
 					pb.Width = remainingWidth - 2 // Subtract 2 for safety
@@ -1688,7 +1698,7 @@ func (m Model) renderListView() string {
 
 				// Status
 				if columns[1].visible {
-					addCell(build.Status, columns[1].width, statusStyle, 1)
+					addCell(build.Status.String(), columns[1].width, statusStyle, 1)
 				}
 
 				// Branch
@@ -1751,29 +1761,29 @@ func (m Model) renderListView() string {
 		var commands []string
 
 		// Launch: only for Local builds
-		if status == "Local" {
+		if status == types.StateLocal {
 			commands = append(commands, "Enter:Launch")
 		}
 
 		// Download: for Online or Update builds
-		if status == "Online" || status == "Update" {
+		if status == types.StateOnline || status == types.StateUpdate {
 			commands = append(commands, "D:Download")
 		}
 
 		// Open directory: for Local or Update builds
-		if status == "Local" || status == "Update" {
+		if status == types.StateLocal || status == types.StateUpdate {
 			commands = append(commands, "O:Open Dir")
 		}
 
 		// Delete: for Local or Update builds
-		if status == "Local" || status == "Update" {
+		if status == types.StateLocal || status == types.StateUpdate {
 			commands = append(commands, "X:Delete")
 		}
 
 		// Cancel: for in-progress downloads
-		if strings.HasPrefix(status, "Downloading") ||
-			status == "Preparing" ||
-			status == "Extracting" {
+		if status == types.StateDownloading ||
+			status == types.StatePreparing ||
+			status == types.StateExtracting {
 			commands = append(commands, "C:Cancel")
 		}
 
@@ -2038,9 +2048,9 @@ func (m Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 	downloadState, isDownloading := m.downloadStates[buildVersion]
 	// Check if it's in a cancellable state *while holding the lock*
 	canCancel := isDownloading &&
-		(downloadState.Message == "Downloading" ||
-			downloadState.Message == "Preparing" ||
-			downloadState.Message == "Extracting")
+		(downloadState.BuildState == types.StateDownloading ||
+			downloadState.BuildState == types.StatePreparing ||
+			downloadState.BuildState == types.StateExtracting)
 	m.downloadMutex.Unlock() // Unlock immediately after reading
 
 	// If not downloading or not in a cancellable state, do nothing
@@ -2078,4 +2088,28 @@ func countVisibleColumns(columns []struct {
 		}
 	}
 	return count
+}
+
+// Add helper function to convert BuildState to display string
+func buildStateToString(state types.BuildState) string {
+	switch state {
+	case types.StateOnline:
+		return "Online"
+	case types.StateLocal:
+		return "Local"
+	case types.StateUpdate:
+		return "Update"
+	case types.StateDownloading:
+		return "Downloading"
+	case types.StatePreparing:
+		return "Preparing"
+	case types.StateExtracting:
+		return "Extracting"
+	case types.StateNone:
+		return "Cancelled"
+	case types.StateFailed:
+		return "Failed"
+	default:
+		return "Unknown"
+	}
 }

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"TUI-Blender-Launcher/types"
 	"encoding/json"
 	"time"
 )
@@ -17,7 +18,7 @@ func (t *Timestamp) UnmarshalJSON(b []byte) error {
 		*t = Timestamp(time.Unix(timestamp, 0))
 		return nil
 	}
-	
+
 	// If not an integer, try a string with RFC3339 format
 	var timeStr string
 	if err := json.Unmarshal(b, &timeStr); err == nil {
@@ -27,7 +28,7 @@ func (t *Timestamp) UnmarshalJSON(b []byte) error {
 			return nil
 		}
 	}
-	
+
 	// If neither worked, it might be an object, we'll use current time
 	// This is a fallback to prevent breaking the whole program
 	*t = Timestamp(time.Now())
@@ -64,7 +65,7 @@ type BlenderBuild struct {
 	ReleaseCycle    string    `json:"release_cycle"`  // e.g., "daily", "stable", "candidate" (replaces previous 'Type')
 
 	// Internal state (not from API)
-	Status   string // e.g., "Online", "Downloading", "Downloaded", "Update Available", "Error"
+	Status types.BuildState // Changed from string to types.BuildState
 	// Selected field removed - we only work with highlighted builds now
 }
 
