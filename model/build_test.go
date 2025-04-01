@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"TUI-Blender-Launcher/types"
 )
 
 func TestTimestampUnmarshalJSON(t *testing.T) {
@@ -150,7 +152,7 @@ func TestBlenderBuildJsonMarshaling(t *testing.T) {
 		FileName:        "blender-4.0.0.tar.xz",
 		FileExtension:   "tar.xz",
 		ReleaseCycle:    "daily",
-		Status:          "Online",
+		Status:          types.StateOnline,
 	}
 
 	// Marshal
@@ -177,7 +179,7 @@ func TestBlenderBuildJsonMarshaling(t *testing.T) {
 		t.Errorf("Hash mismatch: got %s, want %s", unmarshaled.Hash, build.Hash)
 	}
 	if time.Time(build.BuildDate).Format(time.RFC3339) != time.Time(unmarshaled.BuildDate).Format(time.RFC3339) {
-		t.Errorf("BuildDate mismatch: got %v, want %v", 
+		t.Errorf("BuildDate mismatch: got %v, want %v",
 			time.Time(unmarshaled.BuildDate), time.Time(build.BuildDate))
 	}
 	if build.DownloadURL != unmarshaled.DownloadURL {
@@ -202,4 +204,4 @@ func TestBlenderBuildJsonMarshaling(t *testing.T) {
 		t.Errorf("ReleaseCycle mismatch: got %s, want %s", unmarshaled.ReleaseCycle, build.ReleaseCycle)
 	}
 	// Status is not included in JSON, so it will be empty in unmarshaled
-} 
+}

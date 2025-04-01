@@ -2,6 +2,7 @@ package api
 
 import (
 	"TUI-Blender-Launcher/model"
+	"TUI-Blender-Launcher/types"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -115,7 +116,7 @@ func TestFetchBuilds(t *testing.T) {
 				if build.FileExtension != "tar.xz" {
 					t.Errorf("Expected file extension tar.xz, got %s", build.FileExtension)
 				}
-				if build.Status != "Online" {
+				if build.Status != types.StateOnline {
 					t.Errorf("Expected status Online, got %s", build.Status)
 				}
 			},

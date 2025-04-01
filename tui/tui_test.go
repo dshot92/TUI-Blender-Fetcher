@@ -3,6 +3,7 @@ package tui
 import (
 	"TUI-Blender-Launcher/config"
 	"TUI-Blender-Launcher/model"
+	"TUI-Blender-Launcher/types"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -181,11 +182,11 @@ func TestKeyHandling(t *testing.T) {
 	m.builds = []model.BlenderBuild{
 		{
 			Version: "3.6.0",
-			Status:  "Online",
+			Status:  types.StateOnline,
 		},
 		{
 			Version: "3.5.0",
-			Status:  "Online",
+			Status:  types.StateOnline,
 		},
 	}
 
