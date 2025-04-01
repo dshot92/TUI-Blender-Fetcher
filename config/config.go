@@ -22,7 +22,7 @@ func DefaultConfig() Config {
 	// Sensible default download path (e.g., ~/blender-builds)
 	// We will expand the ~ later
 	homeDir, _ := os.UserHomeDir() // Use UserHomeDir for safety
-	defaultDownloadPath := filepath.Join(homeDir, "blender/blender-builds")
+	defaultDownloadPath := filepath.Join(homeDir, "blender/blender-build")
 
 	return Config{
 		DownloadDir:   defaultDownloadPath,

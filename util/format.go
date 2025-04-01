@@ -32,3 +32,20 @@ func TruncateString(s string, maxLen int) string {
 	}
 	return s[:maxLen-3] + "..."
 }
+
+// FormatSpeed converts bytes per second to a human-readable string (KB/s, MB/s, GB/s).
+func FormatSpeed(bytesPerSecond float64) string {
+	if bytesPerSecond < 1024 {
+		return fmt.Sprintf("%.1f B/s", bytesPerSecond)
+	}
+	kbPerSecond := bytesPerSecond / 1024
+	if kbPerSecond < 1024 {
+		return fmt.Sprintf("%.1f KB/s", kbPerSecond)
+	}
+	mbPerSecond := kbPerSecond / 1024
+	if mbPerSecond < 1024 {
+		return fmt.Sprintf("%.1f MB/s", mbPerSecond)
+	}
+	gbPerSecond := mbPerSecond / 1024
+	return fmt.Sprintf("%.1f GB/s", gbPerSecond)
+}

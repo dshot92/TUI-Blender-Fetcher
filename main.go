@@ -34,7 +34,7 @@ func main() {
 	m := tui.InitialModel(cfg, needsInitialSetup)
 
 	// Create and run the Bubble Tea program
-	p := tea.NewProgram(m, tea.WithAltScreen()) // Use AltScreen for cleaner exit
+	p := tea.NewProgram(m, tea.WithAltScreen()) // Use AltScreen
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error running program: %v\n", err)
 		os.Exit(1)
