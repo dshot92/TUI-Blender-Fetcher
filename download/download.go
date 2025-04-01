@@ -279,6 +279,7 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 		}
 		entryCount++
 
+		// Use header.Name as is without modifying the path
 		targetPath := filepath.Join(destDir, header.Name)
 
 		switch header.Typeflag {
@@ -481,29 +482,43 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		// Continue
 	}
 
-	// 2. Determine Extraction Directory
-	baseNameWithoutExt := strings.TrimSuffix(strings.TrimSuffix(downloadFileName, ".tar.xz"), ".zip")
-	extractedDirName := baseNameWithoutExt
-	extractedPath := filepath.Join(downloadBaseDir, extractedDirName)
+	// 2. The archive contains a root directory, we'll extract directly to downloadBaseDir
+	// Look for any existing directory with this build version
+	var existingBuildDir string
+	entries, err := os.ReadDir(downloadBaseDir)
+	if err == nil {
+		// Find any directories that might contain this version
+		version := build.Version
+		for _, entry := range entries {
+			if entry.IsDir() && entry.Name() != ".downloading" && entry.Name() != ".oldbuilds" {
+				// Check if this directory contains the version we're downloading
+				if strings.Contains(entry.Name(), version) {
+					existingBuildDir = filepath.Join(downloadBaseDir, entry.Name())
+					break
+				}
+			}
+		}
+	}
 
-	if _, err := os.Stat(extractedPath); err == nil {
+	// If we found an existing build directory, back it up
+	if existingBuildDir != "" {
 		oldBuildsDir := filepath.Join(downloadBaseDir, ".oldbuilds")
 		if err := os.MkdirAll(oldBuildsDir, 0750); err != nil {
 			return "", fmt.Errorf("failed to create .oldbuilds directory: %w", err)
 		}
 		timestamp := time.Now().Format("20060102_150405")
-		oldBuildName := fmt.Sprintf("%s_%s", extractedDirName, timestamp)
+		oldBuildName := fmt.Sprintf("%s_%s", filepath.Base(existingBuildDir), timestamp)
 		oldBuildPath := filepath.Join(oldBuildsDir, oldBuildName)
-		if err := os.Rename(extractedPath, oldBuildPath); err != nil {
+		if err := os.Rename(existingBuildDir, oldBuildPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: couldn't move old build to backup dir: %v\n", err)
-			if errRem := os.RemoveAll(extractedPath); errRem != nil {
+			if errRem := os.RemoveAll(existingBuildDir); errRem != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to remove old build dir after failed move: %v\n", errRem)
 				return "", fmt.Errorf("failed to replace old build dir: %w", err)
 			}
 		}
 	}
 
-	// 3. Extract
+	// 3. Extract directly to download directory
 	extractionCb := func(progress float64) {
 		if progressCb != nil {
 			// Use a large virtual size to indicate extraction phase to the UI
@@ -513,11 +528,22 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		}
 	}
 
+	var extractedRootDir string
 	if strings.HasSuffix(downloadFileName, ".tar.xz") {
-		if err := extractTarXz(downloadPath, extractedPath, extractionCb, cancelCh); err != nil {
-			// Attempt to clean up partially extracted directory on error
-			if remErr := os.RemoveAll(extractedPath); remErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup partial extraction dir %s: %v\n", extractedPath, remErr)
+		// Peek into the archive to find the root directory
+		rootDir, err := findRootDirInTarXz(downloadPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to find root directory in archive: %w", err)
+		}
+		extractedRootDir = filepath.Join(downloadBaseDir, rootDir)
+
+		// Extract the archive
+		if err := extractTarXz(downloadPath, downloadBaseDir, extractionCb, cancelCh); err != nil {
+			// Attempt to clean up partially extracted directory
+			if extractedRootDir != "" {
+				if remErr := os.RemoveAll(extractedRootDir); remErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to cleanup partial extraction dir %s: %v\n", extractedRootDir, remErr)
+				}
 			}
 			if errors.Is(err, ErrCancelled) {
 				return "", ErrCancelled // Propagate cancellation
@@ -529,9 +555,43 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 	}
 
 	// 4. Save Metadata
-	if err := saveVersionMetadata(build, extractedPath); err != nil {
-		return extractedPath, fmt.Errorf("metadata save failed: %w", err)
+	if err := saveVersionMetadata(build, extractedRootDir); err != nil {
+		return extractedRootDir, fmt.Errorf("metadata save failed: %w", err)
 	}
 
-	return extractedPath, nil
+	return extractedRootDir, nil
+}
+
+// findRootDirInTarXz peeks into the archive to find the root directory name
+func findRootDirInTarXz(archivePath string) (string, error) {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open archive: %w", err)
+	}
+	defer file.Close()
+
+	xzReader, err := xz.NewReader(file)
+	if err != nil {
+		return "", fmt.Errorf("failed to create xz reader: %w", err)
+	}
+
+	tarReader := tar.NewReader(xzReader)
+
+	// Read the first header
+	header, err := tarReader.Next()
+	if err != nil {
+		if err == io.EOF {
+			return "", fmt.Errorf("empty archive")
+		}
+		return "", fmt.Errorf("error reading tar header: %w", err)
+	}
+
+	// Extract the root directory from the path
+	rootPath := header.Name
+	parts := strings.Split(rootPath, "/")
+	if len(parts) > 0 {
+		return parts[0], nil
+	}
+
+	return "", fmt.Errorf("no root directory found in archive")
 }

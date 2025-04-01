@@ -1716,6 +1716,7 @@ Press f to try fetching online builds, s for settings, q to quit.`, m.err)
 		if status == "Local" {
 			commands = append(commands, "Enter:Launch")
 			commands = append(commands, "X:Delete")
+			commands = append(commands, "O:Open Dir")
 		}
 
 		// Only show Download for "Online" or "Update" builds
@@ -1728,13 +1729,7 @@ Press f to try fetching online builds, s for settings, q to quit.`, m.err)
 			commands = append(commands, "C:Cancel")
 		}
 
-		// Always show Open Dir option if there are any builds
-		commands = append(commands, "O:Open Dir")
-
 		footerKeybinds1 = strings.Join(commands, "  ")
-	} else {
-		// No builds selected or no builds available
-		footerKeybinds1 = "O:Open Dir"
 	}
 
 	// Second footer line: global commands and column navigation - always consistent
