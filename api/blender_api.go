@@ -35,9 +35,46 @@ func FetchBuilds(versionFilter string) ([]model.BlenderBuild, error) { // Added 
 	// --- Filtering Setup ---
 	currentOS := runtime.GOOS
 	currentArch := runtime.GOARCH
-	apiArch := currentArch
-	if currentOS == "linux" && currentArch == "amd64" {
-		apiArch = "x86_64"
+	// Initialize apiArch explicitly within the switch block below
+	var apiArch string
+
+	// Map architecture names from Go runtime format (GOARCH) to Blender API format.
+	// GOOS values (linux, windows, darwin) match the API 'platform' field directly.
+	switch currentOS {
+	case "linux":
+		switch currentArch {
+		case "amd64":
+			apiArch = "x86_64" // Map Go's amd64 to API's x86_64
+		case "arm64":
+			// Assuming API uses "arm64" for Linux ARM (like other OS).
+			// Verified data did not contain Linux ARM builds from this endpoint.
+			// Adjust if other endpoints use "aarch64" or similar for Linux ARM.
+			apiArch = "arm64"
+		default:
+			// For unknown/unsupported arch, use Go's name; will likely be filtered out later.
+			apiArch = currentArch
+		}
+	case "darwin": // macOS
+		switch currentArch {
+		case "amd64":
+			apiArch = "x86_64" // Map Go's amd64 to API's x86_64
+		case "arm64":
+			apiArch = "arm64" // Go's arm64 matches API's arm64
+		default:
+			apiArch = currentArch
+		}
+	case "windows":
+		switch currentArch {
+		case "amd64":
+			apiArch = "amd64" // Go's amd64 matches API's amd64
+		case "arm64":
+			apiArch = "arm64" // Go's arm64 matches API's arm64
+		default:
+			apiArch = currentArch
+		}
+	default:
+		// For unknown OS, use Go's arch name; OS filter check later will handle it.
+		apiArch = currentArch
 	}
 
 	allowedExtensions := map[string]bool{
@@ -63,7 +100,7 @@ func FetchBuilds(versionFilter string) ([]model.BlenderBuild, error) { // Added 
 		if build.OperatingSystem != currentOS {
 			continue
 		}
-		// Check Arch
+		// Check Arch: Use the explicitly mapped apiArch
 		if build.Architecture != apiArch {
 			continue
 		}
