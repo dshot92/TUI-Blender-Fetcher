@@ -1,19 +1,22 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
 
-# Virtual environments
-venv/
-env/
-.env/
-.venv/
+# Test binary, built with `go test -c`
+*.test
 
-build/
-dist/
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
 
-# IDE settings
-.vscode/
-.idea/
-*.swp
-.DS_Store
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
