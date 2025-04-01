@@ -1,14 +1,25 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/api"   // Import the api package
+	"TUI-Blender-Launcher/api" // Import the api package
+	"TUI-Blender-Launcher/config"
 	"TUI-Blender-Launcher/model" // Import the model package
 	"TUI-Blender-Launcher/util"  // Import util package
 	"fmt"
 	"strings" // Import strings
 
+	"github.com/charmbracelet/bubbles/textinput" // Import textinput
 	tea "github.com/charmbracelet/bubbletea"
 	lp "github.com/charmbracelet/lipgloss" // Import lipgloss
+)
+
+// View states
+type viewState int
+
+const (
+	viewList viewState = iota
+	viewInitialSetup
+	viewSettings
 )
 
 // Define messages for communication between components
@@ -22,11 +33,19 @@ func (e errMsg) Error() string { return e.err.Error() }
 
 // Model represents the state of the TUI application.
 type Model struct {
-	builds    []model.BlenderBuild
-	cursor    int
-	isLoading bool
-	err       error
-	// Add other state fields like selected items, view states (list/settings) etc.
+	// Core data
+	builds []model.BlenderBuild
+	config config.Config
+
+	// UI state
+	cursor      int
+	isLoading   bool
+	err         error
+	currentView viewState
+
+	// Settings/Setup specific state
+	settingsInputs []textinput.Model // Inputs for download dir, version filter
+	focusIndex     int               // Which input is currently focused
 }
 
 // Styles using lipgloss
@@ -54,177 +73,315 @@ var (
 )
 
 // InitialModel creates the initial state of the TUI model.
-func InitialModel() Model {
-	return Model{
-		isLoading: true, // Start in loading state
+func InitialModel(cfg config.Config, needsSetup bool) Model {
+	m := Model{
+		config:    cfg,
+		isLoading: !needsSetup, // Don't load builds immediately if setup needed
 	}
+
+	if needsSetup {
+		m.currentView = viewInitialSetup
+		m.settingsInputs = make([]textinput.Model, 2)
+
+		var t textinput.Model
+		// Download Dir input
+		t = textinput.New()
+		t.Placeholder = cfg.DownloadDir // Show default as placeholder
+		t.SetValue(cfg.DownloadDir)     // Set initial value
+		t.Focus()
+		t.CharLimit = 256
+		t.Width = 50
+		m.settingsInputs[0] = t
+
+		// Version Filter input (renamed from Cutoff)
+		t = textinput.New()
+		t.Placeholder = "e.g., 4.0, 3.6 (leave empty for none)"
+		t.SetValue(cfg.VersionFilter)
+		t.CharLimit = 10
+		t.Width = 50
+		m.settingsInputs[1] = t
+
+		m.focusIndex = 0 // Start focus on the first input
+	} else {
+		m.currentView = viewList
+		// Settings inputs can be initialized when entering settings view
+	}
+
+	return m
 }
 
 // command to fetch builds
-func fetchBuildsCmd() tea.Msg {
-	builds, err := api.FetchBuilds()
-	if err != nil {
-		// On error, return an errMsg
-		return errMsg{err}
+// Now accepts the model to access config
+func fetchBuildsCmd(cfg config.Config) tea.Cmd {
+	return func() tea.Msg {
+		// Pass config (specifically VersionFilter) to FetchBuilds
+		builds, err := api.FetchBuilds(cfg.VersionFilter)
+		if err != nil {
+			return errMsg{err}
+		}
+		return buildsFetchedMsg{builds}
 	}
-	// On success, return a buildsFetchedMsg
-	return buildsFetchedMsg{builds}
 }
 
 // Init initializes the TUI model, potentially running commands.
 func (m Model) Init() tea.Cmd {
-	// Fetch initial builds when the TUI starts
-	return fetchBuildsCmd
+	if m.currentView == viewList {
+		// Fetch initial builds only if starting in list view
+		return fetchBuildsCmd(m.config) // Pass config
+	}
+	// If in setup view, Init might return command to make input blink, etc.
+	if len(m.settingsInputs) > 0 {
+		return textinput.Blink
+	}
+	return nil
+}
+
+// Helper to update focused input
+func (m *Model) updateInputs(msg tea.Msg) tea.Cmd {
+	var cmds []tea.Cmd
+	for i := range m.settingsInputs {
+		m.settingsInputs[i], cmds[i] = m.settingsInputs[i].Update(msg)
+	}
+	return tea.Batch(cmds...)
 }
 
 // Update handles messages and updates the model state.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
+	var cmd tea.Cmd
 
-	// Handle fetched builds
-	case buildsFetchedMsg:
-		m.isLoading = false
-		m.builds = msg.builds
-		m.err = nil // Clear previous errors
-		// Reset cursor if out of bounds after fetch
-		if m.cursor >= len(m.builds) {
-			m.cursor = 0
-			if len(m.builds) > 0 {
-				m.cursor = len(m.builds) - 1
+	switch m.currentView {
+	case viewInitialSetup, viewSettings:
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			s := msg.String()
+			switch s {
+			case "ctrl+c", "q":
+				return m, tea.Quit
+			case "tab", "shift+tab", "up", "down":
+				// Change focus
+				oldFocus := m.focusIndex
+				if s == "up" || s == "shift+tab" {
+					m.focusIndex--
+				} else {
+					m.focusIndex++
+				}
+				// Wrap focus
+				if m.focusIndex > len(m.settingsInputs)-1 {
+					m.focusIndex = 0
+				} else if m.focusIndex < 0 {
+					m.focusIndex = len(m.settingsInputs) - 1
+				}
+				// Update focus state on inputs
+				for i := 0; i < len(m.settingsInputs); i++ {
+					if i == m.focusIndex {
+						m.settingsInputs[i].Focus()
+						m.settingsInputs[i].PromptStyle = selectedRowStyle // Use a style to indicate focus
+					} else {
+						m.settingsInputs[i].Blur()
+						m.settingsInputs[i].PromptStyle = regularRowStyle
+					}
+				}
+				// If the focus actually changed, update the prompt style of the old one too
+				if oldFocus != m.focusIndex && oldFocus >= 0 && oldFocus < len(m.settingsInputs) {
+					m.settingsInputs[oldFocus].PromptStyle = regularRowStyle
+				}
+				return m, nil
+
+			case "enter":
+				// Save settings and potentially switch view
+				m.config.DownloadDir = m.settingsInputs[0].Value()
+				m.config.VersionFilter = m.settingsInputs[1].Value()
+				err := config.SaveConfig(m.config)
+				if err != nil {
+					m.err = fmt.Errorf("failed to save config: %w", err)
+					// Stay in settings/setup view on error
+				} else {
+					m.err = nil
+					m.currentView = viewList
+					// If coming from initial setup, trigger fetch now
+					if !m.isLoading && len(m.builds) == 0 { // Check if fetch is needed
+						m.isLoading = true
+						cmd = fetchBuildsCmd(m.config) // Pass config
+					}
+				}
+				return m, cmd
 			}
 		}
-		return m, nil
+		// Pass the message to the focused input
+		m.settingsInputs[m.focusIndex], cmd = m.settingsInputs[m.focusIndex].Update(msg)
+		return m, cmd
 
-	// Handle error during fetch
-	case errMsg:
-		m.isLoading = false
-		m.err = msg.err
-		return m, nil
-
-	// Handle key presses
-	case tea.KeyMsg:
-		// Don't process keys if loading or error state (allow quit)
-		if m.isLoading || m.err != nil {
-			if msg.String() == "ctrl+c" || msg.String() == "q" {
-				return m, tea.Quit
+	case viewList:
+		switch msg := msg.(type) {
+		case buildsFetchedMsg:
+			m.isLoading = false
+			m.builds = msg.builds
+			m.err = nil
+			if m.cursor >= len(m.builds) {
+				m.cursor = 0
+				if len(m.builds) > 0 {
+					m.cursor = len(m.builds) - 1
+				}
 			}
 			return m, nil
-		}
-
-		switch msg.String() {
-		case "ctrl+c", "q":
-			return m, tea.Quit
-
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
+		case errMsg:
+			m.isLoading = false
+			m.err = msg.err
+			return m, nil
+		case tea.KeyMsg:
+			if m.isLoading || m.err != nil {
+				if msg.String() == "ctrl+c" || msg.String() == "q" {
+					return m, tea.Quit
+				}
+				return m, nil
 			}
-
-		case "down", "j":
-			if len(m.builds) > 0 && m.cursor < len(m.builds)-1 { // Check bounds
-				m.cursor++
+			switch msg.String() {
+			case "ctrl+c", "q":
+				return m, tea.Quit
+			case "up", "k":
+				if m.cursor > 0 {
+					m.cursor--
+				}
+			case "down", "j":
+				if len(m.builds) > 0 && m.cursor < len(m.builds)-1 {
+					m.cursor++
+				}
+			case "f":
+				m.isLoading = true
+				m.err = nil
+				m.builds = nil
+				m.cursor = 0
+				return m, fetchBuildsCmd(m.config) // Pass config
+			case "s": // Enter settings
+				m.currentView = viewSettings
+				// Initialize settings inputs if not already done
+				if len(m.settingsInputs) == 0 {
+					m.settingsInputs = make([]textinput.Model, 2)
+					var t textinput.Model
+					t = textinput.New()
+					t.Placeholder = "/path/to/download/dir"
+					t.SetValue(m.config.DownloadDir)
+					t.Focus()
+					t.CharLimit = 256
+					t.Width = 50
+					m.settingsInputs[0] = t
+					t = textinput.New()
+					t.Placeholder = "e.g., 4.0, 3.6 (empty for none)"
+					t.SetValue(m.config.VersionFilter)
+					t.CharLimit = 10
+					t.Width = 50
+					m.settingsInputs[1] = t
+					m.focusIndex = 0
+					// Ensure first input has focus style
+					m.settingsInputs[0].PromptStyle = selectedRowStyle
+				} else {
+					// Reset values to current config if re-entering
+					m.settingsInputs[0].SetValue(m.config.DownloadDir)
+					m.settingsInputs[1].SetValue(m.config.VersionFilter)
+					m.focusIndex = 0
+					for i := range m.settingsInputs {
+						if i == m.focusIndex {
+							m.settingsInputs[i].Focus()
+							m.settingsInputs[i].PromptStyle = selectedRowStyle
+						} else {
+							m.settingsInputs[i].Blur()
+							m.settingsInputs[i].PromptStyle = regularRowStyle
+						}
+					}
+				}
+				return m, textinput.Blink // Start cursor blinking
 			}
-
-		case "f": // Fetch builds again
-			m.isLoading = true
-			m.err = nil
-			m.builds = nil
-			m.cursor = 0
-			return m, fetchBuildsCmd
-
-		case " ": // Select/deselect
-			if len(m.builds) > 0 && m.cursor >= 0 && m.cursor < len(m.builds) {
-				m.builds[m.cursor].Selected = !m.builds[m.cursor].Selected
-			}
-
-			// TODO: Handle other keys (enter, d, s, o, r, x)
-
 		}
 	}
-
-	return m, nil
+	return m, cmd // Return potentially updated cmd from list view input handling
 }
 
 // View renders the UI based on the model state.
 func (m Model) View() string {
-	if m.isLoading {
-		return "Fetching Blender builds..."
-	}
-
-	if m.err != nil {
-		return fmt.Sprintf(`Error fetching builds: %v
-
-Press q to quit.`, m.err)
-	}
-
-	if len(m.builds) == 0 {
-		return `No Blender builds found for your OS/Arch.
-
-Press f to fetch again, q to quit.`
-	}
-
 	var viewBuilder strings.Builder
 
-	// --- Header ---
-	headerCols := []string{
-		lp.NewStyle().Width(colWidthSelect).Render(""), // Spacer for select
-		lp.NewStyle().Width(colWidthVersion).Render("Version ↓"),
-		lp.NewStyle().Width(colWidthStatus).Render("Status"),
-		lp.NewStyle().Width(colWidthBranch).Render("Branch"),
-		lp.NewStyle().Width(colWidthType).Render("Type"), // Release Cycle
-		lp.NewStyle().Width(colWidthHash).Render("Hash"),
-		lp.NewStyle().Width(colWidthSize).Render("Size"),
-		lp.NewStyle().Width(colWidthDate).Render("Build Date"),
-	}
-	viewBuilder.WriteString(headerStyle.Render(lp.JoinHorizontal(lp.Left, headerCols...)))
-	viewBuilder.WriteString("\n")
-	viewBuilder.WriteString(separator)
-	viewBuilder.WriteString("\n")
+	switch m.currentView {
+	case viewInitialSetup, viewSettings:
+		title := "Initial Setup"
+		if m.currentView == viewSettings {
+			title = "Settings"
+		}
+		viewBuilder.WriteString(fmt.Sprintf("%s\n\n", title))
+		viewBuilder.WriteString("Download Directory:\n")
+		viewBuilder.WriteString(m.settingsInputs[0].View() + "\n\n")
+		viewBuilder.WriteString("Minimum Blender Version Filter (e.g., 4.0, 3.6 - empty for none):\n")
+		viewBuilder.WriteString(m.settingsInputs[1].View() + "\n\n")
+		if m.err != nil {
+			viewBuilder.WriteString(lp.NewStyle().Foreground(lp.Color("9")).Render(fmt.Sprintf("Error: %v\n\n", m.err)))
+		}
+		viewBuilder.WriteString(footerStyle.Render("Tab/Shift+Tab: Change field | Enter: Save | q/Ctrl+C: Quit"))
 
-	// --- Rows ---
-	for i, build := range m.builds {
-		selectedMarker := "[ ]"
-		if build.Selected {
-			selectedMarker = "[x]"
+	case viewList:
+		if m.isLoading {
+			return "Fetching Blender builds..."
+		}
+		if m.err != nil {
+			return fmt.Sprintf(`Error: %v
+
+Press q to quit.`, m.err)
+		}
+		if len(m.builds) == 0 {
+			return `No Blender builds found matching criteria (check settings/filters).
+
+Press f to fetch again, s for settings, q to quit.`
 		}
 
-		// Format columns for the current build
-		rowCols := []string{
-			lp.NewStyle().Width(colWidthSelect).Render(selectedMarker),
-			lp.NewStyle().Width(colWidthVersion).Render(util.TruncateString("Blender "+build.Version, colWidthVersion)),
-			lp.NewStyle().Width(colWidthStatus).Render(util.TruncateString(build.Status, colWidthStatus)), // TODO: Enhance status (Downloaded, Update)
-			lp.NewStyle().Width(colWidthBranch).Render(util.TruncateString(build.Branch, colWidthBranch)),
-			lp.NewStyle().Width(colWidthType).Render(util.TruncateString(build.ReleaseCycle, colWidthType)),
-			lp.NewStyle().Width(colWidthHash).Render(util.TruncateString(build.Hash, colWidthHash)),
-			lp.NewStyle().Width(colWidthSize).Align(lp.Right).Render(util.FormatSize(build.Size)),       // Align size right
-			lp.NewStyle().Width(colWidthDate).Render(build.BuildDate.Time().Format("2006-01-02 15:04")), // Format date
+		// --- Header ---
+		headerCols := []string{
+			lp.NewStyle().Width(colWidthSelect).Render(""),
+			lp.NewStyle().Width(colWidthVersion).Render("Version ↓"),
+			lp.NewStyle().Width(colWidthStatus).Render("Status"),
+			lp.NewStyle().Width(colWidthBranch).Render("Branch"),
+			lp.NewStyle().Width(colWidthType).Render("Type"),
+			lp.NewStyle().Width(colWidthHash).Render("Hash"),
+			lp.NewStyle().Width(colWidthSize).Render("Size"),
+			lp.NewStyle().Width(colWidthDate).Render("Build Date"),
 		}
-
-		rowStr := lp.JoinHorizontal(lp.Left, rowCols...)
-
-		// Apply style based on cursor position
-		if m.cursor == i {
-			viewBuilder.WriteString(selectedRowStyle.Render(rowStr))
-		} else {
-			viewBuilder.WriteString(regularRowStyle.Render(rowStr))
-		}
+		viewBuilder.WriteString(headerStyle.Render(lp.JoinHorizontal(lp.Left, headerCols...)))
 		viewBuilder.WriteString("\n")
+		viewBuilder.WriteString(separator)
+		viewBuilder.WriteString("\n")
+
+		// --- Rows ---
+		for i, build := range m.builds {
+			selectedMarker := "[ ]"
+			if build.Selected {
+				selectedMarker = "[x]"
+			}
+			rowCols := []string{
+				lp.NewStyle().Width(colWidthSelect).Render(selectedMarker),
+				lp.NewStyle().Width(colWidthVersion).Render(util.TruncateString("Blender "+build.Version, colWidthVersion)),
+				lp.NewStyle().Width(colWidthStatus).Render(util.TruncateString(build.Status, colWidthStatus)),
+				lp.NewStyle().Width(colWidthBranch).Render(util.TruncateString(build.Branch, colWidthBranch)),
+				lp.NewStyle().Width(colWidthType).Render(util.TruncateString(build.ReleaseCycle, colWidthType)),
+				lp.NewStyle().Width(colWidthHash).Render(util.TruncateString(build.Hash, colWidthHash)),
+				lp.NewStyle().Width(colWidthSize).Align(lp.Right).Render(util.FormatSize(build.Size)),
+				lp.NewStyle().Width(colWidthDate).Render(build.BuildDate.Time().Format("2006-01-02 15:04")),
+			}
+			rowStr := lp.JoinHorizontal(lp.Left, rowCols...)
+			if m.cursor == i {
+				viewBuilder.WriteString(selectedRowStyle.Render(rowStr))
+			} else {
+				viewBuilder.WriteString(regularRowStyle.Render(rowStr))
+			}
+			viewBuilder.WriteString("\n")
+		}
+
+		// --- Footer ---
+		footerKeybinds1 := "Space:Select  Enter:Launch  D:Download  O:Open Dir  X:Delete"
+		footerKeybinds2 := "F:Fetch  R:Reverse  S:Settings  Q:Quit"
+		keybindSeparator := "│"
+		footerKeys := fmt.Sprintf("%s  %s  %s", footerKeybinds1, keybindSeparator, footerKeybinds2)
+		footerLegend := "■ Current Local Version (fetched)   ■ Update Available"
+		viewBuilder.WriteString(footerStyle.Render(footerKeys))
+		viewBuilder.WriteString("\n")
+		viewBuilder.WriteString(footerStyle.Render(footerLegend))
 	}
-
-	// --- Footer ---
-	footerKeybinds1 := "Space:Select  Enter:Launch  D:Download  O:Open Dir  X:Delete"
-	footerKeybinds2 := "F:Fetch  R:Reverse  S:Settings  Q:Quit"
-	keybindSeparator := "│"
-
-	// Combine keybind parts - ensure they fit within terminal width (lipgloss can help with wrapping/truncating too)
-	// Simple joining for now:
-	footerKeys := fmt.Sprintf("%s  %s  %s", footerKeybinds1, keybindSeparator, footerKeybinds2)
-
-	footerLegend := "■ Current Local Version (fetched)   ■ Update Available" // TODO: Implement logic for these indicators
-
-	viewBuilder.WriteString(footerStyle.Render(footerKeys))
-	viewBuilder.WriteString("\n")
-	viewBuilder.WriteString(footerStyle.Render(footerLegend))
 
 	return viewBuilder.String()
 }
