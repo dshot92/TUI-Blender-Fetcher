@@ -15,6 +15,7 @@ const AppName = "tui-blender-launcher" // Use lowercase app name
 type Config struct {
 	DownloadDir   string `toml:"download_dir"`
 	VersionFilter string `toml:"version_filter"` // e.g., "4.0", "3.6", or empty for no filter
+	ManualFetch   bool   `toml:"manual_fetch"`   // If true, only fetch builds when explicitly requested
 }
 
 // DefaultConfig returns a Config struct with default values.
@@ -26,7 +27,8 @@ func DefaultConfig() Config {
 
 	return Config{
 		DownloadDir:   defaultDownloadPath,
-		VersionFilter: "", // No filter by default
+		VersionFilter: "",   // No filter by default
+		ManualFetch:   true, // Default to manual fetch only
 	}
 }
 
