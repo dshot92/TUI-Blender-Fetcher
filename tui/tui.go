@@ -399,8 +399,8 @@ func adaptiveTickCmd(activeCount int, isExtracting bool) tea.Cmd {
 	if activeCount == 0 {
 		rate = 500 * time.Millisecond // Slower when idle
 	} else if isExtracting {
-		// During extraction, we can use a slightly slower rate
-		rate = 250 * time.Millisecond
+		// During extraction, use a faster rate to ensure UI refreshes properly
+		rate = 30 * time.Millisecond // Much faster refresh during extraction
 	} else if activeCount > 1 {
 		// With multiple downloads, we can use a slightly faster rate
 		// to make the UI more responsive, but not too fast to cause system load
@@ -586,8 +586,24 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 		close(done)
 	}()
 
-	// Start with a single active download, not extracting yet
-	return adaptiveTickCmd(1, false)
+	// Create a function that immediately returns a message to update the UI
+	// once the download and extraction are complete
+	return func() tea.Msg {
+		// Start the immediate tick for UI updates
+		go func() {
+			<-done // Wait for done signal
+
+			// Send download complete message to trigger UI update
+			if p := tea.NewProgram(Model{}); p != nil {
+				p.Send(downloadCompleteMsg{
+					buildVersion: build.Version,
+				})
+			}
+		}()
+
+		// Return an immediate tick to start the UI updates with appropriate rate
+		return adaptiveTickCmd(1, false)()
+	}
 }
 
 // Init initializes the TUI model.
@@ -1178,12 +1194,12 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	m.downloadMutex.Lock() // Lock early
 
 	activeDownloads := 0
+	extractingInProgress := false
 	var progressCmds []tea.Cmd
 	// Lists to store versions identified for state change/cleanup
 	completedDownloads := make([]string, 0)
 	stalledDownloads := make([]string, 0)
 	cancelledDownloads := make([]string, 0)
-	extractingInProgress := false
 	// Store states temporarily to access after unlocking
 	tempStates := make(map[string]DownloadState)
 
@@ -1234,6 +1250,8 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 
 	// --- Update m.builds and Schedule commands (after unlock) ---
 	needsSort := false
+	hadCompletions := len(completedDownloads) > 0
+
 	for _, version := range completedDownloads {
 		for i := range m.builds {
 			if m.builds[i].Version == version {
@@ -1246,6 +1264,7 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+
 	for _, version := range stalledDownloads {
 		for i := range m.builds {
 			if m.builds[i].Version == version {
@@ -1257,6 +1276,7 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+
 	for _, version := range cancelledDownloads {
 		for i := range m.builds {
 			if m.builds[i].Version == version {
@@ -1278,13 +1298,18 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 
 	// Append other necessary commands
 	if activeDownloads > 0 {
+		// Always add a tick command to keep the UI updated
 		commands = append(commands, adaptiveTickCmd(activeDownloads, extractingInProgress))
+
+		// Add progress bar updates
 		if len(progressCmds) > 0 {
 			commands = append(commands, progressCmds...)
 		}
-	} else if len(progressCmds) > 0 {
-		// Handle final progress updates if any
-		commands = append(commands, progressCmds...)
+	} else if hadCompletions {
+		// If downloads just completed, add a scan command to refresh status
+		commands = append(commands, scanLocalBuildsCmd(m.config))
+		// Also refresh old builds info after download completes
+		commands = append(commands, getOldBuildsInfoCmd(m.config))
 	}
 
 	// --- Return batched commands ---
