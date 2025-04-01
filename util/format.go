@@ -22,17 +22,6 @@ func FormatSize(sizeBytes int64) string {
 	return fmt.Sprintf("%.1f GB", sizeGB)
 }
 
-// TruncateString shortens a string to a max length, adding ellipsis if needed.
-func TruncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return "..."
-	}
-	return s[:maxLen-3] + "..."
-}
-
 // FormatSpeed converts bytes per second to a human-readable string (KB/s, MB/s, GB/s).
 func FormatSpeed(bytesPerSecond float64) string {
 	if bytesPerSecond < 1024 {

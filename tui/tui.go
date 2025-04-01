@@ -145,62 +145,133 @@ var (
 )
 
 // calculateVisibleColumns determines which columns should be visible based on terminal width
+// and calculates appropriate widths to use full available space
 func calculateVisibleColumns(terminalWidth int) map[string]bool {
-	// Start with minimum required columns
-	visible := map[string]bool{
-		"Version": true,
-		"Status":  true,
+	// Minimum column widths for readability
+	minColumnWidths := map[string]int{
+		"Version":    12, // Need space for "Blender X.Y.Z"
+		"Status":     8,  // Status messages like "Local", "Online"
+		"Branch":     6,  // Branch names
+		"Type":       8,  // Types like "stable", "alpha"
+		"Hash":       10, // Commit hashes
+		"Size":       8,  // File sizes
+		"Build Date": 10, // Dates
 	}
 
-	// Calculate remaining width after minimum columns
-	remainingWidth := terminalWidth - columnConfigs["Version"].width - columnConfigs["Status"].width
-
-	// Sort columns by priority
-	type colPriority struct {
+	// All possible columns in priority order (lower index = higher priority)
+	allColumns := []struct {
 		name     string
 		priority int
+	}{
+		{"Version", 1},
+		{"Status", 2},
+		{"Build Date", 3},
+		{"Type", 4},
+		{"Branch", 5},
+		{"Hash", 6},
+		{"Size", 7},
 	}
-	var priorities []colPriority
-	for name, config := range columnConfigs {
-		if name != "Version" && name != "Status" {
-			priorities = append(priorities, colPriority{name, config.priority})
-		}
-	}
-	sort.Slice(priorities, func(i, j int) bool {
-		return priorities[i].priority < priorities[j].priority
-	})
 
-	// Create a new map with updated visibility flags
+	// Initialize configs with minimum width values
 	newConfigs := make(map[string]columnConfig)
-	for name, config := range columnConfigs {
-		newConfigs[name] = columnConfig{
-			width:    config.width,
-			priority: config.priority,
+	for _, col := range allColumns {
+		newConfigs[col.name] = columnConfig{
+			width:    minColumnWidths[col.name],
+			priority: col.priority,
 			visible:  false,
 		}
 	}
 
-	// Set required columns as visible
-	config := newConfigs["Version"]
-	config.visible = true
-	newConfigs["Version"] = config
+	// Calculate minimum required width for a functional table
+	// Start with a clean slate - no columns visible by default
 
-	config = newConfigs["Status"]
-	config.visible = true
-	newConfigs["Status"] = config
+	// First, strictly calculate how many columns can fit
+	// Account for column gaps (1 character between each column)
+	remainingWidth := terminalWidth
 
-	// Add columns in priority order until we run out of space
-	for _, col := range priorities {
-		if remainingWidth >= newConfigs[col.name].width {
-			visible[col.name] = true
-			config = newConfigs[col.name]
+	// Sort all columns by priority
+	sortedColumns := make([]string, len(allColumns))
+	for i, col := range allColumns {
+		sortedColumns[i] = col.name
+	}
+	sort.Slice(sortedColumns, func(i, j int) bool {
+		return newConfigs[sortedColumns[i]].priority < newConfigs[sortedColumns[j]].priority
+	})
+
+	// Start adding columns by priority until we run out of space
+	visibleCount := 0
+	for _, name := range sortedColumns {
+		colWidth := minColumnWidths[name]
+
+		// For each column we need its width plus one space for the gap
+		// (except for the first column which doesn't need a leading gap)
+		neededWidth := colWidth
+		if visibleCount > 0 {
+			neededWidth += 1 // Add gap width
+		}
+
+		// Check if this column fits
+		if remainingWidth >= neededWidth {
+			// It fits, mark it visible
+			config := newConfigs[name]
 			config.visible = true
-			newConfigs[col.name] = config
-			remainingWidth -= newConfigs[col.name].width
+			config.width = colWidth
+			newConfigs[name] = config
+
+			remainingWidth -= neededWidth
+			visibleCount++
+		} else {
+			// No more space - this and remaining columns stay hidden
+			break
 		}
 	}
 
-	// Update the global columnConfigs
+	// Now distribute any remaining width to make visible columns wider
+	if remainingWidth > 0 && visibleCount > 0 {
+		// Get list of visible columns
+		visibleCols := []string{}
+		for _, name := range sortedColumns {
+			if newConfigs[name].visible {
+				visibleCols = append(visibleCols, name)
+			}
+		}
+
+		// Calculate equal distribution
+		extraPerCol := remainingWidth / visibleCount
+		remainder := remainingWidth % visibleCount
+
+		// First pass: give each column its fair share
+		for _, name := range visibleCols {
+			config := newConfigs[name]
+			config.width += extraPerCol
+			newConfigs[name] = config
+		}
+
+		// Second pass: distribute remainder from highest to lowest priority
+		for i := 0; i < remainder && i < len(visibleCols); i++ {
+			config := newConfigs[visibleCols[i]]
+			config.width++
+			newConfigs[visibleCols[i]] = config
+		}
+	}
+
+	// Ensure Version is always visible if there's room
+	if terminalWidth >= minColumnWidths["Version"] && !newConfigs["Version"].visible {
+		// Force Version to be visible
+		config := newConfigs["Version"]
+		config.visible = true
+		config.width = minColumnWidths["Version"]
+		newConfigs["Version"] = config
+	}
+
+	// Build visibility map for return
+	visible := make(map[string]bool)
+	for name, config := range newConfigs {
+		visible[name] = config.visible
+	}
+
+	// Remove debug logging
+	// Update global config
 	columnConfigs = newConfigs
 
 	return visible
@@ -236,7 +307,7 @@ type DownloadState struct {
 	Current       int64
 	Total         int64
 	Speed         float64       // Bytes per second
-	Message       string        // e.g., "Preparing...", "Downloading...", "Extracting...", "Local", "Failed: ..."
+	Message       string        // e.g., "Preparing", "Downloading", "Extracting", "Local", "Failed: "
 	LastUpdated   time.Time     // Timestamp of last progress update
 	StartTime     time.Time     // When the download started
 	StallDuration time.Duration // How long download can stall before timeout
@@ -274,11 +345,15 @@ var (
 
 // InitialModel creates the initial state of the TUI model.
 func InitialModel(cfg config.Config, needsSetup bool) Model {
-	// Use a white color for the progress bar with custom view
+	// Configure the progress bar with fixed settings for consistent column display
 	progModel := progress.New(
 		progress.WithGradient("#FFFFFF", "#FFFFFF"), // Solid white
-		progress.WithoutPercentage(),
+		progress.WithoutPercentage(),                // No percentage display
+		progress.WithWidth(10),                      // Fixed width that fits in columns
+		progress.WithSolidFill("#FFFFFF"),           // Ensure fill is visible
+		progress.WithDefaultGradient(),              // Use default gradient for better visibility
 	)
+
 	m := Model{
 		config:         cfg,
 		isLoading:      !needsSetup,
@@ -421,10 +496,12 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 
 	mutex.Lock()
 	if _, exists := downloadMap[build.Version]; !exists {
+		// Initialize download state with defaults
 		downloadMap[build.Version] = &DownloadState{
-			Message:       "Preparing...",
+			Message:       "Preparing",
 			StartTime:     now,
 			LastUpdated:   now,
+			Progress:      0.0,
 			StallDuration: downloadStallTime, // Initial stall timeout
 			CancelCh:      downloadCancelCh,
 		}
@@ -438,13 +515,14 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 	done := make(chan struct{})
 
 	go func() {
-		// Variables to track progress for speed calculation (persist across calls)
+		// Variables to track progress for speed calculation
 		var lastUpdateTime time.Time
 		var lastUpdateBytes int64
-		var currentSpeed float64 // Store speed between short intervals
+		var currentSpeed float64
 
+		// Define progress callback function
 		progressCallback := func(downloaded, total int64) {
-			// Check for cancellation - return immediately if cancelled
+			// Check for cancellation
 			select {
 			case <-downloadCancelCh:
 				return
@@ -458,13 +536,12 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 				percent = float64(downloaded) / float64(total)
 			}
 
-			// Calculate speed
-			if !lastUpdateTime.IsZero() { // Don't calculate on the very first call
+			// Calculate speed (only if enough time has passed)
+			if !lastUpdateTime.IsZero() {
 				elapsed := currentTime.Sub(lastUpdateTime).Seconds()
-				// Update speed only if enough time has passed to get a meaningful value
 				if elapsed > 0.2 {
 					bytesSinceLast := downloaded - lastUpdateBytes
-					if elapsed > 0 { // Avoid division by zero
+					if elapsed > 0 {
 						currentSpeed = float64(bytesSinceLast) / elapsed
 					}
 					lastUpdateBytes = downloaded
@@ -476,7 +553,7 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 				lastUpdateTime = currentTime
 			}
 
-			// Check again for cancellation before attempting lock
+			// Check again for cancellation before trying to lock
 			select {
 			case <-downloadCancelCh:
 				return
@@ -484,11 +561,11 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 				// Continue updating state
 			}
 
-			// Use TryLock to avoid deadlocking with the main TUI update loop
+			// Try to lock, skip update if contended
 			if !mutex.TryLock() {
-				return // Skip this update if lock is contended
+				return
 			}
-			defer mutex.Unlock() // Ensure unlock happens if lock was acquired
+			defer mutex.Unlock()
 
 			if state, ok := downloadMap[build.Version]; ok {
 				// If already cancelled, don't update progress
@@ -496,46 +573,38 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 					return
 				}
 
-				// Update LastUpdated timestamp on every progress update
+				// Always update the last update timestamp
 				state.LastUpdated = currentTime
 
 				// Use a virtual size threshold to detect extraction phase
-				// Virtual size is 100MB for extraction as set in download.go
 				const extractionVirtualSize int64 = 100 * 1024 * 1024
 
-				// Check if we're getting extraction progress updates
+				// Determine state based on progress info
 				if total == extractionVirtualSize {
-					// If we detect extraction progress based on the virtual size,
-					// ensure the message is updated to "Extracting..."
-					state.Message = "Extracting..."
+					// Extraction phase
+					state.Message = "Extracting"
 					state.Progress = percent
-					state.Speed = 0 // No download speed during extraction
-
-					// Update stall duration to use longer timeout for extraction
-					state.StallDuration = extractionStallTime
-				} else if state.Message == "Extracting..." {
-					// During extraction phase, update progress but keep the "Extracting..." message
+					state.Speed = 0                           // No download speed during extraction
+					state.StallDuration = extractionStallTime // Longer timeout for extraction
+				} else if state.Message == "Extracting" {
+					// Continue extraction progress updates
 					state.Progress = percent
-					// Don't update speed during extraction
-				} else if state.Message == "Downloading..." || state.Message == "Preparing..." {
-					// During download phase
+				} else {
+					// Normal download progress
 					state.Progress = percent
 					state.Current = downloaded
 					state.Total = total
 					state.Speed = currentSpeed
-					state.Message = "Downloading..."
-
-					// Use standard download stall time
+					state.Message = "Downloading"
 					state.StallDuration = downloadStallTime
 				}
 			}
 		}
 
-		// Call the download function with our progress callback
-		// Check for cancellation before starting the download
+		// Check for cancellation before starting download
 		select {
 		case <-downloadCancelCh:
-			// Download was cancelled before it started
+			// Download canceled before starting
 			mutex.Lock()
 			if state, ok := downloadMap[build.Version]; ok {
 				state.Message = "Cancelled"
@@ -547,13 +616,13 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 			// Proceed with download
 		}
 
-		// Download and extract the build - this may take a while
-		_, err := download.DownloadAndExtractBuild(build, cfg.DownloadDir, progressCallback, downloadCancelCh) // Pass cancel channel
+		// Download and extract the build
+		_, err := download.DownloadAndExtractBuild(build, cfg.DownloadDir, progressCallback, downloadCancelCh)
 
-		// Check for cancellation after download completes or if error occurred
+		// Check for cancellation or handle completion
 		select {
 		case <-downloadCancelCh:
-			// Was cancelled during download, ensure UI shows cancelled
+			// Download was cancelled during execution
 			mutex.Lock()
 			if state, ok := downloadMap[build.Version]; ok {
 				state.Message = "Cancelled"
@@ -562,14 +631,14 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 			close(done)
 			return
 		default:
-			// Continue processing result or error
+			// Continue processing result
 		}
 
+		// Update final status based on result
 		mutex.Lock()
 		if state, ok := downloadMap[build.Version]; ok {
-			// Check if already marked as Cancelled due to race condition
 			if state.Message == "Cancelled" {
-				// Keep the cancelled status
+				// Keep as cancelled
 			} else if err != nil {
 				if errors.Is(err, download.ErrCancelled) {
 					state.Message = "Cancelled"
@@ -586,7 +655,7 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 		close(done)
 	}()
 
-	// Start with a single active download, not extracting yet
+	// Start with a single active download
 	return adaptiveTickCmd(1, false)
 }
 
@@ -648,9 +717,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		// Handle window size globally (avoid duplicate handlers)
 		m.terminalWidth = msg.Width
-		m.progressBar.Width = m.terminalWidth - 4
-		// Update visible columns based on new terminal width
+		// Do NOT update progress bar width to terminal width
+		// Keep it small for column-based display
+
+		// Recalculate visible columns and their widths based on new terminal width
 		m.visibleColumns = calculateVisibleColumns(m.terminalWidth)
+
+		// Remove debug logging
+
 		return m, nil
 	case tea.MouseMsg:
 		// Process mouse events which can help maintain focus
@@ -1058,7 +1132,7 @@ func (m Model) handleStartDownload() (tea.Model, tea.Cmd) {
 		// Allow downloading both Online builds and Updates
 		if selectedBuild.Status == "Online" || selectedBuild.Status == "Update" {
 			// Update status to avoid duplicate downloads
-			selectedBuild.Status = "Preparing..."
+			selectedBuild.Status = "Preparing"
 			m.builds[m.cursor] = selectedBuild
 			// Send message to start download
 			return m, func() tea.Msg {
@@ -1227,60 +1301,66 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	stalledDownloads := make([]string, 0)
 	cancelledDownloads := make([]string, 0)
 	extractingInProgress := false
-	// Store states temporarily to access after unlocking
+
+	// Temporary copy of download states for use after unlock
 	tempStates := make(map[string]DownloadState)
 
-	// --- Identify states and prepare for cleanup (under lock) ---
+	// Process download states while holding the lock
 	for version, state := range m.downloadStates {
-		tempStates[version] = *state // Store a copy for later use outside lock
+		tempStates[version] = *state // Store a copy
 
 		if state.Message == "Local" || strings.HasPrefix(state.Message, "Failed") {
+			// Download completed or failed
 			completedDownloads = append(completedDownloads, version)
 		} else if state.Message == "Cancelled" {
+			// Download was cancelled
 			cancelledDownloads = append(cancelledDownloads, version)
-		} else if strings.HasPrefix(state.Message, "Downloading") || state.Message == "Preparing..." || state.Message == "Extracting..." {
+		} else if state.Message == "Downloading" ||
+			state.Message == "Preparing" ||
+			state.Message == "Extracting" {
+			// Active download
 			timeSinceUpdate := now.Sub(state.LastUpdated)
 			if timeSinceUpdate > state.StallDuration {
-				log.Printf("WARNING: Download for %s stalled (no updates for %v), marking as failed", version, timeSinceUpdate.Round(time.Second))
-				// Update the temporary state that will be used after unlock
+				// Download appears stalled
+				log.Printf("WARNING: Download for %s stalled (no updates for %v), marking as failed",
+					version, timeSinceUpdate.Round(time.Second))
+
+				// Update status in our temporary copy
 				tempStateCopy := *state
-				tempStateCopy.Message = fmt.Sprintf("Failed: Download stalled for %v", timeSinceUpdate.Round(time.Second))
+				tempStateCopy.Message = fmt.Sprintf("Failed: Download stalled for %v",
+					timeSinceUpdate.Round(time.Second))
 				tempStates[version] = tempStateCopy
 				stalledDownloads = append(stalledDownloads, version)
 			} else {
+				// Active download that's not stalled
 				activeDownloads++
-				if state.Message == "Extracting..." {
+				if state.Message == "Extracting" {
 					extractingInProgress = true
 				}
+				// Queue progress bar update
 				progressCmds = append(progressCmds, m.progressBar.SetPercent(state.Progress))
 			}
 		}
 	}
 
-	// --- Clean up state map (still under lock) ---
+	// Clean up completed/stalled/cancelled downloads
 	for _, version := range completedDownloads {
 		delete(m.downloadStates, version)
 	}
 	for _, version := range stalledDownloads {
 		delete(m.downloadStates, version)
-		// Also ensure the map entry reflects the stalled message if we keep it temporarily
-		if state, ok := m.downloadStates[version]; ok {
-			state.Message = tempStates[version].Message // Update the actual map entry if needed
-		}
 	}
 	for _, version := range cancelledDownloads {
 		delete(m.downloadStates, version)
 	}
-	delete(m.downloadStates, "_tickCounter")
 
-	m.downloadMutex.Unlock() // Unlock after map modifications are done
+	m.downloadMutex.Unlock() // Unlock after map modifications
 
-	// --- Update m.builds and Schedule commands (after unlock) ---
+	// Update build statuses based on download states
 	needsSort := false
 	for _, version := range completedDownloads {
 		for i := range m.builds {
 			if m.builds[i].Version == version {
-				// Use the message from the temp state collected earlier
 				if tempState, ok := tempStates[version]; ok {
 					m.builds[i].Status = tempState.Message
 					needsSort = true
@@ -1308,7 +1388,7 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		// Schedule the status reset command
+		// Schedule the status reset command after cancellation
 		commands = append(commands, tea.Tick(150*time.Millisecond, func(t time.Time) tea.Msg {
 			return resetStatusMsg{version: version}
 		}))
@@ -1319,9 +1399,11 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 		m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
 	}
 
-	// Append other necessary commands
+	// Create any needed commands
 	if activeDownloads > 0 {
+		// Continue ticking for active downloads
 		commands = append(commands, adaptiveTickCmd(activeDownloads, extractingInProgress))
+		// Add progress bar updates
 		if len(progressCmds) > 0 {
 			commands = append(commands, progressCmds...)
 		}
@@ -1330,12 +1412,11 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 		commands = append(commands, progressCmds...)
 	}
 
-	// --- Return batched commands ---
 	if len(commands) > 0 {
 		return m, tea.Batch(commands...)
 	}
 
-	return m, nil // No commands needed
+	return m, nil
 }
 
 // calculateSplitIndex finds the rune index to split a string for a given visual width.
@@ -1417,360 +1498,297 @@ func (m Model) renderSettingsView() string {
 
 // renderListView handles rendering the main builds list view
 func (m Model) renderListView() string {
-	var viewBuilder strings.Builder
+	var sb strings.Builder
 
+	// Handle error state
 	if m.err != nil {
-		return fmt.Sprintf(`Error: %v
-
-Press f to try fetching online builds, s for settings, q to quit.`, m.err)
+		errorStyle := lp.NewStyle().Foreground(lp.Color(colorError))
+		sb.WriteString(errorStyle.Render("Error: "+m.err.Error()) + "\n\n")
+		sb.WriteString("Press f to try fetching online builds, s for settings, q to quit.")
+		return sb.String()
 	}
 
-	// --- Render Table ---
-	var tableBuilder strings.Builder
+	// --- DEFINE BASE STYLES ---
+	headerStyle := lp.NewStyle().Bold(true)
+	cellStyle := lp.NewStyle().PaddingRight(1)
+	selectedStyle := lp.NewStyle().Background(lp.Color(colorBackground)).Foreground(lp.Color(colorForeground))
 
-	// --- Header rendering ---
-	var headerCols []string
-	if m.visibleColumns["Version"] {
-		if m.sortColumn == 0 {
-			// Selected column - use inverse colors
-			headerCols = append(headerCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthVersion).Render(getSortIndicator(m, 0, "Version")))
-		} else {
-			headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthVersion).Render(getSortIndicator(m, 0, "Version")))
-		}
-	}
-	if m.visibleColumns["Status"] {
-		if m.sortColumn == 1 {
-			// Selected column - use inverse colors
-			headerCols = append(headerCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthStatus).Render(getSortIndicator(m, 1, "Status")))
-		} else {
-			headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthStatus).Render(getSortIndicator(m, 1, "Status")))
-		}
-	}
-	if m.visibleColumns["Branch"] {
-		if m.sortColumn == 2 {
-			// Selected column - use inverse colors
-			headerCols = append(headerCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthBranch).Render(getSortIndicator(m, 2, "Branch")))
-		} else {
-			headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthBranch).Render(getSortIndicator(m, 2, "Branch")))
-		}
-	}
-	if m.visibleColumns["Type"] {
-		if m.sortColumn == 3 {
-			// Selected column - use inverse colors
-			headerCols = append(headerCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthType).Render(getSortIndicator(m, 3, "Type")))
-		} else {
-			headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthType).Render(getSortIndicator(m, 3, "Type")))
-		}
-	}
-	if m.visibleColumns["Hash"] {
-		if m.sortColumn == 4 {
-			// Selected column - use inverse colors
-			headerCols = append(headerCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthHash).Render(getSortIndicator(m, 4, "Hash")))
-		} else {
-			headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthHash).Render(getSortIndicator(m, 4, "Hash")))
-		}
-	}
-	if m.visibleColumns["Size"] {
-		if m.sortColumn == 5 {
-			// Selected column - use inverse colors
-			headerCols = append(headerCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthSize).Render(getSortIndicator(m, 5, "Size")))
-		} else {
-			headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthSize).Render(getSortIndicator(m, 5, "Size")))
-		}
-	}
-	if m.visibleColumns["Build Date"] {
-		if m.sortColumn == 6 {
-			// Selected column - use inverse colors
-			headerCols = append(headerCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthDate).Render(getSortIndicator(m, 6, "Build Date")))
-		} else {
-			headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthDate).Render(getSortIndicator(m, 6, "Build Date")))
-		}
+	// Status-specific styles
+	localStyle := lp.NewStyle().Foreground(lp.Color(colorSuccess))
+	updateStyle := lp.NewStyle().Foreground(lp.Color(colorInfo))
+	errorStyle := lp.NewStyle().Foreground(lp.Color(colorError))
+	warningStyle := lp.NewStyle().Foreground(lp.Color(colorWarning))
+
+	// --- DETERMINE VISIBLE COLUMNS ---
+	// Create a list of column definitions with width and visibility
+	columns := []struct {
+		name    string
+		width   int
+		visible bool
+		index   int // Sort column index
+	}{
+		{"Version", columnConfigs["Version"].width, m.visibleColumns["Version"], 0},
+		{"Status", columnConfigs["Status"].width, m.visibleColumns["Status"], 1},
+		{"Branch", columnConfigs["Branch"].width, m.visibleColumns["Branch"], 2},
+		{"Type", columnConfigs["Type"].width, m.visibleColumns["Type"], 3},
+		{"Hash", columnConfigs["Hash"].width, m.visibleColumns["Hash"], 4},
+		{"Size", columnConfigs["Size"].width, m.visibleColumns["Size"], 5},
+		{"Build Date", columnConfigs["Build Date"].width, m.visibleColumns["Build Date"], 6},
 	}
 
-	tableBuilder.WriteString(headerStyle.Render(lp.JoinHorizontal(lp.Left, headerCols...)))
-	tableBuilder.WriteString("\n")
-	tableBuilder.WriteString(separator)
-	tableBuilder.WriteString("\n")
-
-	// --- Show "No builds found" message or render builds ---
-	if len(m.builds) == 0 {
-		// Calculate total table width for centered text
-		totalWidth := 0
-		for _, col := range []string{"Version", "Status", "Branch", "Type", "Hash", "Size", "Build Date"} {
-			if m.visibleColumns[col] {
-				totalWidth += columnConfigs[col].width
-			}
-		}
-
-		// Add message about no builds
-		noBuildsMsg := "No builds found. Press 'f' to fetch online builds."
-
-		// Center the message in the available space
-		padding := (totalWidth - len(noBuildsMsg)) / 2
-		if padding < 0 {
-			padding = 0
-		}
-
-		paddingStr := strings.Repeat(" ", padding)
-		tableBuilder.WriteString(paddingStr + noBuildsMsg + "\n")
-	} else {
-		// --- Rows ---
-		for i, build := range m.builds {
-			downloadState, isDownloadingThis := m.downloadStates[build.Version]
-
-			// --- Default row cell values (Apply alignment) ---
-			versionCell := cellStyleCenter.Copy().Width(colWidthVersion).Render(util.TruncateString("Blender "+build.Version, colWidthVersion))
-			statusTextStyle := regularRowStyle
-
-			// --- Adjust cells based on status (Apply alignment within style) ---
-			if build.Status == "Local" {
-				statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorSuccess))
-			} else if build.Status == "Update" {
-				statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorInfo)) // Light blue for updates
-			} else if strings.HasPrefix(build.Status, "Failed") {
-				statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorError))
-			} else if build.Status == "Cancelled" {
-				statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorWarning))
-			}
-
-			// --- Override cells if downloading ---
-			if isDownloadingThis {
-				statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorWarning)) // Keep text style separate from alignment
-				statusCell := cellStyleCenter.Copy().Width(colWidthStatus).Render(downloadState.Message)
-
-				// Calculate the combined width for a true spanning cell
-				combinedWidth := colWidthSize + colWidthDate
-
-				// Create a wider progress bar
-				m.progressBar.Width = combinedWidth
-
-				// Get the progress bar output (just the plain white bar without percentage)
-				progressBarOutput := m.progressBar.ViewAs(downloadState.Progress)
-
-				// Create a wider cell that spans columns
-				combinedCell := lp.NewStyle().Width(combinedWidth).Render(progressBarOutput)
-
-				// Display different content based on download state
-				hashText := util.FormatSpeed(downloadState.Speed)
-				if downloadState.Message == "Extracting..." {
-					// For extraction, show "Extracting" instead of download speed
-					hashText = "Extracting..."
-				}
-				hashCell := cellStyleCenter.Copy().Width(colWidthHash).Render(hashText)
-
-				// First render the individual cells
-				var specialRowCols []string
-				if m.visibleColumns["Version"] {
-					specialRowCols = append(specialRowCols, versionCell)
-				}
-				if m.visibleColumns["Status"] {
-					specialRowCols = append(specialRowCols, statusCell)
-				}
-				if m.visibleColumns["Branch"] {
-					specialRowCols = append(specialRowCols, cellStyleCenter.Copy().Width(colWidthBranch).Render(util.TruncateString(build.Branch, colWidthBranch)))
-				}
-				if m.visibleColumns["Type"] {
-					specialRowCols = append(specialRowCols, cellStyleCenter.Copy().Width(colWidthType).Render(util.TruncateString(build.ReleaseCycle, colWidthType)))
-				}
-				if m.visibleColumns["Hash"] {
-					specialRowCols = append(specialRowCols, hashCell)
-				}
-				if m.visibleColumns["Size"] || m.visibleColumns["Build Date"] {
-					specialRowCols = append(specialRowCols, combinedCell)
-				}
-
-				// Join cells into a single row
-				rowContent := lp.JoinHorizontal(lp.Left, specialRowCols...)
-
-				// Then apply selection style to the entire row
-				if m.cursor == i {
-					tableBuilder.WriteString(selectedRowStyle.Render(rowContent))
+	// --- RENDER TABLE HEADER ---
+	// Create header cells
+	var headerCells []string
+	for _, col := range columns {
+		if col.visible {
+			title := col.name
+			if m.sortColumn == col.index {
+				if m.sortReversed {
+					title += " ↓"
 				} else {
-					tableBuilder.WriteString(rowContent)
-				}
-				tableBuilder.WriteString("\n")
-
-				// Skip the regular row assembly
-				continue
-			}
-
-			// For non-downloading rows, we need to ensure the highlight extends across colored cells
-			if m.cursor == i {
-				// When this row is selected, we need to:
-				// 1. Create unstyled content for each cell first
-				// 2. Apply the selection background to all cells first
-				// 3. Then apply the individual text colors on top
-
-				// Create unstyled content for status (will apply selection + text color later)
-				statusContent := util.TruncateString(build.Status, colWidthStatus)
-
-				// Prepare all cells with uncolored text
-				versionContent := util.TruncateString("Blender "+build.Version, colWidthVersion)
-				branchContent := util.TruncateString(build.Branch, colWidthBranch)
-				typeContent := util.TruncateString(build.ReleaseCycle, colWidthType)
-				hashContent := util.TruncateString(build.Hash, colWidthHash)
-				sizeContent := util.FormatSize(build.Size)
-				dateContent := build.BuildDate.Time().Format("2006-01-02 15:04")
-
-				// Apply selection background style to each cell's content
-				var rowCols []string
-				if m.visibleColumns["Version"] {
-					rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthVersion).Render(versionContent))
-				}
-				if m.visibleColumns["Status"] {
-					rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthStatus).Foreground(statusTextStyle.GetForeground()).Render(statusContent))
-				}
-				if m.visibleColumns["Branch"] {
-					rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthBranch).Render(branchContent))
-				}
-				if m.visibleColumns["Type"] {
-					rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthType).Render(typeContent))
-				}
-				if m.visibleColumns["Hash"] {
-					rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthHash).Render(hashContent))
-				}
-				if m.visibleColumns["Size"] {
-					rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthSize).Render(sizeContent))
-				}
-				if m.visibleColumns["Build Date"] {
-					rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthDate).Render(dateContent))
+					title += " ↑"
 				}
 
-				// Join all highlighted cells into a row
-				rowSelected := lp.JoinHorizontal(lp.Left, rowCols...)
-				tableBuilder.WriteString(rowSelected)
+				// Center align all columns including Version
+				headerCells = append(headerCells, headerStyle.Copy().Underline(true).Align(lp.Center).Width(col.width).Render(title))
 			} else {
-				// For unselected rows, we can use the original cell rendering
-				statusCell := statusTextStyle.Copy().Inherit(cellStyleCenter).Width(colWidthStatus).Render(util.TruncateString(build.Status, colWidthStatus))
-
-				var rowCols []string
-				if m.visibleColumns["Version"] {
-					rowCols = append(rowCols, versionCell)
-				}
-				if m.visibleColumns["Status"] {
-					rowCols = append(rowCols, statusCell)
-				}
-				if m.visibleColumns["Branch"] {
-					rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthBranch).Render(util.TruncateString(build.Branch, colWidthBranch)))
-				}
-				if m.visibleColumns["Type"] {
-					rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthType).Render(util.TruncateString(build.ReleaseCycle, colWidthType)))
-				}
-				if m.visibleColumns["Hash"] {
-					rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthHash).Render(util.TruncateString(build.Hash, colWidthHash)))
-				}
-				if m.visibleColumns["Size"] {
-					rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthSize).Render(util.FormatSize(build.Size)))
-				}
-				if m.visibleColumns["Build Date"] {
-					rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthDate).Render(build.BuildDate.Time().Format("2006-01-02 15:04")))
-				}
-
-				rowContent := lp.JoinHorizontal(lp.Left, rowCols...)
-				tableBuilder.WriteString(rowContent)
+				// Center align all columns including Version
+				headerCells = append(headerCells, headerStyle.Copy().Align(lp.Center).Width(col.width).Render(title))
 			}
-			tableBuilder.WriteString("\n")
 		}
 	}
 
-	// --- Combine table and footer ---
-	viewBuilder.WriteString(tableBuilder.String())
+	// Join and render the header
+	sb.WriteString(lp.JoinHorizontal(lp.Left, headerCells...) + "\n")
 
-	// Add loading indicator below the table if loading
+	// Render separator
+	separatorStyle := lp.NewStyle().Faint(true)
+	totalWidth := 0
+	visibleColumnCount := 0
+	for _, col := range columns {
+		if col.visible {
+			totalWidth += col.width
+			visibleColumnCount++
+		}
+	}
+	// Add padding between columns
+	totalWidth += visibleColumnCount - 1
+
+	// Ensure totalWidth is never negative before using strings.Repeat
+	if totalWidth < 1 {
+		totalWidth = 1 // Minimum width of 1 to avoid panic
+	}
+
+	sb.WriteString(separatorStyle.Render(strings.Repeat("─", totalWidth)) + "\n")
+
+	// --- HANDLE EMPTY TABLE ---
+	if len(m.builds) == 0 {
+		noBuildsMsg := "No builds found. Press 'f' to fetch online builds."
+		sb.WriteString(lp.PlaceHorizontal(totalWidth, lp.Center, noBuildsMsg) + "\n")
+	} else {
+		// --- RENDER TABLE ROWS ---
+		for i, build := range m.builds {
+			isSelected := m.cursor == i
+			downloadState, isDownloading := m.downloadStates[build.Version]
+
+			// Collect cells for this row
+			var cells []string
+
+			// Helper function to add a cell with appropriate styling
+			addCell := func(content string, width int, baseStyle lp.Style, colIndex int) {
+				// Center align all columns
+				style := baseStyle.Copy().Align(lp.Center)
+
+				// Apply selection styling if selected
+				if isSelected {
+					cells = append(cells, style.Inherit(selectedStyle).Width(width).Render(content))
+				} else {
+					cells = append(cells, style.Width(width).Render(content))
+				}
+			}
+
+			// Determine status style
+			statusStyle := cellStyle.Copy()
+			switch build.Status {
+			case "Local":
+				statusStyle = statusStyle.Copy().Inherit(localStyle)
+			case "Update":
+				statusStyle = statusStyle.Copy().Inherit(updateStyle)
+			case "Cancelled":
+				statusStyle = statusStyle.Copy().Inherit(warningStyle)
+			default:
+				if strings.HasPrefix(build.Status, "Failed") {
+					statusStyle = statusStyle.Copy().Inherit(errorStyle)
+				} else if isDownloading {
+					statusStyle = statusStyle.Copy().Inherit(warningStyle)
+				}
+			}
+
+			// Special handling for downloading builds
+			if isDownloading {
+				// For downloading builds, create a completely different row with full control over width
+				var rowContent string
+
+				// Version (always visible)
+				versionText := "Blender " + build.Version
+				versionCell := cellStyle.Copy().Align(lp.Center).Width(columns[0].width).Render(versionText)
+
+				// Status (always visible)
+				statusCell := statusStyle.Copy().Align(lp.Center).Width(columns[1].width).Render(downloadState.Message)
+
+				// Branch (speed display for downloads)
+				branchContent := ""
+				if columns[2].visible {
+					if downloadState.Message == "Downloading" {
+						branchContent = util.FormatSpeed(downloadState.Speed)
+					}
+					branchCell := cellStyle.Copy().Align(lp.Center).Width(columns[2].width).Render(branchContent)
+					rowContent = lp.JoinHorizontal(lp.Left, versionCell, statusCell, branchCell)
+				} else {
+					rowContent = lp.JoinHorizontal(lp.Left, versionCell, statusCell)
+				}
+
+				// Calculate progress bar width precisely
+				remainingWidth := 0
+				for i := 3; i < len(columns); i++ {
+					if columns[i].visible {
+						remainingWidth += columns[i].width + 1 // Include gap
+					}
+				}
+				// Remove the last gap space (after the last column)
+				if remainingWidth > 0 {
+					remainingWidth -= 1
+				}
+
+				// Only render progress bar if we have space
+				if remainingWidth > 0 && (downloadState.Message == "Downloading" || downloadState.Message == "Extracting") {
+					// Create the progress bar
+					pb := m.progressBar
+					pb.Width = remainingWidth - 2 // Subtract 2 for safety
+					progressBar := pb.ViewAs(downloadState.Progress)
+
+					progressCell := cellStyle.Copy().Width(remainingWidth).Render(progressBar)
+					rowContent = lp.JoinHorizontal(lp.Left, rowContent, progressCell)
+				}
+
+				// Apply selection styling if needed
+				if isSelected {
+					rowContent = selectedStyle.Render(rowContent)
+				}
+
+				// Add the entire row directly
+				sb.WriteString(rowContent + "\n")
+			} else {
+				// Regular row rendering for non-downloading builds
+
+				// Version
+				if columns[0].visible {
+					addCell("Blender "+build.Version, columns[0].width, cellStyle, 0)
+				}
+
+				// Status
+				if columns[1].visible {
+					addCell(build.Status, columns[1].width, statusStyle, 1)
+				}
+
+				// Branch
+				if columns[2].visible {
+					addCell(build.Branch, columns[2].width, cellStyle, 2)
+				}
+
+				// Type
+				if columns[3].visible {
+					addCell(build.ReleaseCycle, columns[3].width, cellStyle, 3)
+				}
+
+				// Hash
+				if columns[4].visible {
+					addCell(build.Hash, columns[4].width, cellStyle, 4)
+				}
+
+				// Size
+				if columns[5].visible {
+					addCell(util.FormatSize(build.Size), columns[5].width, cellStyle, 5)
+				}
+
+				// Build Date
+				if columns[6].visible {
+					addCell(build.BuildDate.Time().Format("2006-01-02"), columns[6].width, cellStyle, 6)
+				}
+
+				// Join cells and add to output
+				sb.WriteString(lp.JoinHorizontal(lp.Left, cells...) + "\n")
+			}
+		}
+	}
+
+	// --- ADD LOADING INDICATOR ---
 	if m.isLoading {
-		loadingMsg := ""
+		loadingStyle := lp.NewStyle().Foreground(lp.Color(colorInfo))
 		if len(m.builds) == 0 {
-			loadingMsg = "Scanning local builds..."
+			sb.WriteString(loadingStyle.Render("Scanning local builds...\n"))
 		} else {
-			loadingMsg = "\nFetching online builds..."
+			sb.WriteString(loadingStyle.Render("\nFetching online builds...\n"))
 		}
-		viewBuilder.WriteString(lp.NewStyle().Foreground(lp.Color(colorInfo)).Render(loadingMsg) + "\n")
 	}
 
-	// Display running Blender notice if applicable
+	// --- RUNNING BLENDER NOTICE ---
 	if m.blenderRunning != "" {
-		runningNotice := lp.NewStyle().
-			Foreground(lp.Color(colorSuccess)). // Green text
-			Bold(true).
-			Render(fmt.Sprintf("⚠ Blender %s is running - this terminal will display its console output", m.blenderRunning))
-		viewBuilder.WriteString("\n" + runningNotice + "\n")
+		noticeStyle := lp.NewStyle().Foreground(lp.Color(colorSuccess)).Bold(true)
+		notice := fmt.Sprintf("\n⚠ Blender %s is running - this terminal will display its console output", m.blenderRunning)
+		sb.WriteString(noticeStyle.Render(notice) + "\n")
 	}
 
-	// ... Footer rendering ...
-	// Contextual commands based on selected build
+	// --- FOOTER KEYBINDS ---
 	var footerKeybinds1 string
 	var footerKeybinds2 string
 
-	// Command items for the first line - contextual based on build status
+	// First line: contextual commands for selected build
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
-		// Command set for the selected build based on its status
 		selectedBuild := m.builds[m.cursor]
 		status := selectedBuild.Status
-		isLocalOrUpdate := status == "Local" || status == "Update"
-		isDownloading := strings.HasPrefix(status, "Downloading") || status == "Preparing..." || status == "Extracting..."
 
-		// --- Determine which commands are applicable ---
-		var launchCmd, downloadCmd, openCmd, deleteCmd, cancelCmd string
+		var commands []string
 
-		// Launch: Applicable if local or update exists
-		if isLocalOrUpdate {
-			launchCmd = "Enter:Launch"
+		// Launch: only for Local builds
+		if status == "Local" {
+			commands = append(commands, "Enter:Launch")
 		}
 
-		// Download: Applicable if Online or an Update is available
+		// Download: for Online or Update builds
 		if status == "Online" || status == "Update" {
-			downloadCmd = "D:Download"
+			commands = append(commands, "D:Download")
 		}
 
-		// Open Dir: Applicable if local or update exists
-		if isLocalOrUpdate {
-			openCmd = "O:Open Dir"
+		// Open directory: for Local or Update builds
+		if status == "Local" || status == "Update" {
+			commands = append(commands, "O:Open Dir")
 		}
 
-		// Delete: Applicable if local or update exists
-		if isLocalOrUpdate {
-			deleteCmd = "X:Delete"
+		// Delete: for Local or Update builds
+		if status == "Local" || status == "Update" {
+			commands = append(commands, "X:Delete")
 		}
 
-		// Cancel: Applicable only if a download/extraction is in progress
-		if isDownloading {
-			cancelCmd = "C:Cancel"
-			// Typically, other actions aren't available during download/extraction
-			launchCmd = ""
-			downloadCmd = ""
-			openCmd = ""
-			deleteCmd = ""
+		// Cancel: for in-progress downloads
+		if strings.HasPrefix(status, "Downloading") ||
+			status == "Preparing" ||
+			status == "Extracting" {
+			commands = append(commands, "C:Cancel")
 		}
 
-		// --- Assemble commands in the desired order ---
-		orderedCmds := []string{
-			launchCmd,
-			downloadCmd,
-			openCmd,
-			deleteCmd,
-			cancelCmd,
-		}
-
-		// --- Filter out empty commands ---
-		var finalCmds []string
-		for _, cmd := range orderedCmds {
-			if cmd != "" {
-				finalCmds = append(finalCmds, cmd)
-			}
-		}
-
-		// --- Join the final commands for display ---
-		footerKeybinds1 = strings.Join(finalCmds, "  ")
+		footerKeybinds1 = strings.Join(commands, "  ")
 	}
 
-	// Second footer line: global commands and column navigation - always consistent
+	// Second line: always the same global commands
 	footerKeybinds2 = "F:Fetch  S:Settings  Q:Quit  R:Sort  ←→:Column"
 
-	// Render the footer (both lines with no spacing between them)
+	// Render footer
+	footerStyle := lp.NewStyle().MarginTop(1).Faint(true)
 	footerContent := footerKeybinds1 + "\n" + footerKeybinds2
-	viewBuilder.WriteString(footerStyle.Render(footerContent))
+	sb.WriteString(footerStyle.Render(footerContent))
 
-	return viewBuilder.String()
+	return sb.String()
 }
 
 // renderConfirmationDialog creates a standard confirmation dialog
@@ -2020,9 +2038,9 @@ func (m Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 	downloadState, isDownloading := m.downloadStates[buildVersion]
 	// Check if it's in a cancellable state *while holding the lock*
 	canCancel := isDownloading &&
-		(downloadState.Message == "Downloading..." ||
-			downloadState.Message == "Preparing..." ||
-			downloadState.Message == "Extracting...")
+		(downloadState.Message == "Downloading" ||
+			downloadState.Message == "Preparing" ||
+			downloadState.Message == "Extracting")
 	m.downloadMutex.Unlock() // Unlock immediately after reading
 
 	// If not downloading or not in a cancellable state, do nothing
@@ -2044,4 +2062,20 @@ func (m Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 	// The tick handler will then pick up that state change.
 	// Return immediately, no command, no UI update here.
 	return m, nil
+}
+
+// Helper function to count visible columns
+func countVisibleColumns(columns []struct {
+	name    string
+	width   int
+	visible bool
+	index   int
+}) int {
+	count := 0
+	for _, col := range columns {
+		if col.visible {
+			count++
+		}
+	}
+	return count
 }
