@@ -399,8 +399,8 @@ func adaptiveTickCmd(activeCount int, isExtracting bool) tea.Cmd {
 	if activeCount == 0 {
 		rate = 500 * time.Millisecond // Slower when idle
 	} else if isExtracting {
-		// During extraction, use a faster rate to ensure UI refreshes properly
-		rate = 30 * time.Millisecond // Much faster refresh during extraction
+		// During extraction, we can use a slightly slower rate
+		rate = 250 * time.Millisecond
 	} else if activeCount > 1 {
 		// With multiple downloads, we can use a slightly faster rate
 		// to make the UI more responsive, but not too fast to cause system load
@@ -586,24 +586,8 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 		close(done)
 	}()
 
-	// Create a function that immediately returns a message to update the UI
-	// once the download and extraction are complete
-	return func() tea.Msg {
-		// Start the immediate tick for UI updates
-		go func() {
-			<-done // Wait for done signal
-
-			// Send download complete message to trigger UI update
-			if p := tea.NewProgram(Model{}); p != nil {
-				p.Send(downloadCompleteMsg{
-					buildVersion: build.Version,
-				})
-			}
-		}()
-
-		// Return an immediate tick to start the UI updates with appropriate rate
-		return adaptiveTickCmd(1, false)()
-	}
+	// Start with a single active download, not extracting yet
+	return adaptiveTickCmd(1, false)
 }
 
 // Init initializes the TUI model.
@@ -1194,12 +1178,12 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	m.downloadMutex.Lock() // Lock early
 
 	activeDownloads := 0
-	extractingInProgress := false
 	var progressCmds []tea.Cmd
 	// Lists to store versions identified for state change/cleanup
 	completedDownloads := make([]string, 0)
 	stalledDownloads := make([]string, 0)
 	cancelledDownloads := make([]string, 0)
+	extractingInProgress := false
 	// Store states temporarily to access after unlocking
 	tempStates := make(map[string]DownloadState)
 
@@ -1250,8 +1234,6 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 
 	// --- Update m.builds and Schedule commands (after unlock) ---
 	needsSort := false
-	hadCompletions := len(completedDownloads) > 0
-
 	for _, version := range completedDownloads {
 		for i := range m.builds {
 			if m.builds[i].Version == version {
@@ -1264,7 +1246,6 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-
 	for _, version := range stalledDownloads {
 		for i := range m.builds {
 			if m.builds[i].Version == version {
@@ -1276,7 +1257,6 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-
 	for _, version := range cancelledDownloads {
 		for i := range m.builds {
 			if m.builds[i].Version == version {
@@ -1298,18 +1278,13 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 
 	// Append other necessary commands
 	if activeDownloads > 0 {
-		// Always add a tick command to keep the UI updated
 		commands = append(commands, adaptiveTickCmd(activeDownloads, extractingInProgress))
-
-		// Add progress bar updates
 		if len(progressCmds) > 0 {
 			commands = append(commands, progressCmds...)
 		}
-	} else if hadCompletions {
-		// If downloads just completed, add a scan command to refresh status
-		commands = append(commands, scanLocalBuildsCmd(m.config))
-		// Also refresh old builds info after download completes
-		commands = append(commands, getOldBuildsInfoCmd(m.config))
+	} else if len(progressCmds) > 0 {
+		// Handle final progress updates if any
+		commands = append(commands, progressCmds...)
 	}
 
 	// --- Return batched commands ---
@@ -1465,162 +1440,185 @@ Press f to try fetching online builds, s for settings, q to quit.`, m.err)
 	tableBuilder.WriteString(separator)
 	tableBuilder.WriteString("\n")
 
-	// --- Rows ---
-	for i, build := range m.builds {
-		downloadState, isDownloadingThis := m.downloadStates[build.Version]
-
-		// --- Default row cell values (Apply alignment) ---
-		versionCell := cellStyleCenter.Copy().Width(colWidthVersion).Render(util.TruncateString("Blender "+build.Version, colWidthVersion))
-		statusTextStyle := regularRowStyle
-
-		// --- Adjust cells based on status (Apply alignment within style) ---
-		if build.Status == "Local" {
-			statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorSuccess))
-		} else if build.Status == "Update" {
-			statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorInfo)) // Light blue for updates
-		} else if strings.HasPrefix(build.Status, "Failed") {
-			statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorError))
-		} else if build.Status == "Cancelled" {
-			statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorWarning))
+	// --- Show "No builds found" message or render builds ---
+	if len(m.builds) == 0 {
+		// Calculate total table width for centered text
+		totalWidth := 0
+		for _, col := range []string{"Version", "Status", "Branch", "Type", "Hash", "Size", "Build Date"} {
+			if m.visibleColumns[col] {
+				totalWidth += columnConfigs[col].width
+			}
 		}
 
-		// --- Override cells if downloading ---
-		if isDownloadingThis {
-			statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorWarning)) // Keep text style separate from alignment
-			statusCell := cellStyleCenter.Copy().Width(colWidthStatus).Render(downloadState.Message)
+		// Add message about no builds
+		noBuildsMsg := "No builds found. Press 'f' to fetch online builds."
 
-			// Calculate the combined width for a true spanning cell
-			combinedWidth := colWidthSize + colWidthDate
+		// Center the message in the available space
+		padding := (totalWidth - len(noBuildsMsg)) / 2
+		if padding < 0 {
+			padding = 0
+		}
 
-			// Create a wider progress bar
-			m.progressBar.Width = combinedWidth
+		paddingStr := strings.Repeat(" ", padding)
+		tableBuilder.WriteString(paddingStr + noBuildsMsg + "\n")
+	} else {
+		// --- Rows ---
+		for i, build := range m.builds {
+			downloadState, isDownloadingThis := m.downloadStates[build.Version]
 
-			// Get the progress bar output (just the plain white bar without percentage)
-			progressBarOutput := m.progressBar.ViewAs(downloadState.Progress)
+			// --- Default row cell values (Apply alignment) ---
+			versionCell := cellStyleCenter.Copy().Width(colWidthVersion).Render(util.TruncateString("Blender "+build.Version, colWidthVersion))
+			statusTextStyle := regularRowStyle
 
-			// Create a wider cell that spans columns
-			combinedCell := lp.NewStyle().Width(combinedWidth).Render(progressBarOutput)
-
-			// Display different content based on download state
-			hashText := util.FormatSpeed(downloadState.Speed)
-			if downloadState.Message == "Extracting..." {
-				// For extraction, show "Extracting" instead of download speed
-				hashText = "Extracting..."
-			}
-			hashCell := cellStyleCenter.Copy().Width(colWidthHash).Render(hashText)
-
-			// First render the individual cells
-			var specialRowCols []string
-			if m.visibleColumns["Version"] {
-				specialRowCols = append(specialRowCols, versionCell)
-			}
-			if m.visibleColumns["Status"] {
-				specialRowCols = append(specialRowCols, statusCell)
-			}
-			if m.visibleColumns["Branch"] {
-				specialRowCols = append(specialRowCols, cellStyleCenter.Copy().Width(colWidthBranch).Render(util.TruncateString(build.Branch, colWidthBranch)))
-			}
-			if m.visibleColumns["Type"] {
-				specialRowCols = append(specialRowCols, cellStyleCenter.Copy().Width(colWidthType).Render(util.TruncateString(build.ReleaseCycle, colWidthType)))
-			}
-			if m.visibleColumns["Hash"] {
-				specialRowCols = append(specialRowCols, hashCell)
-			}
-			if m.visibleColumns["Size"] || m.visibleColumns["Build Date"] {
-				specialRowCols = append(specialRowCols, combinedCell)
+			// --- Adjust cells based on status (Apply alignment within style) ---
+			if build.Status == "Local" {
+				statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorSuccess))
+			} else if build.Status == "Update" {
+				statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorInfo)) // Light blue for updates
+			} else if strings.HasPrefix(build.Status, "Failed") {
+				statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorError))
+			} else if build.Status == "Cancelled" {
+				statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorWarning))
 			}
 
-			// Join cells into a single row
-			rowContent := lp.JoinHorizontal(lp.Left, specialRowCols...)
+			// --- Override cells if downloading ---
+			if isDownloadingThis {
+				statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorWarning)) // Keep text style separate from alignment
+				statusCell := cellStyleCenter.Copy().Width(colWidthStatus).Render(downloadState.Message)
 
-			// Then apply selection style to the entire row
+				// Calculate the combined width for a true spanning cell
+				combinedWidth := colWidthSize + colWidthDate
+
+				// Create a wider progress bar
+				m.progressBar.Width = combinedWidth
+
+				// Get the progress bar output (just the plain white bar without percentage)
+				progressBarOutput := m.progressBar.ViewAs(downloadState.Progress)
+
+				// Create a wider cell that spans columns
+				combinedCell := lp.NewStyle().Width(combinedWidth).Render(progressBarOutput)
+
+				// Display different content based on download state
+				hashText := util.FormatSpeed(downloadState.Speed)
+				if downloadState.Message == "Extracting..." {
+					// For extraction, show "Extracting" instead of download speed
+					hashText = "Extracting..."
+				}
+				hashCell := cellStyleCenter.Copy().Width(colWidthHash).Render(hashText)
+
+				// First render the individual cells
+				var specialRowCols []string
+				if m.visibleColumns["Version"] {
+					specialRowCols = append(specialRowCols, versionCell)
+				}
+				if m.visibleColumns["Status"] {
+					specialRowCols = append(specialRowCols, statusCell)
+				}
+				if m.visibleColumns["Branch"] {
+					specialRowCols = append(specialRowCols, cellStyleCenter.Copy().Width(colWidthBranch).Render(util.TruncateString(build.Branch, colWidthBranch)))
+				}
+				if m.visibleColumns["Type"] {
+					specialRowCols = append(specialRowCols, cellStyleCenter.Copy().Width(colWidthType).Render(util.TruncateString(build.ReleaseCycle, colWidthType)))
+				}
+				if m.visibleColumns["Hash"] {
+					specialRowCols = append(specialRowCols, hashCell)
+				}
+				if m.visibleColumns["Size"] || m.visibleColumns["Build Date"] {
+					specialRowCols = append(specialRowCols, combinedCell)
+				}
+
+				// Join cells into a single row
+				rowContent := lp.JoinHorizontal(lp.Left, specialRowCols...)
+
+				// Then apply selection style to the entire row
+				if m.cursor == i {
+					tableBuilder.WriteString(selectedRowStyle.Render(rowContent))
+				} else {
+					tableBuilder.WriteString(rowContent)
+				}
+				tableBuilder.WriteString("\n")
+
+				// Skip the regular row assembly
+				continue
+			}
+
+			// For non-downloading rows, we need to ensure the highlight extends across colored cells
 			if m.cursor == i {
-				tableBuilder.WriteString(selectedRowStyle.Render(rowContent))
+				// When this row is selected, we need to:
+				// 1. Create unstyled content for each cell first
+				// 2. Apply the selection background to all cells first
+				// 3. Then apply the individual text colors on top
+
+				// Create unstyled content for status (will apply selection + text color later)
+				statusContent := util.TruncateString(build.Status, colWidthStatus)
+
+				// Prepare all cells with uncolored text
+				versionContent := util.TruncateString("Blender "+build.Version, colWidthVersion)
+				branchContent := util.TruncateString(build.Branch, colWidthBranch)
+				typeContent := util.TruncateString(build.ReleaseCycle, colWidthType)
+				hashContent := util.TruncateString(build.Hash, colWidthHash)
+				sizeContent := util.FormatSize(build.Size)
+				dateContent := build.BuildDate.Time().Format("2006-01-02 15:04")
+
+				// Apply selection background style to each cell's content
+				var rowCols []string
+				if m.visibleColumns["Version"] {
+					rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthVersion).Render(versionContent))
+				}
+				if m.visibleColumns["Status"] {
+					rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthStatus).Foreground(statusTextStyle.GetForeground()).Render(statusContent))
+				}
+				if m.visibleColumns["Branch"] {
+					rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthBranch).Render(branchContent))
+				}
+				if m.visibleColumns["Type"] {
+					rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthType).Render(typeContent))
+				}
+				if m.visibleColumns["Hash"] {
+					rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthHash).Render(hashContent))
+				}
+				if m.visibleColumns["Size"] {
+					rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthSize).Render(sizeContent))
+				}
+				if m.visibleColumns["Build Date"] {
+					rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthDate).Render(dateContent))
+				}
+
+				// Join all highlighted cells into a row
+				rowSelected := lp.JoinHorizontal(lp.Left, rowCols...)
+				tableBuilder.WriteString(rowSelected)
 			} else {
+				// For unselected rows, we can use the original cell rendering
+				statusCell := statusTextStyle.Copy().Inherit(cellStyleCenter).Width(colWidthStatus).Render(util.TruncateString(build.Status, colWidthStatus))
+
+				var rowCols []string
+				if m.visibleColumns["Version"] {
+					rowCols = append(rowCols, versionCell)
+				}
+				if m.visibleColumns["Status"] {
+					rowCols = append(rowCols, statusCell)
+				}
+				if m.visibleColumns["Branch"] {
+					rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthBranch).Render(util.TruncateString(build.Branch, colWidthBranch)))
+				}
+				if m.visibleColumns["Type"] {
+					rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthType).Render(util.TruncateString(build.ReleaseCycle, colWidthType)))
+				}
+				if m.visibleColumns["Hash"] {
+					rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthHash).Render(util.TruncateString(build.Hash, colWidthHash)))
+				}
+				if m.visibleColumns["Size"] {
+					rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthSize).Render(util.FormatSize(build.Size)))
+				}
+				if m.visibleColumns["Build Date"] {
+					rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthDate).Render(build.BuildDate.Time().Format("2006-01-02 15:04")))
+				}
+
+				rowContent := lp.JoinHorizontal(lp.Left, rowCols...)
 				tableBuilder.WriteString(rowContent)
 			}
 			tableBuilder.WriteString("\n")
-
-			// Skip the regular row assembly
-			continue
 		}
-
-		// For non-downloading rows, we need to ensure the highlight extends across colored cells
-		if m.cursor == i {
-			// When this row is selected, we need to:
-			// 1. Create unstyled content for each cell first
-			// 2. Apply the selection background to all cells first
-			// 3. Then apply the individual text colors on top
-
-			// Create unstyled content for status (will apply selection + text color later)
-			statusContent := util.TruncateString(build.Status, colWidthStatus)
-
-			// Prepare all cells with uncolored text
-			versionContent := util.TruncateString("Blender "+build.Version, colWidthVersion)
-			branchContent := util.TruncateString(build.Branch, colWidthBranch)
-			typeContent := util.TruncateString(build.ReleaseCycle, colWidthType)
-			hashContent := util.TruncateString(build.Hash, colWidthHash)
-			sizeContent := util.FormatSize(build.Size)
-			dateContent := build.BuildDate.Time().Format("2006-01-02 15:04")
-
-			// Apply selection background style to each cell's content
-			var rowCols []string
-			if m.visibleColumns["Version"] {
-				rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthVersion).Render(versionContent))
-			}
-			if m.visibleColumns["Status"] {
-				rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthStatus).Foreground(statusTextStyle.GetForeground()).Render(statusContent))
-			}
-			if m.visibleColumns["Branch"] {
-				rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthBranch).Render(branchContent))
-			}
-			if m.visibleColumns["Type"] {
-				rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthType).Render(typeContent))
-			}
-			if m.visibleColumns["Hash"] {
-				rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthHash).Render(hashContent))
-			}
-			if m.visibleColumns["Size"] {
-				rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthSize).Render(sizeContent))
-			}
-			if m.visibleColumns["Build Date"] {
-				rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthDate).Render(dateContent))
-			}
-
-			// Join all highlighted cells into a row
-			rowSelected := lp.JoinHorizontal(lp.Left, rowCols...)
-			tableBuilder.WriteString(rowSelected)
-		} else {
-			// For unselected rows, we can use the original cell rendering
-			statusCell := statusTextStyle.Copy().Inherit(cellStyleCenter).Width(colWidthStatus).Render(util.TruncateString(build.Status, colWidthStatus))
-
-			var rowCols []string
-			if m.visibleColumns["Version"] {
-				rowCols = append(rowCols, versionCell)
-			}
-			if m.visibleColumns["Status"] {
-				rowCols = append(rowCols, statusCell)
-			}
-			if m.visibleColumns["Branch"] {
-				rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthBranch).Render(util.TruncateString(build.Branch, colWidthBranch)))
-			}
-			if m.visibleColumns["Type"] {
-				rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthType).Render(util.TruncateString(build.ReleaseCycle, colWidthType)))
-			}
-			if m.visibleColumns["Hash"] {
-				rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthHash).Render(util.TruncateString(build.Hash, colWidthHash)))
-			}
-			if m.visibleColumns["Size"] {
-				rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthSize).Render(util.FormatSize(build.Size)))
-			}
-			if m.visibleColumns["Build Date"] {
-				rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthDate).Render(build.BuildDate.Time().Format("2006-01-02 15:04")))
-			}
-
-			rowContent := lp.JoinHorizontal(lp.Left, rowCols...)
-			tableBuilder.WriteString(rowContent)
-		}
-		tableBuilder.WriteString("\n")
 	}
 
 	// --- Combine table and footer ---
@@ -1646,16 +1644,11 @@ Press f to try fetching online builds, s for settings, q to quit.`, m.err)
 
 	// If the total width is greater than the terminal width, wrap the footer
 	if totalWidth > m.terminalWidth {
-		// First line: Launch controls
-		viewBuilder.WriteString(footerStyle.Render(footerKeybinds1))
-		viewBuilder.WriteString("\n")
-
-		// Second line: Fetch and cleanup controls
-		viewBuilder.WriteString(footerStyle.Render(footerKeybinds2))
-		viewBuilder.WriteString("\n")
-
-		// Third line: Column navigation
-		viewBuilder.WriteString(footerStyle.Render(footerKeybinds3))
+		// Combine all footer lines into a single styled string
+		footerContent := footerStyle.Render(footerKeybinds1) +
+			footerStyle.Render(footerKeybinds2) +
+			footerStyle.Render(footerKeybinds3)
+		viewBuilder.WriteString(footerContent)
 	} else {
 		// Single line footer with separators
 		footerKeys := fmt.Sprintf("%s  %s  %s  %s  %s", footerKeybinds1, keybindSeparator, footerKeybinds2, keybindSeparator, footerKeybinds3)
