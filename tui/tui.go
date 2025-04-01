@@ -116,6 +116,89 @@ type (
 // Implement the error interface for errMsg
 func (e errMsg) Error() string { return e.err.Error() }
 
+// Column visibility configuration
+type columnConfig struct {
+	width    int
+	priority int // Lower number = higher priority (will be shown first)
+	visible  bool
+}
+
+// Column configurations
+var (
+	// Column configurations with priorities (lower = higher priority)
+	columnConfigs = map[string]columnConfig{
+		"Version":    {width: colWidthVersion, priority: 1},
+		"Status":     {width: colWidthStatus, priority: 2},
+		"Branch":     {width: colWidthBranch, priority: 5},
+		"Type":       {width: colWidthType, priority: 4},
+		"Hash":       {width: colWidthHash, priority: 6},
+		"Size":       {width: colWidthSize, priority: 7},
+		"Build Date": {width: colWidthDate, priority: 3},
+	}
+)
+
+// calculateVisibleColumns determines which columns should be visible based on terminal width
+func calculateVisibleColumns(terminalWidth int) map[string]bool {
+	// Start with minimum required columns
+	visible := map[string]bool{
+		"Version": true,
+		"Status":  true,
+	}
+
+	// Calculate remaining width after minimum columns
+	remainingWidth := terminalWidth - columnConfigs["Version"].width - columnConfigs["Status"].width
+
+	// Sort columns by priority
+	type colPriority struct {
+		name     string
+		priority int
+	}
+	var priorities []colPriority
+	for name, config := range columnConfigs {
+		if name != "Version" && name != "Status" {
+			priorities = append(priorities, colPriority{name, config.priority})
+		}
+	}
+	sort.Slice(priorities, func(i, j int) bool {
+		return priorities[i].priority < priorities[j].priority
+	})
+
+	// Create a new map with updated visibility flags
+	newConfigs := make(map[string]columnConfig)
+	for name, config := range columnConfigs {
+		newConfigs[name] = columnConfig{
+			width:    config.width,
+			priority: config.priority,
+			visible:  false,
+		}
+	}
+
+	// Set required columns as visible
+	config := newConfigs["Version"]
+	config.visible = true
+	newConfigs["Version"] = config
+
+	config = newConfigs["Status"]
+	config.visible = true
+	newConfigs["Status"] = config
+
+	// Add columns in priority order until we run out of space
+	for _, col := range priorities {
+		if remainingWidth >= newConfigs[col.name].width {
+			visible[col.name] = true
+			config = newConfigs[col.name]
+			config.visible = true
+			newConfigs[col.name] = config
+			remainingWidth -= newConfigs[col.name].width
+		}
+	}
+
+	// Update the global columnConfigs
+	columnConfigs = newConfigs
+
+	return visible
+}
+
 // Model represents the state of the TUI application.
 type Model struct {
 	// Core data
@@ -148,6 +231,9 @@ type Model struct {
 	focusIndex     int
 	editMode       bool // Whether we're in edit mode in settings
 	terminalWidth  int  // Store terminal width
+
+	// New fields for visible columns
+	visibleColumns map[string]bool // Track which columns are visible
 }
 
 // DownloadState holds progress info for an active download
@@ -193,10 +279,10 @@ var (
 
 // InitialModel creates the initial state of the TUI model.
 func InitialModel(cfg config.Config, needsSetup bool) Model {
-	// Use a green gradient for the progress bar
+	// Use a white color for the progress bar with custom view
 	progModel := progress.New(
-		progress.WithDefaultGradient(),
-		progress.WithGradient("#00FF00", "#008800"), // Green gradient
+		progress.WithGradient("#FFFFFF", "#FFFFFF"), // Solid white
+		progress.WithoutPercentage(),
 	)
 	m := Model{
 		config:          cfg,
@@ -204,10 +290,11 @@ func InitialModel(cfg config.Config, needsSetup bool) Model {
 		downloadStates:  make(map[string]*DownloadState),
 		progressBar:     progModel,
 		cancelDownloads: make(chan struct{}),
-		sortColumn:      0,     // Default sort by Version
-		sortReversed:    true,  // Default descending sort (newest versions first)
-		blenderRunning:  "",    // No Blender running initially
-		editMode:        false, // Start in navigation mode, not edit mode
+		sortColumn:      0,                     // Default sort by Version
+		sortReversed:    true,                  // Default descending sort (newest versions first)
+		blenderRunning:  "",                    // No Blender running initially
+		editMode:        false,                 // Start in navigation mode, not edit mode
+		visibleColumns:  make(map[string]bool), // Initialize visible columns map
 	}
 
 	if needsSetup {
@@ -524,6 +611,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle window size globally (avoid duplicate handlers)
 		m.terminalWidth = msg.Width
 		m.progressBar.Width = m.terminalWidth - 4
+		// Update visible columns based on new terminal width
+		m.visibleColumns = calculateVisibleColumns(m.terminalWidth)
 		return m, nil
 	case tea.MouseMsg:
 		// Process mouse events which can help maintain focus
@@ -676,8 +765,13 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Move to previous column for sorting
 			if m.sortColumn > 0 {
 				m.sortColumn--
+				// Skip hidden columns
+				for m.sortColumn > 0 && !isColumnVisible(m.sortColumn) {
+					m.sortColumn--
+				}
 			} else {
-				m.sortColumn = 6 // Wrap to the last column
+				// Wrap to the last visible column
+				m.sortColumn = getLastVisibleColumn()
 			}
 			// Re-sort the list
 			m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
@@ -685,8 +779,12 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "right", "l":
 			// Move to next column for sorting
 			m.sortColumn++
-			if m.sortColumn > 6 { // Assuming 7 columns (0 to 6)
-				m.sortColumn = 0
+			// Skip hidden columns
+			for m.sortColumn < 7 && !isColumnVisible(m.sortColumn) {
+				m.sortColumn++
+			}
+			if m.sortColumn >= 7 {
+				m.sortColumn = 0 // Wrap to first column
 			}
 			// Re-sort the list
 			m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
@@ -1191,22 +1289,36 @@ Press f to fetch online builds, s for settings, q to quit.`
 
 	// --- Render Table ---
 	var tableBuilder strings.Builder
-	// --- Header rendering (Remove selection column from header) ---
-	headerCols := []string{
-		cellStyleCenter.Copy().Width(colWidthVersion).Render(getSortIndicator(m, 0, "Version")),
-		cellStyleCenter.Copy().Width(colWidthStatus).Render(getSortIndicator(m, 1, "Status")),
-		cellStyleCenter.Copy().Width(colWidthBranch).Render(getSortIndicator(m, 2, "Branch")),
-		cellStyleCenter.Copy().Width(colWidthType).Render(getSortIndicator(m, 3, "Type")),
-		cellStyleCenter.Copy().Width(colWidthHash).Render(getSortIndicator(m, 4, "Hash")),
-		cellStyleCenter.Copy().Width(colWidthSize).Render(getSortIndicator(m, 5, "Size")),
-		cellStyleCenter.Copy().Width(colWidthDate).Render(getSortIndicator(m, 6, "Build Date")),
+	// --- Header rendering ---
+	var headerCols []string
+	if m.visibleColumns["Version"] {
+		headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthVersion).Render(getSortIndicator(m, 0, "Version")))
 	}
+	if m.visibleColumns["Status"] {
+		headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthStatus).Render(getSortIndicator(m, 1, "Status")))
+	}
+	if m.visibleColumns["Branch"] {
+		headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthBranch).Render(getSortIndicator(m, 2, "Branch")))
+	}
+	if m.visibleColumns["Type"] {
+		headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthType).Render(getSortIndicator(m, 3, "Type")))
+	}
+	if m.visibleColumns["Hash"] {
+		headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthHash).Render(getSortIndicator(m, 4, "Hash")))
+	}
+	if m.visibleColumns["Size"] {
+		headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthSize).Render(getSortIndicator(m, 5, "Size")))
+	}
+	if m.visibleColumns["Build Date"] {
+		headerCols = append(headerCols, cellStyleCenter.Copy().Width(colWidthDate).Render(getSortIndicator(m, 6, "Build Date")))
+	}
+
 	tableBuilder.WriteString(headerStyle.Render(lp.JoinHorizontal(lp.Left, headerCols...)))
 	tableBuilder.WriteString("\n")
 	tableBuilder.WriteString(separator)
 	tableBuilder.WriteString("\n")
 
-	// --- Rows --- (Remove selection marker from rows)
+	// --- Rows ---
 	for i, build := range m.builds {
 		downloadState, isDownloadingThis := m.downloadStates[build.Version]
 
@@ -1233,9 +1345,11 @@ Press f to fetch online builds, s for settings, q to quit.`
 
 			// Create a wider progress bar
 			m.progressBar.Width = combinedWidth
+
+			// Get the progress bar output (just the plain white bar without percentage)
 			progressBarOutput := m.progressBar.ViewAs(downloadState.Progress)
 
-			// Create a wider cell that spans both size and date columns
+			// Create a wider cell that spans columns
 			combinedCell := lp.NewStyle().Width(combinedWidth).Render(progressBarOutput)
 
 			// Display different content based on download state
@@ -1247,13 +1361,24 @@ Press f to fetch online builds, s for settings, q to quit.`
 			hashCell := cellStyleCenter.Copy().Width(colWidthHash).Render(hashText)
 
 			// First render the individual cells
-			specialRowCols := []string{
-				versionCell,
-				statusCell,
-				cellStyleCenter.Copy().Width(colWidthBranch).Render(util.TruncateString(build.Branch, colWidthBranch)),
-				cellStyleCenter.Copy().Width(colWidthType).Render(util.TruncateString(build.ReleaseCycle, colWidthType)),
-				hashCell,
-				combinedCell, // This cell spans both size and date columns
+			var specialRowCols []string
+			if m.visibleColumns["Version"] {
+				specialRowCols = append(specialRowCols, versionCell)
+			}
+			if m.visibleColumns["Status"] {
+				specialRowCols = append(specialRowCols, statusCell)
+			}
+			if m.visibleColumns["Branch"] {
+				specialRowCols = append(specialRowCols, cellStyleCenter.Copy().Width(colWidthBranch).Render(util.TruncateString(build.Branch, colWidthBranch)))
+			}
+			if m.visibleColumns["Type"] {
+				specialRowCols = append(specialRowCols, cellStyleCenter.Copy().Width(colWidthType).Render(util.TruncateString(build.ReleaseCycle, colWidthType)))
+			}
+			if m.visibleColumns["Hash"] {
+				specialRowCols = append(specialRowCols, hashCell)
+			}
+			if m.visibleColumns["Size"] || m.visibleColumns["Build Date"] {
+				specialRowCols = append(specialRowCols, combinedCell)
 			}
 
 			// Join cells into a single row
@@ -1290,45 +1415,57 @@ Press f to fetch online builds, s for settings, q to quit.`
 			dateContent := build.BuildDate.Time().Format("2006-01-02 15:04")
 
 			// Apply selection background style to each cell's content
-			versionCellSelected := selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthVersion).Render(versionContent)
-
-			// Apply selection background + appropriate text color to status cell
-			statusCellSelected := selectedRowStyle.Copy().
-				Inherit(cellStyleCenter).
-				Width(colWidthStatus).
-				Foreground(statusTextStyle.GetForeground()).
-				Render(statusContent)
-
-			branchCellSelected := selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthBranch).Render(branchContent)
-			typeCellSelected := selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthType).Render(typeContent)
-			hashCellSelected := selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthHash).Render(hashContent)
-			sizeCellSelected := selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthSize).Render(sizeContent)
-			dateCellSelected := selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthDate).Render(dateContent)
+			var rowCols []string
+			if m.visibleColumns["Version"] {
+				rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthVersion).Render(versionContent))
+			}
+			if m.visibleColumns["Status"] {
+				rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthStatus).Foreground(statusTextStyle.GetForeground()).Render(statusContent))
+			}
+			if m.visibleColumns["Branch"] {
+				rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthBranch).Render(branchContent))
+			}
+			if m.visibleColumns["Type"] {
+				rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthType).Render(typeContent))
+			}
+			if m.visibleColumns["Hash"] {
+				rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthHash).Render(hashContent))
+			}
+			if m.visibleColumns["Size"] {
+				rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthSize).Render(sizeContent))
+			}
+			if m.visibleColumns["Build Date"] {
+				rowCols = append(rowCols, selectedRowStyle.Copy().Inherit(cellStyleCenter).Width(colWidthDate).Render(dateContent))
+			}
 
 			// Join all highlighted cells into a row
-			rowSelected := lp.JoinHorizontal(lp.Left,
-				versionCellSelected,
-				statusCellSelected,
-				branchCellSelected,
-				typeCellSelected,
-				hashCellSelected,
-				sizeCellSelected,
-				dateCellSelected,
-			)
-
+			rowSelected := lp.JoinHorizontal(lp.Left, rowCols...)
 			tableBuilder.WriteString(rowSelected)
 		} else {
 			// For unselected rows, we can use the original cell rendering
 			statusCell := statusTextStyle.Copy().Inherit(cellStyleCenter).Width(colWidthStatus).Render(util.TruncateString(build.Status, colWidthStatus))
 
-			rowCols := []string{
-				versionCell,
-				statusCell,
-				cellStyleCenter.Copy().Width(colWidthBranch).Render(util.TruncateString(build.Branch, colWidthBranch)),
-				cellStyleCenter.Copy().Width(colWidthType).Render(util.TruncateString(build.ReleaseCycle, colWidthType)),
-				cellStyleCenter.Copy().Width(colWidthHash).Render(util.TruncateString(build.Hash, colWidthHash)),
-				cellStyleCenter.Copy().Width(colWidthSize).Render(util.FormatSize(build.Size)),
-				cellStyleCenter.Copy().Width(colWidthDate).Render(build.BuildDate.Time().Format("2006-01-02 15:04")),
+			var rowCols []string
+			if m.visibleColumns["Version"] {
+				rowCols = append(rowCols, versionCell)
+			}
+			if m.visibleColumns["Status"] {
+				rowCols = append(rowCols, statusCell)
+			}
+			if m.visibleColumns["Branch"] {
+				rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthBranch).Render(util.TruncateString(build.Branch, colWidthBranch)))
+			}
+			if m.visibleColumns["Type"] {
+				rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthType).Render(util.TruncateString(build.ReleaseCycle, colWidthType)))
+			}
+			if m.visibleColumns["Hash"] {
+				rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthHash).Render(util.TruncateString(build.Hash, colWidthHash)))
+			}
+			if m.visibleColumns["Size"] {
+				rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthSize).Render(util.FormatSize(build.Size)))
+			}
+			if m.visibleColumns["Build Date"] {
+				rowCols = append(rowCols, cellStyleCenter.Copy().Width(colWidthDate).Render(build.BuildDate.Time().Format("2006-01-02 15:04")))
 			}
 
 			rowContent := lp.JoinHorizontal(lp.Left, rowCols...)
@@ -1357,17 +1494,27 @@ Press f to fetch online builds, s for settings, q to quit.`
 	}
 	footerKeybinds3 := "←→:Column  R:Reverse"
 	keybindSeparator := "│"
-	footerKeys := fmt.Sprintf("%s  %s  %s  %s  %s", footerKeybinds1, keybindSeparator, footerKeybinds2, keybindSeparator, footerKeybinds3)
 
-	// Create colored status indicators for the legend
-	// localStatus := lp.NewStyle().Foreground(lp.Color(colorSuccess)).Render("■ Local")
-	// updateStatus := lp.NewStyle().Foreground(lp.Color(colorInfo)).Render("■ Update Available")
-	// onlineStatus := lp.NewStyle().Foreground(lp.Color(colorNeutral)).Render("■ Online")
+	// Calculate total width needed for the footer
+	totalWidth := len(footerKeybinds1) + len(keybindSeparator) + len(footerKeybinds2) + len(keybindSeparator) + len(footerKeybinds3)
 
-	// footerLegend := fmt.Sprintf("%s   %s   %s   ↑↓ Sort Direction", localStatus, updateStatus, onlineStatus)
-	viewBuilder.WriteString(footerStyle.Render(footerKeys))
-	// viewBuilder.WriteString("\n")
-	// viewBuilder.WriteString(footerStyle.Render(footerLegend))
+	// If the total width is greater than the terminal width, wrap the footer
+	if totalWidth > m.terminalWidth {
+		// First line: Launch controls
+		viewBuilder.WriteString(footerStyle.Render(footerKeybinds1))
+		viewBuilder.WriteString("\n")
+
+		// Second line: Fetch and cleanup controls
+		viewBuilder.WriteString(footerStyle.Render(footerKeybinds2))
+		viewBuilder.WriteString("\n")
+
+		// Third line: Column navigation
+		viewBuilder.WriteString(footerStyle.Render(footerKeybinds3))
+	} else {
+		// Single line footer with separators
+		footerKeys := fmt.Sprintf("%s  %s  %s  %s  %s", footerKeybinds1, keybindSeparator, footerKeybinds2, keybindSeparator, footerKeybinds3)
+		viewBuilder.WriteString(footerStyle.Render(footerKeys))
+	}
 
 	return viewBuilder.String()
 }
@@ -1571,4 +1718,36 @@ func saveSettings(m Model) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// Helper function to check if a column is visible
+func isColumnVisible(column int) bool {
+	switch column {
+	case 0:
+		return true // Version is always visible
+	case 1:
+		return true // Status is always visible
+	case 2:
+		return columnConfigs["Branch"].visible
+	case 3:
+		return columnConfigs["Type"].visible
+	case 4:
+		return columnConfigs["Hash"].visible
+	case 5:
+		return columnConfigs["Size"].visible
+	case 6:
+		return columnConfigs["Build Date"].visible
+	default:
+		return false
+	}
+}
+
+// Helper function to get the last visible column index
+func getLastVisibleColumn() int {
+	for i := 6; i >= 0; i-- {
+		if isColumnVisible(i) {
+			return i
+		}
+	}
+	return 0 // Fallback to first column (should never happen as Version is always visible)
 }
