@@ -34,6 +34,13 @@ func (t *Timestamp) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// MarshalJSON implements the json.Marshaler interface for Timestamp.
+// This ensures the timestamp is properly saved in version.json as RFC3339 formatted string.
+func (t Timestamp) MarshalJSON() ([]byte, error) {
+	// Convert to RFC3339 string format for consistent serialization
+	return json.Marshal(time.Time(t).Format(time.RFC3339))
+}
+
 // Time returns the underlying time.Time value.
 // This provides convenience for using the value as a standard time.Time.
 func (t Timestamp) Time() time.Time {

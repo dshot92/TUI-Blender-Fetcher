@@ -31,6 +31,7 @@ const (
 	viewInitialSetup
 	viewSettings
 	viewDeleteConfirm  // New state for delete confirmation
+	viewCleanupConfirm // Confirmation for cleaning up old builds
 )
 
 // Define messages for communication between components
@@ -51,6 +52,14 @@ type downloadCompleteMsg struct { // Download & extraction finished
 	buildVersion  string // Version of the build that finished
 	extractedPath string
 	err           error
+}
+type oldBuildsInfo struct { // Information about old builds
+	count int
+	size  int64
+	err   error
+}
+type cleanupOldBuildsMsg struct { // Result of cleaning up old builds
+	err error
 }
 type errMsg struct{ err error }
 type downloadProgressMsg struct { // Reports download progress
@@ -86,6 +95,10 @@ type Model struct {
 	buildToDelete  string         // Store version of build to delete for confirmation
 	blenderRunning string         // Version of Blender currently running, empty if none
 	
+	// Old builds information
+	oldBuildsCount int  // Number of old builds
+	oldBuildsSize  int64 // Size of old builds in bytes
+	
 	// Sorting state
 	sortColumn    int // Which column index is being sorted
 	sortReversed  bool // Whether sorting is reversed
@@ -93,6 +106,7 @@ type Model struct {
 	// Settings/Setup specific state
 	settingsInputs []textinput.Model
 	focusIndex     int
+	editMode       bool // Whether we're in edit mode in settings
 	terminalWidth  int // Store terminal width
 }
 
@@ -148,8 +162,9 @@ func InitialModel(cfg config.Config, needsSetup bool) Model {
 		progressBar:    progModel,
 		cancelDownloads: make(chan struct{}),
 		sortColumn:     0, // Default sort by Version
-		sortReversed:   false, // Default ascending sort
+		sortReversed:   true, // Default descending sort (newest versions first)
 		blenderRunning: "", // No Blender running initially
+		editMode:       false, // Start in navigation mode, not edit mode
 	}
 
 	if needsSetup {
@@ -210,21 +225,33 @@ func scanLocalBuildsCmd(cfg config.Config) tea.Cmd {
 // Command to re-scan local builds and update status of the provided (online) list
 func updateStatusFromLocalScanCmd(onlineBuilds []model.BlenderBuild, cfg config.Config) tea.Cmd {
 	return func() tea.Msg {
-		localMap, err := local.BuildLocalLookupMap(cfg.DownloadDir)
+		// Get all local builds - use full scan to compare hash values 
+		localBuilds, err := local.ScanLocalBuilds(cfg.DownloadDir)
 		if err != nil {
-			// Propagate error if scanning for map fails
+			// Propagate error if scanning fails
 			return errMsg{fmt.Errorf("failed local scan during status update: %w", err)}
+		}
+
+		// Create a map of local builds by version for easy lookup
+		localBuildMap := make(map[string]model.BlenderBuild)
+		for _, build := range localBuilds {
+			localBuildMap[build.Version] = build
 		}
 
 		updatedBuilds := make([]model.BlenderBuild, len(onlineBuilds))
 		copy(updatedBuilds, onlineBuilds) // Work on a copy
 
 		for i := range updatedBuilds {
-			if _, found := localMap[updatedBuilds[i].Version]; found {
-				// TODO: Add check for update available later
-				updatedBuilds[i].Status = "Local"
+			if localBuild, found := localBuildMap[updatedBuilds[i].Version]; found {
+				// We found a matching version locally
+				if local.CheckUpdateAvailable(localBuild, updatedBuilds[i]) {
+					// Using our new function to check if update is available based on build date
+					updatedBuilds[i].Status = "Update"
+				} else {
+					updatedBuilds[i].Status = "Local"
+				}
 			} else {
-				updatedBuilds[i].Status = "Online" // Ensure others are marked Online
+				updatedBuilds[i].Status = "Online" // Not installed
 			}
 		}
 		return buildsUpdatedMsg{builds: updatedBuilds}
@@ -368,17 +395,30 @@ func (m Model) Init() tea.Cmd {
 	// A dedicated message might be cleaner if issues arise.
 	// NOTE: This won't work as Program is not passed here. Alternative needed.
 	// We'll set it in Update on the first FrameMsg instead.
+	var cmds []tea.Cmd
+	
 	if m.currentView == viewList {
-		return scanLocalBuildsCmd(m.config)
+		cmds = append(cmds, scanLocalBuildsCmd(m.config))
+		// Get info about old builds
+		cmds = append(cmds, getOldBuildsInfoCmd(m.config))
 	}
 	if m.currentView == viewInitialSetup && len(m.settingsInputs) > 0 {
-		return textinput.Blink
+		cmds = append(cmds, textinput.Blink)
+	}
+	
+	if len(cmds) > 0 {
+		return tea.Batch(cmds...)
 	}
 	return nil
 }
 
 // Helper to update focused input
 func (m *Model) updateInputs(msg tea.Msg) tea.Cmd {
+	// Make sure we have inputs to update
+	if len(m.settingsInputs) == 0 {
+		return nil
+	}
+	
 	var cmds []tea.Cmd
 	for i := range m.settingsInputs {
 		m.settingsInputs[i], cmds[i] = m.settingsInputs[i].Update(msg)
@@ -419,59 +459,97 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
 			s := msg.String()
-			switch s {
-			case "tab", "shift+tab", "up", "down":
-				// Change focus
-				oldFocus := m.focusIndex
-				if s == "up" || s == "shift+tab" {
-					m.focusIndex--
-				} else {
-					m.focusIndex++
-				}
-				// Wrap focus
-				if m.focusIndex > len(m.settingsInputs)-1 {
-					m.focusIndex = 0
-				} else if m.focusIndex < 0 {
-					m.focusIndex = len(m.settingsInputs) - 1
-				}
-				// Update focus state on inputs
-				for i := 0; i < len(m.settingsInputs); i++ {
-					if i == m.focusIndex {
-						m.settingsInputs[i].Focus()
-						m.settingsInputs[i].PromptStyle = selectedRowStyle // Use a style to indicate focus
-					} else {
-						m.settingsInputs[i].Blur()
-						m.settingsInputs[i].PromptStyle = regularRowStyle
+			if m.editMode {
+				// In edit mode - handle exiting edit mode and input-specific keys
+				switch s {
+				case "enter":
+					// Toggle out of edit mode
+					m.editMode = false
+					// Blur the current input
+					if m.focusIndex >= 0 && m.focusIndex < len(m.settingsInputs) {
+						m.settingsInputs[m.focusIndex].Blur()
 					}
+					return m, nil
+				case "esc", "escape":
+					// Also exit edit mode with Escape
+					m.editMode = false
+					// Blur the current input
+					if m.focusIndex >= 0 && m.focusIndex < len(m.settingsInputs) {
+						m.settingsInputs[m.focusIndex].Blur()
+					}
+					return m, nil
+				default:
+					// Pass other keys to the focused input
+					if m.focusIndex >= 0 && m.focusIndex < len(m.settingsInputs) {
+						m.settingsInputs[m.focusIndex], cmd = m.settingsInputs[m.focusIndex].Update(msg)
+					}
+					return m, cmd
 				}
-				// If the focus actually changed, update the prompt style of the old one too
-				if oldFocus != m.focusIndex && oldFocus >= 0 && oldFocus < len(m.settingsInputs) {
-					m.settingsInputs[oldFocus].PromptStyle = regularRowStyle
+			} else {
+				// In navigation mode - handle navigation and entering edit mode
+				switch s {
+				case "h", "left":
+					// Exit settings and go back to list view
+					m.currentView = viewList
+					return m, nil
+				case "j", "down":
+					// Move focus down
+					oldFocus := m.focusIndex
+					m.focusIndex++
+					if m.focusIndex >= len(m.settingsInputs) {
+						m.focusIndex = 0
+					}
+					updateFocusStyles(&m, oldFocus)
+					return m, nil
+				case "k", "up":
+					// Move focus up
+					oldFocus := m.focusIndex
+					m.focusIndex--
+					if m.focusIndex < 0 {
+						m.focusIndex = len(m.settingsInputs) - 1
+					}
+					updateFocusStyles(&m, oldFocus)
+					return m, nil
+				case "tab":
+					// Tab navigates between inputs
+					oldFocus := m.focusIndex
+					m.focusIndex++
+					if m.focusIndex >= len(m.settingsInputs) {
+						m.focusIndex = 0
+					}
+					updateFocusStyles(&m, oldFocus)
+					return m, nil
+				case "shift+tab":
+					// Shift+Tab navigates backwards
+					oldFocus := m.focusIndex
+					m.focusIndex--
+					if m.focusIndex < 0 {
+						m.focusIndex = len(m.settingsInputs) - 1
+					}
+					updateFocusStyles(&m, oldFocus)
+					return m, nil
+				case "enter":
+					// Enter edit mode
+					m.editMode = true
+					if m.focusIndex >= 0 && m.focusIndex < len(m.settingsInputs) {
+						m.settingsInputs[m.focusIndex].Focus()
+					}
+					return m, textinput.Blink
+				case "s", "S":
+					// Save settings
+					return saveSettings(m)
 				}
 				return m, nil
-
-			case "enter":
-				// Save settings
-				m.config.DownloadDir = m.settingsInputs[0].Value()
-				m.config.VersionFilter = m.settingsInputs[1].Value()
-				err := config.SaveConfig(m.config)
-				if err != nil {
-					m.err = fmt.Errorf("failed to save config: %w", err)
-				} else {
-					m.err = nil
-					m.currentView = viewList
-					// If list is empty, trigger initial local scan now
-					if len(m.builds) == 0 {
-						m.isLoading = true
-						cmd = scanLocalBuildsCmd(m.config)
-					}
-				}
-				return m, cmd
 			}
 		}
-		// Pass the message to the focused input
-		currentFocus := m.focusIndex
-		m.settingsInputs[currentFocus], cmd = m.settingsInputs[currentFocus].Update(msg)
+		
+		// Only pass message to the focused input if in edit mode
+		if m.editMode {
+			currentFocus := m.focusIndex
+			if len(m.settingsInputs) > 0 && currentFocus >= 0 && currentFocus < len(m.settingsInputs) {
+				m.settingsInputs[currentFocus], cmd = m.settingsInputs[currentFocus].Update(msg)
+			}
+		}
 		return m, cmd
 
 	case viewList:
@@ -539,8 +617,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Start download of the selected build
 				if len(m.builds) > 0 && m.cursor < len(m.builds) {
 					selectedBuild := m.builds[m.cursor]
-					// Only download Online builds (skip Local and currently Downloading)
-					if selectedBuild.Status == "Online" {
+					// Allow downloading both Online builds and Updates
+					if selectedBuild.Status == "Online" || selectedBuild.Status == "Update" {
 						// Update status to avoid duplicate downloads
 						selectedBuild.Status = "Preparing..."
 						m.builds[m.cursor] = selectedBuild
@@ -558,22 +636,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "s", "S":
 				// Show settings
 				m.currentView = viewSettings
-				// Initialization for settings inputs
+				m.editMode = false // Ensure we start in navigation mode
+				
+				// Initialize settings inputs if not already done
+				if len(m.settingsInputs) == 0 {
+					m.settingsInputs = make([]textinput.Model, 2)
+					
+					// Download Dir input
+					var t textinput.Model
+					t = textinput.New()
+					t.Placeholder = m.config.DownloadDir
+					t.CharLimit = 256
+					t.Width = 50
+					m.settingsInputs[0] = t
+					
+					// Version Filter input
+					t = textinput.New()
+					t.Placeholder = "e.g., 4.0, 3.6 (leave empty for none)"
+					t.CharLimit = 10
+					t.Width = 50
+					m.settingsInputs[1] = t
+				}
+				
 				// Copy current config values
 				m.settingsInputs[0].SetValue(m.config.DownloadDir)
 				m.settingsInputs[1].SetValue(m.config.VersionFilter)
-				// Focus first input
+				
+				// Focus first input (but don't focus for editing yet)
 				m.focusIndex = 0
-				for i := range m.settingsInputs {
-					if i == m.focusIndex {
-						m.settingsInputs[i].Focus()
-						m.settingsInputs[i].PromptStyle = selectedRowStyle
-					} else {
-						m.settingsInputs[i].Blur()
-						m.settingsInputs[i].PromptStyle = regularRowStyle
-					}
-				}
-				return m, textinput.Blink
+				updateFocusStyles(&m, -1)
+				
+				return m, nil
 			case "f", "F":
 				// Fetch from Builder API
 				m.isLoading = true
@@ -588,6 +681,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.currentView = viewDeleteConfirm
 						return m, nil
 					}
+				}
+				return m, nil
+			case "c", "C":
+				// Clean up old builds
+				if m.oldBuildsCount > 0 {
+					// Prompt for confirmation
+					m.currentView = viewCleanupConfirm
+					return m, nil
 				}
 				return m, nil
 			}
@@ -761,7 +862,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case downloadCompleteMsg:
 			// Just trigger a refresh of local files
 			cmd = scanLocalBuildsCmd(m.config)
-			return m, cmd
+			// Also refresh old builds info after download completes
+			return m, tea.Batch(cmd, getOldBuildsInfoCmd(m.config))
+			
+		case oldBuildsInfo:
+			m.oldBuildsCount = msg.count
+			m.oldBuildsSize = msg.size
+			if msg.err != nil {
+				m.err = msg.err
+			}
+			return m, nil
+			
+		case cleanupOldBuildsMsg:
+			if msg.err != nil {
+				m.err = msg.err
+			} else {
+				m.oldBuildsCount = 0
+				m.oldBuildsSize = 0
+			}
+			m.currentView = viewList
+			return m, nil
 		}
 	case viewDeleteConfirm:
 		switch msg := msg.(type) {
@@ -796,11 +916,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
+	case viewCleanupConfirm:
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "y", "Y":
+				// User confirmed cleanup
+				m.currentView = viewList
+				return m, cleanupOldBuildsCmd(m.config)
+				
+			case "n", "N", "esc", "escape":
+				// User cancelled cleanup
+				m.currentView = viewList
+				return m, nil
+			}
+		}
 	}
-	// Pass message to inputs if in settings view
-	if m.currentView == viewInitialSetup || m.currentView == viewSettings {
+	// Pass message to inputs if in settings view and in edit mode
+	if (m.currentView == viewInitialSetup || m.currentView == viewSettings) && m.editMode {
 		currentFocus := m.focusIndex
-		m.settingsInputs[currentFocus], cmd = m.settingsInputs[currentFocus].Update(msg)
+		if len(m.settingsInputs) > 0 && currentFocus >= 0 && currentFocus < len(m.settingsInputs) {
+			m.settingsInputs[currentFocus], cmd = m.settingsInputs[currentFocus].Update(msg)
+		}
 		return m, cmd
 	}
 	return m, cmd
@@ -831,13 +968,45 @@ func (m Model) View() string {
 		}
 		viewBuilder.WriteString(fmt.Sprintf("%s\n\n", title))
 		viewBuilder.WriteString("Download Directory:\n")
-		viewBuilder.WriteString(m.settingsInputs[0].View() + "\n\n")
-		viewBuilder.WriteString("Minimum Blender Version Filter (e.g., 4.0, 3.6 - empty for none):\n")
-		viewBuilder.WriteString(m.settingsInputs[1].View() + "\n\n")
+		
+		// Only render inputs if they exist
+		if len(m.settingsInputs) >= 2 {
+			viewBuilder.WriteString(m.settingsInputs[0].View() + "\n\n")
+			viewBuilder.WriteString("Minimum Blender Version Filter (e.g., 4.0, 3.6 - empty for none):\n")
+			viewBuilder.WriteString(m.settingsInputs[1].View() + "\n\n")
+		} else {
+			// Fallback if inputs aren't initialized
+			viewBuilder.WriteString(m.config.DownloadDir + "\n\n")
+			viewBuilder.WriteString("Minimum Blender Version Filter (e.g., 4.0, 3.6 - empty for none):\n")
+			viewBuilder.WriteString(m.config.VersionFilter + "\n\n")
+		}
+		
 		if m.err != nil {
 			viewBuilder.WriteString(lp.NewStyle().Foreground(lp.Color("9")).Render(fmt.Sprintf("Error: %v\n\n", m.err)))
 		}
-		viewBuilder.WriteString(footerStyle.Render("Tab/Shift+Tab: Change field | Enter: Save | q/Ctrl+C: Quit"))
+		
+		// Show different help text based on current mode
+		var helpText string
+		if m.editMode {
+			helpText = "Enter: Save Edits | Esc: Cancel Edit | Tab: Next Field"
+			// Add a visual indicator that edit mode is active
+			modeIndicator := lp.NewStyle().
+				Background(lp.Color("11")).
+				Foreground(lp.Color("0")).
+				Padding(0, 1).
+				Render(" EDIT MODE ")
+			viewBuilder.WriteString(modeIndicator + "\n\n")
+		} else {
+			helpText = "Enter: Edit Field | h: Back | j/k: Navigate | s: Save Settings"
+			// Add a visual indicator that navigation mode is active
+			modeIndicator := lp.NewStyle().
+				Background(lp.Color("12")).
+				Foreground(lp.Color("0")).
+				Padding(0, 1).
+				Render(" NAVIGATION MODE ")
+			viewBuilder.WriteString(modeIndicator + "\n\n")
+		}
+		viewBuilder.WriteString(footerStyle.Render(helpText))
 
 	case viewList:
 		loadingMsg := ""
@@ -893,6 +1062,8 @@ Press f to fetch online builds, s for settings, q to quit.`
 			// --- Adjust cells based on status (Apply alignment within style) ---
 			if build.Status == "Local" {
 				statusTextStyle = lp.NewStyle().Foreground(lp.Color("10"))
+			} else if build.Status == "Update" {
+				statusTextStyle = lp.NewStyle().Foreground(lp.Color("12")) // Light blue for updates
 			} else if strings.HasPrefix(build.Status, "Failed") {
 				statusTextStyle = lp.NewStyle().Foreground(lp.Color("9"))
 			}
@@ -986,10 +1157,19 @@ Press f to fetch online builds, s for settings, q to quit.`
 		// ... Footer rendering ...
 		footerKeybinds1 := "Enter:Launch  D:Download  O:Open Dir  X:Delete"
 		footerKeybinds2 := "F:Fetch  R:Reverse  S:Settings  Q:Quit"
+		if m.oldBuildsCount > 0 {
+			footerKeybinds2 = fmt.Sprintf("F:Fetch  C:Cleanup(%d)  S:Settings  Q:Quit", m.oldBuildsCount)
+		}
 		footerKeybinds3 := "←→:Column  R:Reverse"
 		keybindSeparator := "│"
 		footerKeys := fmt.Sprintf("%s  %s  %s  %s  %s", footerKeybinds1, keybindSeparator, footerKeybinds2, keybindSeparator, footerKeybinds3)
-		footerLegend := "■ Local Version   ■ Update Available   ↑↓ Sort Direction"
+		
+		// Create colored status indicators for the legend
+		localStatus := lp.NewStyle().Foreground(lp.Color("10")).Render("■ Local")
+		updateStatus := lp.NewStyle().Foreground(lp.Color("12")).Render("■ Update Available")
+		onlineStatus := lp.NewStyle().Foreground(lp.Color("15")).Render("■ Online")
+		
+		footerLegend := fmt.Sprintf("%s   %s   %s   ↑↓ Sort Direction", localStatus, updateStatus, onlineStatus)
 		viewBuilder.WriteString(footerStyle.Render(footerKeys))
 		viewBuilder.WriteString("\n")
 		viewBuilder.WriteString(footerStyle.Render(footerLegend))
@@ -1030,6 +1210,48 @@ Press f to fetch online builds, s for settings, q to quit.`
 			Bold(true)
 			
 		contentBuilder.WriteString(yesStyle.Render("[Y] Yes, delete it") + "    ")
+		contentBuilder.WriteString(noStyle.Render("[N] No, cancel"))
+		
+		// Combine everything in the box
+		confirmBox := boxStyle.Width(confirmWidth).Render(contentBuilder.String())
+		
+		// Center the box in the terminal
+		viewBuilder.WriteString("\n\n") // Add some top spacing
+		viewBuilder.WriteString(lp.Place(m.terminalWidth, 20,
+			lp.Center, lp.Center,
+			confirmBox))
+		viewBuilder.WriteString("\n\n")
+	case viewCleanupConfirm:
+		// Styled confirmation dialog with box border
+		confirmWidth := 60
+		
+		// Create a styled border box
+		boxStyle := lp.NewStyle().
+			BorderStyle(lp.RoundedBorder()).
+			BorderForeground(lp.Color("11")). // Yellow border
+			Padding(1, 2)
+		
+		// Title with warning styling
+		titleStyle := lp.NewStyle().
+			Foreground(lp.Color("11")). // Yellow text
+			Bold(true)
+		
+		// Create the content
+		var contentBuilder strings.Builder
+		contentBuilder.WriteString(titleStyle.Render("Confirm Cleanup") + "\n\n")
+		contentBuilder.WriteString(fmt.Sprintf("Are you sure you want to clean up %d old builds?\n", m.oldBuildsCount))
+		contentBuilder.WriteString(fmt.Sprintf("This will free up %s of disk space.\n\n", util.FormatSize(m.oldBuildsSize)))
+		contentBuilder.WriteString("All backed up builds in the .oldbuilds directory will be permanently deleted.\n\n")
+		
+		// Button styling
+		yesStyle := lp.NewStyle().
+			Foreground(lp.Color("9")). // Red for delete
+			Bold(true)
+		noStyle := lp.NewStyle().
+			Foreground(lp.Color("10")). // Green for cancel
+			Bold(true)
+			
+		contentBuilder.WriteString(yesStyle.Render("[Y] Yes, delete them") + "    ")
 		contentBuilder.WriteString(noStyle.Render("[N] No, cancel"))
 		
 		// Combine everything in the box
@@ -1146,4 +1368,56 @@ func getSortIndicator(m Model, column int, title string) string {
 		}
 	}
 	return title
+}
+
+// Command to get info about old builds
+func getOldBuildsInfoCmd(cfg config.Config) tea.Cmd {
+	return func() tea.Msg {
+		count, size, err := local.GetOldBuildsInfo(cfg.DownloadDir)
+		return oldBuildsInfo{
+			count: count,
+			size:  size,
+			err:   err,
+		}
+	}
+}
+
+// Command to clean up old builds
+func cleanupOldBuildsCmd(cfg config.Config) tea.Cmd {
+	return func() tea.Msg {
+		err := local.DeleteAllOldBuilds(cfg.DownloadDir)
+		return cleanupOldBuildsMsg{err: err}
+	}
+}
+
+// Helper function to update focus styling for settings inputs
+func updateFocusStyles(m *Model, oldFocus int) {
+	// Update the prompt style of all inputs
+	for i := 0; i < len(m.settingsInputs); i++ {
+		if i == m.focusIndex {
+			// Just update the style, don't focus in navigation mode
+			m.settingsInputs[i].PromptStyle = selectedRowStyle
+		} else {
+			m.settingsInputs[i].PromptStyle = regularRowStyle
+		}
+	}
+}
+
+// Helper function to save settings
+func saveSettings(m Model) (tea.Model, tea.Cmd) {
+	m.config.DownloadDir = m.settingsInputs[0].Value()
+	m.config.VersionFilter = m.settingsInputs[1].Value()
+	err := config.SaveConfig(m.config)
+	if err != nil {
+		m.err = fmt.Errorf("failed to save config: %w", err)
+	} else {
+		m.err = nil
+		m.currentView = viewList
+		// If list is empty, trigger initial local scan now
+		if len(m.builds) == 0 {
+			m.isLoading = true
+			return m, scanLocalBuildsCmd(m.config)
+		}
+	}
+	return m, nil
 }

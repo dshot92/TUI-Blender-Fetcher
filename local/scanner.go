@@ -75,7 +75,8 @@ func ScanLocalBuilds(downloadDir string) ([]model.BlenderBuild, error) {
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != ".downloading" { // Skip temp download dir
+		// Skip temp download dir and oldbuilds dir
+		if entry.IsDir() && entry.Name() != ".downloading" && entry.Name() != ".oldbuilds" {
 			dirPath := filepath.Join(downloadDir, entry.Name())
 			buildInfo, err := readBuildInfo(dirPath)
 			if err != nil {
@@ -110,7 +111,8 @@ func BuildLocalLookupMap(downloadDir string) (map[string]bool, error) {
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != ".downloading" {
+		// Skip temp download dir and oldbuilds dir
+		if entry.IsDir() && entry.Name() != ".downloading" && entry.Name() != ".oldbuilds" {
 			dirPath := filepath.Join(downloadDir, entry.Name())
 			buildInfo, err := readBuildInfo(dirPath)
 			if err != nil {
@@ -274,4 +276,101 @@ func openFileExplorer(dir string) error {
 	}
 	
 	return cmd.Start()
+}
+
+// DeleteAllOldBuilds removes all contents of the .oldbuilds directory
+func DeleteAllOldBuilds(downloadDir string) error {
+	oldBuildsDir := filepath.Join(downloadDir, ".oldbuilds")
+	
+	// Check if the directory exists first
+	if _, err := os.Stat(oldBuildsDir); os.IsNotExist(err) {
+		// Directory doesn't exist, nothing to do
+		return nil
+	}
+	
+	// Remove all contents of the .oldbuilds directory
+	entries, err := os.ReadDir(oldBuildsDir)
+	if err != nil {
+		return fmt.Errorf("failed to read .oldbuilds directory: %w", err)
+	}
+	
+	for _, entry := range entries {
+		entryPath := filepath.Join(oldBuildsDir, entry.Name())
+		if err := os.RemoveAll(entryPath); err != nil {
+			return fmt.Errorf("failed to remove old build %s: %w", entry.Name(), err)
+		}
+	}
+	
+	return nil
+}
+
+// GetOldBuildsInfo returns information about backed up builds
+func GetOldBuildsInfo(downloadDir string) (int, int64, error) {
+	oldBuildsDir := filepath.Join(downloadDir, ".oldbuilds")
+	
+	// Check if the directory exists first
+	if _, err := os.Stat(oldBuildsDir); os.IsNotExist(err) {
+		// Directory doesn't exist
+		return 0, 0, nil
+	}
+	
+	// Get list of old builds
+	entries, err := os.ReadDir(oldBuildsDir)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to read .oldbuilds directory: %w", err)
+	}
+	
+	count := len(entries)
+	var totalSize int64 = 0
+	
+	// Calculate total size
+	for _, entry := range entries {
+		entryPath := filepath.Join(oldBuildsDir, entry.Name())
+		size, err := getDirSize(entryPath)
+		if err != nil {
+			// Just log the error but continue
+			fmt.Fprintf(os.Stderr, "Error calculating size of %s: %v\n", entryPath, err)
+			continue
+		}
+		totalSize += size
+	}
+	
+	return count, totalSize, nil
+}
+
+// Helper function to calculate directory size
+func getDirSize(path string) (int64, error) {
+	var size int64
+	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size, err
+}
+
+// CheckUpdateAvailable determines if there's an update available for a local build
+// by comparing the build dates of local and online versions.
+func CheckUpdateAvailable(localBuild, onlineBuild model.BlenderBuild) bool {
+	// If versions don't match, this is not an update for this build
+	if localBuild.Version != onlineBuild.Version {
+		return false
+	}
+	
+	// If local build has no build date, consider it outdated
+	if localBuild.BuildDate.Time().IsZero() {
+		return true
+	}
+	
+	// If online build has no build date, don't consider it an update
+	if onlineBuild.BuildDate.Time().IsZero() {
+		return false
+	}
+	
+	// Compare build dates - if online is newer, an update is available
+	return onlineBuild.BuildDate.Time().After(localBuild.BuildDate.Time())
 }

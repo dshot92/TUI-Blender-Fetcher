@@ -375,6 +375,12 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 // saveVersionMetadata saves the build info as version.json inside the extracted directory.
 func saveVersionMetadata(build model.BlenderBuild, extractedDir string) error {
 	metaPath := filepath.Join(extractedDir, versionMetaFilename)
+	
+	// Ensure the build date is set to current time if it's missing or zero
+	if build.BuildDate.Time().IsZero() {
+		build.BuildDate = model.Timestamp(time.Now())
+	}
+	
 	jsonData, err := json.MarshalIndent(build, "", "  ") // Pretty print JSON
 	if err != nil {
 		return fmt.Errorf("failed to marshal build metadata: %w", err)
@@ -414,10 +420,27 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 	extractedDirName := baseNameWithoutExt
 	extractedPath := filepath.Join(downloadBaseDir, extractedDirName)
 
-	// If directory already exists, remove it
+	// If directory already exists, move it to .oldbuild directory instead of deleting
 	if _, err := os.Stat(extractedPath); err == nil {
-		if err := os.RemoveAll(extractedPath); err != nil {
-			return "", fmt.Errorf("failed to remove existing target directory %s: %w", extractedPath, err)
+		// Create .oldbuild parent directory if it doesn't exist
+		oldBuildsDir := filepath.Join(downloadBaseDir, ".oldbuilds")
+		if err := os.MkdirAll(oldBuildsDir, 0750); err != nil {
+			return "", fmt.Errorf("failed to create .oldbuilds directory: %w", err)
+		}
+		
+		// Create timestamped backup directory name
+		timestamp := time.Now().Format("20060102_150405")
+		oldBuildName := fmt.Sprintf("%s_%s", extractedDirName, timestamp)
+		oldBuildPath := filepath.Join(oldBuildsDir, oldBuildName)
+		
+		// Move the old directory to .oldbuilds instead of removing it
+		if err := os.Rename(extractedPath, oldBuildPath); err != nil {
+			// If we can't move it (perhaps across filesystems), try to remove it as fallback
+			fmt.Fprintf(os.Stderr, "Warning: couldn't move old build to backup dir: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Attempting to remove it instead...\n")
+			if err := os.RemoveAll(extractedPath); err != nil {
+				return "", fmt.Errorf("failed to remove existing target directory %s: %w", extractedPath, err)
+			}
 		}
 	}
 
