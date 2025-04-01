@@ -1408,11 +1408,6 @@ func (m Model) renderListView() string {
 
 Press f to try fetching online builds, s for settings, q to quit.`, m.err)
 	}
-	if len(m.builds) == 0 {
-		return `No Blender builds found (local or online matching criteria).
-
-Press f to fetch online builds, s for settings, q to quit.`
-	}
 
 	// --- Render Table ---
 	var tableBuilder strings.Builder
@@ -1909,7 +1904,6 @@ func (m Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 		// Already closed, do nothing
 	default:
 		// Close the channel to signal cancellation
-		log.Printf("Attempting to cancel download for %s", buildVersion) // Add log
 		close(downloadState.CancelCh)
 	}
 
