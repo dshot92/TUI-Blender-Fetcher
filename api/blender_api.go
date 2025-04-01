@@ -87,7 +87,6 @@ func FetchBuilds(versionFilter string) ([]model.BlenderBuild, error) { // Added 
 
 		// Passed all filters
 		build.Status = "Online"
-		build.Selected = false
 		filteredBuilds = append(filteredBuilds, build)
 	}
 

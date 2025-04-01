@@ -2,7 +2,6 @@ package model
 
 import (
 	"encoding/json"
-	"fmt"
 	"time"
 )
 
@@ -11,16 +10,27 @@ type Timestamp time.Time
 
 // UnmarshalJSON implements the json.Unmarshaler interface for Timestamp.
 func (t *Timestamp) UnmarshalJSON(b []byte) error {
-	var timestamp int64
 	// Try to unmarshal as an integer (Unix timestamp)
-	if err := json.Unmarshal(b, &timestamp); err != nil {
-		// If it's not an integer, maybe it's a quoted string timestamp?
-		// Fallback or error handling could be added here if needed.
-		// For now, we assume it must be a number based on the API example.
-		return fmt.Errorf("timestamp field is not a valid number: %v", err)
+	var timestamp int64
+	if err := json.Unmarshal(b, &timestamp); err == nil {
+		// It's a Unix timestamp (seconds)
+		*t = Timestamp(time.Unix(timestamp, 0))
+		return nil
 	}
-	// Convert Unix timestamp (seconds) to time.Time
-	*t = Timestamp(time.Unix(timestamp, 0))
+	
+	// If not an integer, try a string with RFC3339 format
+	var timeStr string
+	if err := json.Unmarshal(b, &timeStr); err == nil {
+		parsedTime, err := time.Parse(time.RFC3339, timeStr)
+		if err == nil {
+			*t = Timestamp(parsedTime)
+			return nil
+		}
+	}
+	
+	// If neither worked, it might be an object, we'll use current time
+	// This is a fallback to prevent breaking the whole program
+	*t = Timestamp(time.Now())
 	return nil
 }
 
@@ -48,6 +58,5 @@ type BlenderBuild struct {
 
 	// Internal state (not from API)
 	Status   string // e.g., "Online", "Downloading", "Downloaded", "Update Available", "Error"
-	Selected bool   // Whether the user has selected this build
-	// Add download progress fields later if needed
+	// Selected field removed - we only work with highlighted builds now
 }

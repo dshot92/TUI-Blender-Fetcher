@@ -24,24 +24,32 @@ func readBuildInfo(dirPath string) (*model.BlenderBuild, error) {
 		data, err := os.ReadFile(metaPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to read %s: %v\n", metaPath, err)
-			return nil, fmt.Errorf("read %s failed: %w", metaPath, err)
+			// Fall back to directory name parsing instead of returning error
+			return fallbackToDirectoryParsing(dirPath)
 		}
 		if err := json.Unmarshal(data, build); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to parse %s: %v\n", metaPath, err)
-			return nil, fmt.Errorf("parse %s failed: %w", metaPath, err)
+			// Fall back to directory name parsing instead of returning error
+			return fallbackToDirectoryParsing(dirPath)
 		}
-		build.Status = "Downloaded"
+		build.Status = "Local"
 		build.FileName = filepath.Base(dirPath)
 		return build, nil
 	}
 
 	// version.json doesn't exist, fall back to regex parsing name
+	return fallbackToDirectoryParsing(dirPath)
+}
+
+// Helper function to parse build info from directory name
+func fallbackToDirectoryParsing(dirPath string) (*model.BlenderBuild, error) {
 	dirName := filepath.Base(dirPath)
 	match := versionRegexFallback.FindStringSubmatch(dirName)
 	if len(match) > 1 {
 		versionStr := match[1]
+		build := &model.BlenderBuild{}
 		build.Version = versionStr
-		build.Status = "Downloaded (legacy)" // Indicate it lacks full metadata
+		build.Status = "Local" // Indicate it lacks full metadata
 		build.FileName = dirName
 		return build, nil
 	}
@@ -111,4 +119,36 @@ func BuildLocalLookupMap(downloadDir string) (map[string]bool, error) {
 		}
 	}
 	return lookupMap, nil
+}
+
+// DeleteBuild finds and deletes a local build by version.
+// Returns true if successfully deleted, false if not found or error occurred.
+func DeleteBuild(downloadDir string, version string) (bool, error) {
+	entries, err := os.ReadDir(downloadDir)
+	if err != nil {
+		return false, fmt.Errorf("failed to read download directory %s: %w", downloadDir, err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() && entry.Name() != ".downloading" {
+			dirPath := filepath.Join(downloadDir, entry.Name())
+			buildInfo, err := readBuildInfo(dirPath)
+			if err != nil {
+				// Error reading build info, but continue checking other directories
+				continue
+			}
+			
+			// Check if this is the build we want to delete
+			if buildInfo != nil && buildInfo.Version == version {
+				// Found the build to delete, remove the directory
+				if err := os.RemoveAll(dirPath); err != nil {
+					return false, fmt.Errorf("failed to delete build directory %s: %w", dirPath, err)
+				}
+				return true, nil
+			}
+		}
+	}
+	
+	// Build not found
+	return false, nil
 }
