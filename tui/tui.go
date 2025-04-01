@@ -7,6 +7,7 @@ import (
 	"TUI-Blender-Launcher/local"    // Import local package
 	"TUI-Blender-Launcher/model"    // Import the model package
 	"TUI-Blender-Launcher/util"     // Import util package
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -70,6 +71,7 @@ type (
 	// Data update messages
 	buildsFetchedMsg struct { // Online builds fetched
 		builds []model.BlenderBuild
+		err    error // Add error field
 	}
 	localBuildsScannedMsg struct { // Initial local scan complete
 		builds []model.BlenderBuild
@@ -104,6 +106,11 @@ type (
 		TotalBytes   int64
 		Percent      float64 // Calculated percentage 0.0 to 1.0
 		Speed        float64 // Bytes per second
+	}
+
+	// Message to reset a build's status after cancellation cleanup
+	resetStatusMsg struct {
+		version string
 	}
 
 	// Error message
@@ -201,39 +208,26 @@ func calculateVisibleColumns(terminalWidth int) map[string]bool {
 
 // Model represents the state of the TUI application.
 type Model struct {
-	// Core data
-	builds []model.BlenderBuild
-	config config.Config
-	// programRef *tea.Program // Ensure this is removed or commented out
-
-	// UI state
+	builds          []model.BlenderBuild
 	cursor          int
-	isLoading       bool
-	downloadStates  map[string]*DownloadState // Map version to download state
-	downloadMutex   sync.Mutex                // Mutex for downloadStates
-	cancelDownloads chan struct{}             // Channel to signal download cancellation
+	config          config.Config
 	err             error
+	terminalWidth   int
+	sortColumn      int
+	sortReversed    bool
+	isLoading       bool
+	visibleColumns  map[string]bool
 	currentView     viewState
-	progressBar     progress.Model // Progress bar component
-	buildToDelete   string         // Store version of build to delete for confirmation
-	blenderRunning  string         // Version of Blender currently running, empty if none
-
-	// Old builds information
-	oldBuildsCount int   // Number of old builds
-	oldBuildsSize  int64 // Size of old builds in bytes
-
-	// Sorting state
-	sortColumn   int  // Which column index is being sorted
-	sortReversed bool // Whether sorting is reversed
-
-	// Settings/Setup specific state
-	settingsInputs []textinput.Model
-	focusIndex     int
-	editMode       bool // Whether we're in edit mode in settings
-	terminalWidth  int  // Store terminal width
-
-	// New fields for visible columns
-	visibleColumns map[string]bool // Track which columns are visible
+	focusIndex      int
+	editMode        bool
+	settingsInputs  []textinput.Model
+	progressBar     progress.Model
+	downloadStates  map[string]*DownloadState
+	downloadMutex   sync.Mutex
+	blenderRunning  string
+	oldBuildsCount  int
+	oldBuildsSize   int64
+	deleteCandidate string // Version of build being considered for deletion
 }
 
 // DownloadState holds progress info for an active download
@@ -246,6 +240,7 @@ type DownloadState struct {
 	LastUpdated   time.Time     // Timestamp of last progress update
 	StartTime     time.Time     // When the download started
 	StallDuration time.Duration // How long download can stall before timeout
+	CancelCh      chan struct{} // Per-download cancel channel
 }
 
 // Styles using lipgloss
@@ -285,16 +280,15 @@ func InitialModel(cfg config.Config, needsSetup bool) Model {
 		progress.WithoutPercentage(),
 	)
 	m := Model{
-		config:          cfg,
-		isLoading:       !needsSetup,
-		downloadStates:  make(map[string]*DownloadState),
-		progressBar:     progModel,
-		cancelDownloads: make(chan struct{}),
-		sortColumn:      0,                     // Default sort by Version
-		sortReversed:    true,                  // Default descending sort (newest versions first)
-		blenderRunning:  "",                    // No Blender running initially
-		editMode:        false,                 // Start in navigation mode, not edit mode
-		visibleColumns:  make(map[string]bool), // Initialize visible columns map
+		config:         cfg,
+		isLoading:      !needsSetup,
+		downloadStates: make(map[string]*DownloadState),
+		progressBar:    progModel,
+		sortColumn:     0,                     // Default sort by Version
+		sortReversed:   true,                  // Default descending sort (newest versions first)
+		blenderRunning: "",                    // No Blender running initially
+		editMode:       false,                 // Start in navigation mode, not edit mode
+		visibleColumns: make(map[string]bool), // Initialize visible columns map
 	}
 
 	if needsSetup {
@@ -339,7 +333,7 @@ func fetchBuildsCmd(cfg config.Config) tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		return buildsFetchedMsg{builds}
+		return buildsFetchedMsg{builds: builds, err: nil}
 	}
 }
 
@@ -419,8 +413,12 @@ func adaptiveTickCmd(activeCount int, isExtracting bool) tea.Cmd {
 }
 
 // doDownloadCmd starts the download in a goroutine which updates shared state.
-func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[string]*DownloadState, mutex *sync.Mutex, cancelCh <-chan struct{}) tea.Cmd {
+func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[string]*DownloadState, mutex *sync.Mutex) tea.Cmd {
 	now := time.Now()
+
+	// Create a cancel channel specific to this download
+	downloadCancelCh := make(chan struct{})
+
 	mutex.Lock()
 	if _, exists := downloadMap[build.Version]; !exists {
 		downloadMap[build.Version] = &DownloadState{
@@ -428,6 +426,7 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 			StartTime:     now,
 			LastUpdated:   now,
 			StallDuration: downloadStallTime, // Initial stall timeout
+			CancelCh:      downloadCancelCh,
 		}
 	} else {
 		mutex.Unlock()
@@ -444,29 +443,11 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 		var lastUpdateBytes int64
 		var currentSpeed float64 // Store speed between short intervals
 
-		// Set up a cancellation handler
-		go func() {
-			select {
-			case <-cancelCh:
-				// Cancellation requested
-				mutex.Lock()
-				if state, ok := downloadMap[build.Version]; ok {
-					state.Message = "Cancelled"
-				}
-				mutex.Unlock()
-				// Signal this goroutine is done
-				close(done)
-			case <-done:
-				// Normal completion, do nothing
-				return
-			}
-		}()
-
 		progressCallback := func(downloaded, total int64) {
-			// Check for cancellation
+			// Check for cancellation - return immediately if cancelled
 			select {
-			case <-done:
-				return // Early exit if cancelled
+			case <-downloadCancelCh:
+				return
 			default:
 				// Continue with progress update
 			}
@@ -495,8 +476,26 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 				lastUpdateTime = currentTime
 			}
 
-			mutex.Lock()
+			// Check again for cancellation before attempting lock
+			select {
+			case <-downloadCancelCh:
+				return
+			default:
+				// Continue updating state
+			}
+
+			// Use TryLock to avoid deadlocking with the main TUI update loop
+			if !mutex.TryLock() {
+				return // Skip this update if lock is contended
+			}
+			defer mutex.Unlock() // Ensure unlock happens if lock was acquired
+
 			if state, ok := downloadMap[build.Version]; ok {
+				// If already cancelled, don't update progress
+				if state.Message == "Cancelled" {
+					return
+				}
+
 				// Update LastUpdated timestamp on every progress update
 				state.LastUpdated = currentTime
 
@@ -530,21 +529,57 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 					state.StallDuration = downloadStallTime
 				}
 			}
-			mutex.Unlock()
 		}
 
 		// Call the download function with our progress callback
-		_, err := download.DownloadAndExtractBuild(build, cfg.DownloadDir, progressCallback)
+		// Check for cancellation before starting the download
+		select {
+		case <-downloadCancelCh:
+			// Download was cancelled before it started
+			mutex.Lock()
+			if state, ok := downloadMap[build.Version]; ok {
+				state.Message = "Cancelled"
+			}
+			mutex.Unlock()
+			close(done)
+			return
+		default:
+			// Proceed with download
+		}
 
-		// Update state to Local/Failed
+		// Download and extract the build - this may take a while
+		_, err := download.DownloadAndExtractBuild(build, cfg.DownloadDir, progressCallback, downloadCancelCh) // Pass cancel channel
+
+		// Check for cancellation after download completes or if error occurred
+		select {
+		case <-downloadCancelCh:
+			// Was cancelled during download, ensure UI shows cancelled
+			mutex.Lock()
+			if state, ok := downloadMap[build.Version]; ok {
+				state.Message = "Cancelled"
+			}
+			mutex.Unlock()
+			close(done)
+			return
+		default:
+			// Continue processing result or error
+		}
+
 		mutex.Lock()
 		if state, ok := downloadMap[build.Version]; ok {
-			if err != nil {
-				state.Message = fmt.Sprintf("Failed: %v", err)
+			// Check if already marked as Cancelled due to race condition
+			if state.Message == "Cancelled" {
+				// Keep the cancelled status
+			} else if err != nil {
+				if errors.Is(err, download.ErrCancelled) {
+					state.Message = "Cancelled"
+				} else {
+					state.Message = fmt.Sprintf("Failed: %v", err)
+				}
 			} else {
 				state.Message = "Local"
 			}
-		} // else: state might have been removed if cancelled?
+		}
 		mutex.Unlock()
 
 		// Signal completion
@@ -600,11 +635,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Global key handler for exit (works regardless of view)
 		if msg.String() == "ctrl+c" || msg.String() == "q" {
-			// Signal all downloads to cancel before quitting
-			close(m.cancelDownloads)
-			// Create a new channel in case we continue (this handles the case
-			// where the user pressed q but we're not actually quitting yet)
-			m.cancelDownloads = make(chan struct{})
+			// No need to close a global cancel channel anymore
+			// Signal all active downloads to cancel
+			m.downloadMutex.Lock()
+			for _, state := range m.downloadStates {
+				close(state.CancelCh)
+			}
+			m.downloadMutex.Unlock()
+
 			return m, tea.Quit
 		}
 	case tea.WindowSizeMsg:
@@ -670,10 +708,9 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			// In navigation mode - handle navigation and entering edit mode
 			switch s {
-			case "h", "left":
-				// Exit settings and go back to list view
-				m.currentView = viewList
-				return m, nil
+			case "s", "S":
+				// Save settings and go back to list view
+				return saveSettings(m)
 			case "j", "down":
 				// Move focus down
 				oldFocus := m.focusIndex
@@ -717,9 +754,17 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.settingsInputs[m.focusIndex].Focus()
 				}
 				return m, textinput.Blink
-			case "s", "S":
-				// Save settings
-				return saveSettings(m)
+			case "c", "C":
+				// Add cleanup functionality in settings
+				if m.oldBuildsCount > 0 {
+					m.currentView = viewCleanupConfirm
+					return m, nil
+				}
+				return m, nil
+			case "h", "left":
+				// Go back to list view without saving
+				m.currentView = viewList
+				return m, nil
 			}
 			return m, nil
 		}
@@ -801,6 +846,9 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "d", "D":
 			// Start download of the selected build
 			return m.handleStartDownload()
+		case "c", "C":
+			// Cancel download of the selected build
+			return m.handleCancelDownload()
 		case "o", "O":
 			// Open download directory
 			cmd := local.OpenDownloadDirCmd(m.config.DownloadDir)
@@ -815,9 +863,6 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "x", "X":
 			// Delete a build
 			return m.handleDeleteBuild()
-		case "c", "C":
-			// Clean up old builds
-			return m.handleCleanupOldBuilds()
 		}
 	// Handle initial local scan results
 	case localBuildsScannedMsg:
@@ -842,7 +887,7 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	// Handle Download Start Request
 	case startDownloadMsg:
-		cmd = doDownloadCmd(msg.build, m.config, m.downloadStates, &m.downloadMutex, m.cancelDownloads)
+		cmd = doDownloadCmd(msg.build, m.config, m.downloadStates, &m.downloadMutex)
 		return m, cmd
 	case tickMsg:
 		return m.handleDownloadProgress(msg)
@@ -867,6 +912,25 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.currentView = viewList
 		return m, nil
+	case resetStatusMsg:
+		// Find the build and reset its status
+		needsSort := false
+		for i := range m.builds {
+			if m.builds[i].Version == msg.version {
+				// Only reset if it's still marked as Cancelled
+				if m.builds[i].Status == "Cancelled" {
+					m.builds[i].Status = "Online" // Or potentially "Update" if applicable?
+					// TODO: Re-check if an update is available for this build?
+					// For now, just set to Online. If user fetches again, it will update.
+					needsSort = true // Re-sort if status changed
+				}
+				break
+			}
+		}
+		if needsSort {
+			m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
+		}
+		return m, nil // No further command needed
 	}
 
 	return m, nil
@@ -880,28 +944,28 @@ func (m Model) updateDeleteConfirmView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "y", "Y":
 			// User confirmed deletion
 			// Implement actual deletion logic using the DeleteBuild function
-			success, err := local.DeleteBuild(m.config.DownloadDir, m.buildToDelete)
+			success, err := local.DeleteBuild(m.config.DownloadDir, m.deleteCandidate)
 			if err != nil {
-				log.Printf("Error deleting build %s: %v", m.buildToDelete, err)
+				log.Printf("Error deleting build %s: %v", m.deleteCandidate, err)
 				m.err = fmt.Errorf("Failed to delete build: %w", err)
 			} else if !success {
-				log.Printf("Build %s not found for deletion", m.buildToDelete)
-				m.err = fmt.Errorf("Build %s not found", m.buildToDelete)
+				log.Printf("Build %s not found for deletion", m.deleteCandidate)
+				m.err = fmt.Errorf("Build %s not found", m.deleteCandidate)
 			} else {
-				log.Printf("Successfully deleted build: %s", m.buildToDelete)
+				log.Printf("Successfully deleted build: %s", m.deleteCandidate)
 				// Clear any previous error
 				m.err = nil
 			}
 
 			// Return to builds view and refresh the builds list
-			m.buildToDelete = ""
+			m.deleteCandidate = ""
 			m.currentView = viewList
 			m.isLoading = true
 			return m, scanLocalBuildsCmd(m.config)
 
 		case "n", "N", "esc", "escape":
 			// User cancelled deletion
-			m.buildToDelete = ""
+			m.deleteCandidate = ""
 			m.currentView = viewList
 			return m, nil
 		}
@@ -1002,7 +1066,7 @@ func (m Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
 		selectedBuild := m.builds[m.cursor]
 		// Only allow deleting local builds
 		if selectedBuild.Status == "Local" {
-			m.buildToDelete = selectedBuild.Version
+			m.deleteCandidate = selectedBuild.Version
 			m.currentView = viewDeleteConfirm
 			return m, nil
 		}
@@ -1040,12 +1104,28 @@ func (m Model) handleLocalBuildsScanned(msg localBuildsScannedMsg) (tea.Model, t
 }
 
 func (m Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
-	// Don't stop loading yet, need to merge with local status
-	m.builds = msg.builds // Temporarily store fetched builds
-	m.err = nil
-	// Now trigger the local scan for status update
-	cmd := updateStatusFromLocalScanCmd(m.builds, m.config)
-	return m, cmd
+	m.isLoading = false
+	if msg.err != nil {
+		m.err = msg.err
+		return m, nil
+	}
+
+	// Store the updated builds
+	m.builds = msg.builds
+
+	// Re-apply sort settings
+	m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
+
+	// Ensure cursor doesn't go out of bounds
+	if m.cursor >= len(m.builds) {
+		m.cursor = len(m.builds) - 1
+		if m.cursor < 0 {
+			m.cursor = 0
+		}
+	}
+
+	// Now update the status of the builds based on local scan
+	return m, updateStatusFromLocalScanCmd(m.builds, m.config)
 }
 
 func (m Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
@@ -1092,101 +1172,127 @@ func (m Model) handleBlenderExec(msg model.BlenderExecMsg) (tea.Model, tea.Cmd) 
 }
 
 func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
+	var commands []tea.Cmd
 	now := time.Now()
 
-	m.downloadMutex.Lock()
+	m.downloadMutex.Lock() // Lock early
+
 	activeDownloads := 0
 	var progressCmds []tea.Cmd
-	completedDownloads := []string{}
-	stalledDownloads := []string{}
+	// Lists to store versions identified for state change/cleanup
+	completedDownloads := make([]string, 0)
+	stalledDownloads := make([]string, 0)
+	cancelledDownloads := make([]string, 0)
 	extractingInProgress := false
+	// Store states temporarily to access after unlocking
+	tempStates := make(map[string]DownloadState)
 
+	// --- Identify states and prepare for cleanup (under lock) ---
 	for version, state := range m.downloadStates {
-		// Skip the counter entry if it exists
-		if version == "_tickCounter" {
-			continue
-		}
+		tempStates[version] = *state // Store a copy for later use outside lock
 
-		if state.Message == "Local" || strings.HasPrefix(state.Message, "Failed") || state.Message == "Cancelled" {
+		if state.Message == "Local" || strings.HasPrefix(state.Message, "Failed") {
 			completedDownloads = append(completedDownloads, version)
-			// Update main build list status
-			foundInBuilds := false
-			for i := range m.builds {
-				if m.builds[i].Version == version {
-					m.builds[i].Status = state.Message
-					foundInBuilds = true
-					break
-				}
-			}
-			if !foundInBuilds {
-				log.Printf("[Update tick] Completed download %s not found in m.builds list!", version)
-			}
+		} else if state.Message == "Cancelled" {
+			cancelledDownloads = append(cancelledDownloads, version)
 		} else if strings.HasPrefix(state.Message, "Downloading") || state.Message == "Preparing..." || state.Message == "Extracting..." {
-			// Check for stalled downloads - if no updates for the stall duration
 			timeSinceUpdate := now.Sub(state.LastUpdated)
 			if timeSinceUpdate > state.StallDuration {
-				log.Printf("WARNING: Download for %s stalled (no updates for %v), marking as failed",
-					version, timeSinceUpdate.Round(time.Second))
-				state.Message = fmt.Sprintf("Failed: Download stalled for %v", timeSinceUpdate.Round(time.Second))
+				log.Printf("WARNING: Download for %s stalled (no updates for %v), marking as failed", version, timeSinceUpdate.Round(time.Second))
+				// Update the temporary state that will be used after unlock
+				tempStateCopy := *state
+				tempStateCopy.Message = fmt.Sprintf("Failed: Download stalled for %v", timeSinceUpdate.Round(time.Second))
+				tempStates[version] = tempStateCopy
 				stalledDownloads = append(stalledDownloads, version)
-
-				// Update main build list status
-				for i := range m.builds {
-					if m.builds[i].Version == version {
-						m.builds[i].Status = state.Message
-						break
-					}
-				}
 			} else {
-				// Still active (not stalled)
 				activeDownloads++
-
-				// Track if any downloads are in extraction phase
 				if state.Message == "Extracting..." {
 					extractingInProgress = true
 				}
-
-				// Update progress bar for both downloading and extracting
 				progressCmds = append(progressCmds, m.progressBar.SetPercent(state.Progress))
 			}
 		}
 	}
 
-	// Clean up completed downloads from the state map
+	// --- Clean up state map (still under lock) ---
 	for _, version := range completedDownloads {
 		delete(m.downloadStates, version)
 	}
-
-	// Also clean up any stalled downloads
 	for _, version := range stalledDownloads {
 		delete(m.downloadStates, version)
+		// Also ensure the map entry reflects the stalled message if we keep it temporarily
+		if state, ok := m.downloadStates[version]; ok {
+			state.Message = tempStates[version].Message // Update the actual map entry if needed
+		}
 	}
-
-	// We no longer need the _tickCounter, remove if it exists
+	for _, version := range cancelledDownloads {
+		delete(m.downloadStates, version)
+	}
 	delete(m.downloadStates, "_tickCounter")
 
-	m.downloadMutex.Unlock()
+	m.downloadMutex.Unlock() // Unlock after map modifications are done
 
-	// Handle active downloads with proper command creation
+	// --- Update m.builds and Schedule commands (after unlock) ---
+	needsSort := false
+	for _, version := range completedDownloads {
+		for i := range m.builds {
+			if m.builds[i].Version == version {
+				// Use the message from the temp state collected earlier
+				if tempState, ok := tempStates[version]; ok {
+					m.builds[i].Status = tempState.Message
+					needsSort = true
+				}
+				break
+			}
+		}
+	}
+	for _, version := range stalledDownloads {
+		for i := range m.builds {
+			if m.builds[i].Version == version {
+				if tempState, ok := tempStates[version]; ok {
+					m.builds[i].Status = tempState.Message
+					needsSort = true
+				}
+				break
+			}
+		}
+	}
+	for _, version := range cancelledDownloads {
+		for i := range m.builds {
+			if m.builds[i].Version == version {
+				m.builds[i].Status = "Cancelled"
+				needsSort = true
+				break
+			}
+		}
+		// Schedule the status reset command
+		commands = append(commands, tea.Tick(150*time.Millisecond, func(t time.Time) tea.Msg {
+			return resetStatusMsg{version: version}
+		}))
+	}
+
+	// Re-sort if any status changed
+	if needsSort {
+		m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
+	}
+
+	// Append other necessary commands
 	if activeDownloads > 0 {
-		// Create a combined command that includes tick and progress commands
-		var commands []tea.Cmd = []tea.Cmd{adaptiveTickCmd(activeDownloads, extractingInProgress)}
-
+		commands = append(commands, adaptiveTickCmd(activeDownloads, extractingInProgress))
 		if len(progressCmds) > 0 {
 			commands = append(commands, progressCmds...)
-			return m, tea.Batch(commands...)
 		}
-
-		return m, adaptiveTickCmd(activeDownloads, extractingInProgress)
+	} else if len(progressCmds) > 0 {
+		// Handle final progress updates if any
+		commands = append(commands, progressCmds...)
 	}
 
-	// Handle progress commands even if no active downloads
-	if len(progressCmds) > 0 {
-		return m, tea.Batch(progressCmds...)
+	// --- Return batched commands ---
+	if len(commands) > 0 {
+		return m, tea.Batch(commands...)
 	}
 
-	return m, cmd
+	return m, nil // No commands needed
 }
 
 // calculateSplitIndex finds the rune index to split a string for a given visual width.
@@ -1246,14 +1352,35 @@ func (m Model) renderSettingsView() string {
 		viewBuilder.WriteString(lp.NewStyle().Foreground(lp.Color(colorError)).Render(fmt.Sprintf("Error: %v\n\n", m.err)))
 	}
 
-	// Show different help text based on current mode
-	var helpText string
+	// Use the same footer style as the main list view
+	var footerKeybinds1, footerKeybinds2 string
+
 	if m.editMode {
-		helpText = "Enter: Save Edits | Esc: Cancel Edit | Tab: Next Field"
+		footerKeybinds1 = "Enter:Save  Esc:Cancel"
+		footerKeybinds2 = "Tab:Next Field"
 	} else {
-		helpText = "Enter: Edit Field | h: Back | j/k: Navigate | s: Save Settings"
+		footerKeybinds1 = "Enter:Edit Field  S:Save & Back"
+		if m.oldBuildsCount > 0 {
+			footerKeybinds2 = fmt.Sprintf("C:Cleanup old Builds (%d)", m.oldBuildsCount)
+		}
 	}
-	viewBuilder.WriteString(footerStyle.Render(helpText))
+
+	keybindSeparator := "│"
+
+	// Calculate total width needed for the footer
+	totalWidth := len(footerKeybinds1) + len(keybindSeparator) + len(footerKeybinds2)
+
+	// If the total width is greater than the terminal width, wrap the footer
+	if totalWidth > m.terminalWidth {
+		// Two line footer
+		viewBuilder.WriteString(footerStyle.Render(footerKeybinds1))
+		viewBuilder.WriteString("\n")
+		viewBuilder.WriteString(footerStyle.Render(footerKeybinds2))
+	} else {
+		// Single line footer with separator
+		footerKeys := fmt.Sprintf("%s  %s  %s", footerKeybinds1, keybindSeparator, footerKeybinds2)
+		viewBuilder.WriteString(footerStyle.Render(footerKeys))
+	}
 
 	return viewBuilder.String()
 }
@@ -1333,6 +1460,8 @@ Press f to fetch online builds, s for settings, q to quit.`
 			statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorInfo)) // Light blue for updates
 		} else if strings.HasPrefix(build.Status, "Failed") {
 			statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorError))
+		} else if build.Status == "Cancelled" {
+			statusTextStyle = lp.NewStyle().Foreground(lp.Color(colorWarning))
 		}
 
 		// --- Override cells if downloading ---
@@ -1487,11 +1616,8 @@ Press f to fetch online builds, s for settings, q to quit.`
 	}
 
 	// ... Footer rendering ...
-	footerKeybinds1 := "Enter:Launch  D:Download  O:Open Dir  X:Delete"
+	footerKeybinds1 := "Enter:Launch  D:Download  C:Cancel  O:Open Dir  X:Delete"
 	footerKeybinds2 := "F:Fetch  R:Reverse  S:Settings  Q:Quit"
-	if m.oldBuildsCount > 0 {
-		footerKeybinds2 = fmt.Sprintf("F:Fetch  C:Cleanup(%d)  S:Settings  Q:Quit", m.oldBuildsCount)
-	}
 	footerKeybinds3 := "←→:Column  R:Reverse"
 	keybindSeparator := "│"
 
@@ -1576,7 +1702,7 @@ func (m Model) renderDeleteConfirmView() string {
 		Bold(true)
 
 	// Create the message with styled build name
-	buildText := buildStyle.Render("Blender " + m.buildToDelete)
+	buildText := buildStyle.Render("Blender " + m.deleteCandidate)
 	messageLines := []string{
 		"Are you sure you want to delete " + buildText + "?",
 		"This will permanently remove this build from your system.",
@@ -1750,4 +1876,45 @@ func getLastVisibleColumn() int {
 		}
 	}
 	return 0 // Fallback to first column (should never happen as Version is always visible)
+}
+
+// Handler for canceling download of selected build
+func (m Model) handleCancelDownload() (tea.Model, tea.Cmd) {
+	if len(m.builds) == 0 || m.cursor >= len(m.builds) {
+		return m, nil
+	}
+
+	selectedBuild := m.builds[m.cursor]
+	buildVersion := selectedBuild.Version
+
+	// Lock *only* to safely read the map
+	m.downloadMutex.Lock()
+	downloadState, isDownloading := m.downloadStates[buildVersion]
+	// Check if it's in a cancellable state *while holding the lock*
+	canCancel := isDownloading &&
+		(downloadState.Message == "Downloading..." ||
+			downloadState.Message == "Preparing..." ||
+			downloadState.Message == "Extracting...")
+	m.downloadMutex.Unlock() // Unlock immediately after reading
+
+	// If not downloading or not in a cancellable state, do nothing
+	if !canCancel {
+		return m, nil
+	}
+
+	// Signal cancellation by closing the channel (thread-safe)
+	// No mutex needed here.
+	select {
+	case <-downloadState.CancelCh:
+		// Already closed, do nothing
+	default:
+		// Close the channel to signal cancellation
+		log.Printf("Attempting to cancel download for %s", buildVersion) // Add log
+		close(downloadState.CancelCh)
+	}
+
+	// The download goroutine will see this and update its state message to "Cancelled"
+	// The tick handler will then pick up that state change.
+	// Return immediately, no command, no UI update here.
+	return m, nil
 }
