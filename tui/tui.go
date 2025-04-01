@@ -1419,20 +1419,6 @@ func (m Model) renderSettingsView() string {
 func (m Model) renderListView() string {
 	var viewBuilder strings.Builder
 
-	loadingMsg := ""
-	if m.isLoading {
-		if len(m.builds) == 0 {
-			loadingMsg = "Scanning local builds..."
-		} else {
-			loadingMsg = "Fetching online builds..."
-		}
-	}
-
-	if loadingMsg != "" {
-		// Simple full-screen loading message for now
-		return loadingMsg
-	}
-
 	if m.err != nil {
 		return fmt.Sprintf(`Error: %v
 
@@ -1441,6 +1427,7 @@ Press f to try fetching online builds, s for settings, q to quit.`, m.err)
 
 	// --- Render Table ---
 	var tableBuilder strings.Builder
+
 	// --- Header rendering ---
 	var headerCols []string
 	if m.visibleColumns["Version"] {
@@ -1688,6 +1675,17 @@ Press f to try fetching online builds, s for settings, q to quit.`, m.err)
 
 	// --- Combine table and footer ---
 	viewBuilder.WriteString(tableBuilder.String())
+
+	// Add loading indicator below the table if loading
+	if m.isLoading {
+		loadingMsg := ""
+		if len(m.builds) == 0 {
+			loadingMsg = "Scanning local builds..."
+		} else {
+			loadingMsg = "\nFetching online builds..."
+		}
+		viewBuilder.WriteString(lp.NewStyle().Foreground(lp.Color(colorInfo)).Render(loadingMsg) + "\n")
+	}
 
 	// Display running Blender notice if applicable
 	if m.blenderRunning != "" {
