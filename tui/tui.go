@@ -9,6 +9,9 @@ import (
 	"TUI-Blender-Launcher/util"     // Import util package
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings" // Import strings
 	"sync"
 	"time"
@@ -81,7 +84,12 @@ type Model struct {
 	currentView    viewState
 	progressBar    progress.Model // Progress bar component
 	buildToDelete  string         // Store version of build to delete for confirmation
-
+	blenderRunning string         // Version of Blender currently running, empty if none
+	
+	// Sorting state
+	sortColumn    int // Which column index is being sorted
+	sortReversed  bool // Whether sorting is reversed
+	
 	// Settings/Setup specific state
 	settingsInputs []textinput.Model
 	focusIndex     int
@@ -139,6 +147,9 @@ func InitialModel(cfg config.Config, needsSetup bool) Model {
 		downloadStates: make(map[string]*DownloadState),
 		progressBar:    progModel,
 		cancelDownloads: make(chan struct{}),
+		sortColumn:     0, // Default sort by Version
+		sortReversed:   false, // Default ascending sort
+		blenderRunning: "", // No Blender running initially
 	}
 
 	if needsSetup {
@@ -465,6 +476,121 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case viewList:
 		switch msg := msg.(type) {
+		// Handle key presses
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "up", "k":
+				// Move cursor up
+				if len(m.builds) > 0 {
+					m.cursor--
+					if m.cursor < 0 {
+						m.cursor = len(m.builds) - 1
+					}
+				}
+				return m, nil
+			case "down", "j":
+				// Move cursor down
+				if len(m.builds) > 0 {
+					m.cursor++
+					if m.cursor >= len(m.builds) {
+						m.cursor = 0
+					}
+				}
+				return m, nil
+			case "left", "h":
+				// Move to previous column for sorting
+				if m.sortColumn > 0 {
+					m.sortColumn--
+				} else {
+					m.sortColumn = 6 // Wrap to the last column
+				}
+				// Re-sort the list
+				m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
+				return m, nil
+			case "right", "l":
+				// Move to next column for sorting
+				m.sortColumn++
+				if m.sortColumn > 6 { // Assuming 7 columns (0 to 6)
+					m.sortColumn = 0
+				}
+				// Re-sort the list
+				m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
+				return m, nil
+			case "r":
+				// Toggle sort order
+				m.sortReversed = !m.sortReversed
+				// Re-sort the list
+				m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
+				return m, nil
+			case "enter":
+				// Handle enter key for launching Blender
+				if len(m.builds) > 0 && m.cursor < len(m.builds) {
+					selectedBuild := m.builds[m.cursor]
+					// Only attempt to launch if it's a local build
+					if selectedBuild.Status == "Local" {
+						// Add launch logic here
+						log.Printf("Launching Blender %s", selectedBuild.Version)
+						cmd := local.LaunchBlenderCmd(m.config.DownloadDir, selectedBuild.Version)
+						return m, cmd
+					}
+				}
+				return m, nil
+			case "d", "D":
+				// Start download of the selected build
+				if len(m.builds) > 0 && m.cursor < len(m.builds) {
+					selectedBuild := m.builds[m.cursor]
+					// Only download Online builds (skip Local and currently Downloading)
+					if selectedBuild.Status == "Online" {
+						// Update status to avoid duplicate downloads
+						selectedBuild.Status = "Preparing..."
+						m.builds[m.cursor] = selectedBuild
+						// Send message to start download
+						return m, func() tea.Msg {
+							return startDownloadMsg{build: selectedBuild}
+						}
+					}
+				}
+				return m, nil
+			case "o", "O":
+				// Open download directory
+				cmd := local.OpenDownloadDirCmd(m.config.DownloadDir)
+				return m, cmd
+			case "s", "S":
+				// Show settings
+				m.currentView = viewSettings
+				// Initialization for settings inputs
+				// Copy current config values
+				m.settingsInputs[0].SetValue(m.config.DownloadDir)
+				m.settingsInputs[1].SetValue(m.config.VersionFilter)
+				// Focus first input
+				m.focusIndex = 0
+				for i := range m.settingsInputs {
+					if i == m.focusIndex {
+						m.settingsInputs[i].Focus()
+						m.settingsInputs[i].PromptStyle = selectedRowStyle
+					} else {
+						m.settingsInputs[i].Blur()
+						m.settingsInputs[i].PromptStyle = regularRowStyle
+					}
+				}
+				return m, textinput.Blink
+			case "f", "F":
+				// Fetch from Builder API
+				m.isLoading = true
+				return m, fetchBuildsCmd(m.config)
+			case "x", "X":
+				// Delete a build
+				if len(m.builds) > 0 && m.cursor < len(m.builds) {
+					selectedBuild := m.builds[m.cursor]
+					// Only allow deleting local builds
+					if selectedBuild.Status == "Local" {
+						m.buildToDelete = selectedBuild.Version
+						m.currentView = viewDeleteConfirm
+						return m, nil
+					}
+				}
+				return m, nil
+			}
 		// Handle initial local scan results
 		case localBuildsScannedMsg:
 			m.isLoading = false
@@ -472,6 +598,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.err = msg.err
 			} else {
 				m.builds = msg.builds
+				// Sort the builds based on current sort settings
+				m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
 				m.err = nil
 			}
 			// Adjust cursor if necessary
@@ -496,6 +624,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case buildsUpdatedMsg:
 			m.isLoading = false // Now loading is complete
 			m.builds = msg.builds
+			// Sort the builds based on current sort settings
+			m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
 			m.err = nil
 			// Adjust cursor
 			if m.cursor >= len(m.builds) {
@@ -505,6 +635,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
+
+		case model.BlenderLaunchedMsg:
+			// Record that Blender is running
+			m.blenderRunning = msg.Version
+			// Update the footer message
+			m.err = nil
+			return m, nil
+
+		case model.BlenderExecMsg:
+			// Store Blender info
+			execInfo := msg
+			
+			// Write a command file that the main.go program will execute after the TUI exits
+			// This ensures Blender runs in the same terminal session after the TUI is fully terminated
+			launcherPath := filepath.Join(os.TempDir(), "blender_launch_command.txt")
+			
+			// First try to save the command
+			err := os.WriteFile(launcherPath, []byte(execInfo.Executable), 0644)
+			if err != nil {
+				return m, func() tea.Msg {
+					return errMsg{fmt.Errorf("failed to save launch info: %w", err)}
+				}
+			}
+			
+			// Set an environment variable to tell the main program to run Blender on exit
+			os.Setenv("TUI_BLENDER_LAUNCH", launcherPath)
+			
+			// Display exit message with info about Blender launch
+			m.err = nil
+			m.blenderRunning = execInfo.Version
+			
+			// Simply quit - the main program will handle launching Blender
+			return m, tea.Quit
 
 		case errMsg:
 			m.isLoading = false
@@ -595,104 +758,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 
-		case tea.KeyMsg:
-			downloadingAny := len(m.downloadStates) > 0
-			// Strict key blocking during load/download
-			if m.isLoading || downloadingAny {
-				switch msg.String() {
-				case "ctrl+c", "q":
-					// Signal all downloads to cancel before quitting
-					close(m.cancelDownloads)
-					// Create a new channel in case we continue (this handles the case
-					// where the user pressed q but we're not actually quitting yet)
-					m.cancelDownloads = make(chan struct{})
-					return m, tea.Quit
-				case "up", "k", "down", "j":
-					// Allow navigation, process below
-				default:
-					return m, nil // Block ALL other keys
-				}
-			}
-
-			// Key handling when NOT loading/downloading
-			if m.err != nil {
-				// Error state handling (f, s, q allowed)
-				switch msg.String() {
-				case "f":
-					m.isLoading = true
-					m.err = nil
-					m.builds = nil
-					m.cursor = 0
-					return m, fetchBuildsCmd(m.config)
-				case "s":
-					m.currentView = viewSettings // Go to settings
-					// ... initialize settings inputs ...
-					return m, textinput.Blink
-				default:
-					return m, nil // Block other keys in error state
-				}
-			}
-
-			// Normal state key handling
-			switch msg.String() {
-			case "up", "k":
-				if m.cursor > 0 {
-					m.cursor--
-				}
-			case "down", "j":
-				if len(m.builds) > 0 && m.cursor < len(m.builds)-1 {
-					m.cursor++
-				}
-			case "f":
-				m.isLoading = true
-				m.err = nil
-				m.builds = nil
-				m.cursor = 0
-				return m, fetchBuildsCmd(m.config)
-			case "s":
-				m.currentView = viewSettings
-				// ... initialize settings inputs ...
-				return m, textinput.Blink
-			case "d":
-				var downloadCmds []tea.Cmd
-				// Only download the currently highlighted build instead of all selected builds
-				if len(m.builds) > 0 && m.cursor >= 0 && m.cursor < len(m.builds) {
-					build := m.builds[m.cursor]
-					if build.Status != "Downloaded" && !strings.HasPrefix(build.Status, "Downloading") {
-						downloadCmds = append(downloadCmds, func(b model.BlenderBuild) tea.Cmd {
-							return func() tea.Msg { return startDownloadMsg{build: b} }
-						}(build))
-					}
-				}
-				if len(downloadCmds) > 0 {
-					cmd = tea.Batch(downloadCmds...)
-				}
-				return m, cmd
-			case "x":
-				// Show delete confirmation for the currently highlighted build
-				if len(m.builds) > 0 && m.cursor >= 0 && m.cursor < len(m.builds) {
-					build := m.builds[m.cursor]
-					if build.Status == "Local" {
-						// Store the build version and enter confirmation mode
-						m.buildToDelete = build.Version
-						m.currentView = viewDeleteConfirm
-						return m, nil
-					}
-				}
-				return m, nil
-			case "o":
-				// Open directory of the currently highlighted build
-				if len(m.builds) > 0 && m.cursor >= 0 && m.cursor < len(m.builds) {
-					build := m.builds[m.cursor]
-					if build.Status == "Local" {
-						// Create a command to open the directory
-						// This would typically call a function to open the file explorer
-						log.Printf("Would open directory for build: %s", build.Version)
-						// TODO: Implement actual open directory logic
-					}
-				}
-				return m, nil
-			}
+		case downloadCompleteMsg:
+			// Just trigger a refresh of local files
+			cmd = scanLocalBuildsCmd(m.config)
+			return m, cmd
 		}
 	case viewDeleteConfirm:
 		switch msg := msg.(type) {
@@ -800,13 +869,13 @@ Press f to fetch online builds, s for settings, q to quit.`
 		var tableBuilder strings.Builder
 		// --- Header rendering (Remove selection column from header) ---
 		headerCols := []string{
-			cellStyleCenter.Copy().Width(colWidthVersion).Render("Version ↓"),
-			cellStyleCenter.Copy().Width(colWidthStatus).Render("Status"),
-			cellStyleCenter.Copy().Width(colWidthBranch).Render("Branch"),
-			cellStyleCenter.Copy().Width(colWidthType).Render("Type"),
-			cellStyleCenter.Copy().Width(colWidthHash).Render("Hash"),
-			cellStyleCenter.Copy().Width(colWidthSize).Render("Size"),
-			cellStyleCenter.Copy().Width(colWidthDate).Render("Build Date"),
+			cellStyleCenter.Copy().Width(colWidthVersion).Render(getSortIndicator(m, 0, "Version")),
+			cellStyleCenter.Copy().Width(colWidthStatus).Render(getSortIndicator(m, 1, "Status")),
+			cellStyleCenter.Copy().Width(colWidthBranch).Render(getSortIndicator(m, 2, "Branch")),
+			cellStyleCenter.Copy().Width(colWidthType).Render(getSortIndicator(m, 3, "Type")),
+			cellStyleCenter.Copy().Width(colWidthHash).Render(getSortIndicator(m, 4, "Hash")),
+			cellStyleCenter.Copy().Width(colWidthSize).Render(getSortIndicator(m, 5, "Size")),
+			cellStyleCenter.Copy().Width(colWidthDate).Render(getSortIndicator(m, 6, "Build Date")),
 		}
 		tableBuilder.WriteString(headerStyle.Render(lp.JoinHorizontal(lp.Left, headerCols...)))
 		tableBuilder.WriteString("\n")
@@ -904,12 +973,23 @@ Press f to fetch online builds, s for settings, q to quit.`
 
 		// --- Combine table and footer ---
 		viewBuilder.WriteString(tableBuilder.String())
+
+		// Display running Blender notice if applicable
+		if m.blenderRunning != "" {
+			runningNotice := lp.NewStyle().
+				Foreground(lp.Color("10")). // Green text
+				Bold(true).
+				Render(fmt.Sprintf("⚠ Blender %s is running - this terminal will display its console output", m.blenderRunning))
+			viewBuilder.WriteString("\n" + runningNotice + "\n")
+		}
+
 		// ... Footer rendering ...
 		footerKeybinds1 := "Enter:Launch  D:Download  O:Open Dir  X:Delete"
 		footerKeybinds2 := "F:Fetch  R:Reverse  S:Settings  Q:Quit"
+		footerKeybinds3 := "←→:Column  R:Reverse"
 		keybindSeparator := "│"
-		footerKeys := fmt.Sprintf("%s  %s  %s", footerKeybinds1, keybindSeparator, footerKeybinds2)
-		footerLegend := "■ Local Version   ■ Update Available"
+		footerKeys := fmt.Sprintf("%s  %s  %s  %s  %s", footerKeybinds1, keybindSeparator, footerKeybinds2, keybindSeparator, footerKeybinds3)
+		footerLegend := "■ Local Version   ■ Update Available   ↑↓ Sort Direction"
 		viewBuilder.WriteString(footerStyle.Render(footerKeys))
 		viewBuilder.WriteString("\n")
 		viewBuilder.WriteString(footerStyle.Render(footerLegend))
@@ -964,4 +1044,106 @@ Press f to fetch online builds, s for settings, q to quit.`
 	}
 
 	return viewBuilder.String()
+}
+
+// sortBuilds sorts the builds based on the selected column and sort order
+func sortBuilds(builds []model.BlenderBuild, column int, reverse bool) []model.BlenderBuild {
+	// Create a copy of builds to avoid modifying the original
+	sortedBuilds := make([]model.BlenderBuild, len(builds))
+	copy(sortedBuilds, builds)
+
+	// Sort based on the selected column
+	switch column {
+	case 0: // Version
+		// Sort by version
+		if reverse {
+			sort.SliceStable(sortedBuilds, func(i, j int) bool {
+				return sortedBuilds[i].Version > sortedBuilds[j].Version
+			})
+		} else {
+			sort.SliceStable(sortedBuilds, func(i, j int) bool {
+				return sortedBuilds[i].Version < sortedBuilds[j].Version
+			})
+		}
+	case 1: // Status
+		// Sort by status
+		if reverse {
+			sort.SliceStable(sortedBuilds, func(i, j int) bool {
+				return sortedBuilds[i].Status > sortedBuilds[j].Status
+			})
+		} else {
+			sort.SliceStable(sortedBuilds, func(i, j int) bool {
+				return sortedBuilds[i].Status < sortedBuilds[j].Status
+			})
+		}
+	case 2: // Branch
+		// Sort by branch
+		if reverse {
+			sort.SliceStable(sortedBuilds, func(i, j int) bool {
+				return sortedBuilds[i].Branch > sortedBuilds[j].Branch
+			})
+		} else {
+			sort.SliceStable(sortedBuilds, func(i, j int) bool {
+				return sortedBuilds[i].Branch < sortedBuilds[j].Branch
+			})
+		}
+	case 3: // Type/ReleaseCycle
+		// Sort by release cycle
+		if reverse {
+			sort.SliceStable(sortedBuilds, func(i, j int) bool {
+				return sortedBuilds[i].ReleaseCycle > sortedBuilds[j].ReleaseCycle
+			})
+		} else {
+			sort.SliceStable(sortedBuilds, func(i, j int) bool {
+				return sortedBuilds[i].ReleaseCycle < sortedBuilds[j].ReleaseCycle
+			})
+		}
+	case 4: // Hash
+		// Sort by hash
+		if reverse {
+			sort.SliceStable(sortedBuilds, func(i, j int) bool {
+				return sortedBuilds[i].Hash > sortedBuilds[j].Hash
+			})
+		} else {
+			sort.SliceStable(sortedBuilds, func(i, j int) bool {
+				return sortedBuilds[i].Hash < sortedBuilds[j].Hash
+			})
+		}
+	case 5: // Size
+		// Sort by size
+		if reverse {
+			sort.SliceStable(sortedBuilds, func(i, j int) bool {
+				return sortedBuilds[i].Size > sortedBuilds[j].Size
+			})
+		} else {
+			sort.SliceStable(sortedBuilds, func(i, j int) bool {
+				return sortedBuilds[i].Size < sortedBuilds[j].Size
+			})
+		}
+	case 6: // Date
+		// Sort by build date
+		if reverse {
+			sort.SliceStable(sortedBuilds, func(i, j int) bool {
+				return sortedBuilds[i].BuildDate.Time().After(sortedBuilds[j].BuildDate.Time())
+			})
+		} else {
+			sort.SliceStable(sortedBuilds, func(i, j int) bool {
+				return sortedBuilds[i].BuildDate.Time().Before(sortedBuilds[j].BuildDate.Time())
+			})
+		}
+	}
+
+	return sortedBuilds
+}
+
+// getSortIndicator returns a string indicating the sort direction for a given column
+func getSortIndicator(m Model, column int, title string) string {
+	if m.sortColumn == column {
+		if m.sortReversed {
+			return "↓ " + title
+		} else {
+			return "↑ " + title
+		}
+	}
+	return title
 }

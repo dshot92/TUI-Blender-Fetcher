@@ -60,3 +60,16 @@ type BlenderBuild struct {
 	Status   string // e.g., "Online", "Downloading", "Downloaded", "Update Available", "Error"
 	// Selected field removed - we only work with highlighted builds now
 }
+
+// BlenderLaunchedMsg is sent when Blender is successfully launched
+// This allows the UI to handle launched state appropriately
+type BlenderLaunchedMsg struct {
+	Version string // The version of Blender that was launched
+}
+
+// BlenderExecMsg is sent when Blender should be executed directly
+// This will cause the TUI to exit and exec Blender in its place
+type BlenderExecMsg struct {
+	Version    string // The version of Blender to launch
+	Executable string // The path to the Blender executable
+}

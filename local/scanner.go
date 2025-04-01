@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"syscall"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 const versionMetaFilename = "version.json" // Consistency with download package
@@ -151,4 +155,123 @@ func DeleteBuild(downloadDir string, version string) (bool, error) {
 	
 	// Build not found
 	return false, nil
+}
+
+// LaunchBlenderCmd creates a command to launch Blender for a specific version
+func LaunchBlenderCmd(downloadDir string, version string) tea.Cmd {
+	return func() tea.Msg {
+		entries, err := os.ReadDir(downloadDir)
+		if err != nil {
+			return fmt.Errorf("failed to read download directory %s: %w", downloadDir, err)
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() && entry.Name() != ".downloading" {
+				dirPath := filepath.Join(downloadDir, entry.Name())
+				buildInfo, err := readBuildInfo(dirPath)
+				if err != nil {
+					// Error reading build info, but continue checking other directories
+					continue
+				}
+				
+				// Check if this is the build we want to launch
+				if buildInfo != nil && buildInfo.Version == version {
+					// Find the blender executable
+					blenderExe := findBlenderExecutable(dirPath)
+					if blenderExe == "" {
+						return fmt.Errorf("could not find Blender executable in %s", dirPath)
+					}
+					
+					// Return a message to the TUI to exit gracefully and run Blender
+					// This will allow Blender to take over the terminal completely
+					return model.BlenderExecMsg{
+						Version:    version,
+						Executable: blenderExe,
+					}
+				}
+			}
+		}
+		
+		return fmt.Errorf("Blender version %s not found", version)
+	}
+}
+
+// OpenDownloadDirCmd creates a command to open the download directory
+func OpenDownloadDirCmd(downloadDir string) tea.Cmd {
+	return func() tea.Msg {
+		// Create the directory if it doesn't exist
+		if _, err := os.Stat(downloadDir); os.IsNotExist(err) {
+			if err := os.MkdirAll(downloadDir, 0755); err != nil {
+				return fmt.Errorf("failed to create directory %s: %w", downloadDir, err)
+			}
+		}
+		
+		// Launch the file explorer
+		if err := openFileExplorer(downloadDir); err != nil {
+			return fmt.Errorf("failed to open directory: %w", err)
+		}
+		
+		return nil // Success, no message needed
+	}
+}
+
+// findBlenderExecutable locates the Blender executable in the installation directory
+func findBlenderExecutable(installDir string) string {
+	// First, check for common locations based on platform
+	// Linux: blender or blender.sh
+	linuxCandidates := []string{
+		filepath.Join(installDir, "blender"),
+		filepath.Join(installDir, "blender.sh"),
+	}
+	
+	for _, candidate := range linuxCandidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	
+	// If not found in common locations, search recursively
+	var result string
+	filepath.Walk(installDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip and continue
+		}
+		
+		if !info.IsDir() && (info.Name() == "blender" || info.Name() == "blender.sh") {
+			// Check if it's executable
+			if info.Mode()&0111 != 0 {
+				result = path
+				return filepath.SkipDir // Stop walking once found
+			}
+		}
+		return nil
+	})
+	
+	return result
+}
+
+// openFileExplorer opens the default file explorer to the specified directory
+func openFileExplorer(dir string) error {
+	// For Linux, try xdg-open first
+	var cmd *exec.Cmd
+	if _, err := exec.LookPath("xdg-open"); err == nil {
+		cmd = exec.Command("xdg-open", dir)
+	} else if _, err := exec.LookPath("gnome-open"); err == nil {
+		cmd = exec.Command("gnome-open", dir)
+	} else if _, err := exec.LookPath("kde-open"); err == nil {
+		cmd = exec.Command("kde-open", dir)
+	} else {
+		// Fallback: Just try xdg-open anyway
+		cmd = exec.Command("xdg-open", dir)
+	}
+	
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	
+	// Detach process from terminal
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid: true,
+	}
+	
+	return cmd.Start()
 }
