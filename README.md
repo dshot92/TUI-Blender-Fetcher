@@ -1,59 +1,37 @@
-# Blender Fetcher
+# TUI Blender Launcher (Go Version)
 
-A utility for finding, downloading, and managing Blender builds.
+A Terminal User Interface (TUI) application written in Go for finding, downloading, managing, and launching Blender builds.
+
+## Features
+
+- Browse available Blender builds.
+- Manage locally downloaded Blender installations.
+- Launch installed Blender versions directly from the TUI.
 
 ## Installation
 
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/sh-dotfiles.git
-cd sh-dotfiles/shell/blender_fetcher
-```
+### Prerequisites
 
-2. Install the required dependencies:
-```bash
-pip install -r requirements.txt
-```
+- Go
+- Git
 
-3. Install the package:
 ```bash
-pip install -e .
+git clone https://github.com/dshot92/TUI-Blender-Launcher.git
+cd TUI-Blender-Launcher
+
+go mod tidy
+
+# Run
+go run main
+
+# Build
+go build
 ```
 
 ## Usage
 
-Run the application:
+Run the application from your terminal:
+
 ```bash
-fetch-blender-build
+./TUI-Blender-Launcher
 ```
-
-Or use the shorter alias:
-```bash
-fbb
-```
-
-### Features
-
-- Browse and download Blender builds from the official Blender site
-- Manage local Blender installations
-- Launch installed Blender versions
-
-### Controls
-
-- **Arrow keys** or **HJKL**: Navigate
-- **Space**: Select/deselect a build
-- **F**: Fetch online builds
-- **D**: Download selected build(s)
-- **Enter**: Launch selected Blender version
-- **R**: Reverse sort order
-- **S**: Open settings
-- **Q**: Quit
-
-## Requirements
-
-- Python 3.6+
-- Rich 13.9.4 or higher 
-
-### Links
-[Rich Docs](https://rich.readthedocs.io/en/latest/#)
-[Rich GitHub](https://github.com/Textualize/rich)
