@@ -4,7 +4,6 @@ import (
 	"TUI-Blender-Launcher/model"
 	"TUI-Blender-Launcher/types"
 	"bytes"
-	"fmt"
 	"strings"
 	"time"
 
@@ -174,23 +173,15 @@ func GetBuildColumns(visibleColumns map[string]bool) []ColumnConfig {
 	}
 }
 
-// RenderRows renders all visible rows based on current scroll position
-func RenderRows(m Model, maxShownBuilds int) string {
+// RenderRows renders all rows without scrolling
+func RenderRows(m Model) string {
 	var output bytes.Buffer
-
-	// Calculate end index for iteration
-	endIdx := m.scrollOffset + maxShownBuilds
-	if endIdx > len(m.builds) {
-		endIdx = len(m.builds)
-	}
 
 	// Get column configuration
 	columns := GetBuildColumns(m.visibleColumns)
 
-	// Render each visible row
-	for i := m.scrollOffset; i < endIdx; i++ {
-		build := m.builds[i]
-
+	// Render each row
+	for i, build := range m.builds {
 		// Create buildID to check for download state
 		buildID := build.Version + "-" + build.Hash
 
@@ -200,7 +191,7 @@ func RenderRows(m Model, maxShownBuilds int) string {
 			downloadState = state
 		}
 
-		// Create and render row
+		// Create and render row; highlight if this is the current row
 		row := NewRow(build, i == m.cursor, downloadState)
 		output.WriteString(row.Render(columns))
 		output.WriteString("\n")
@@ -296,6 +287,8 @@ func CancelDownload(states map[string]*DownloadState, buildID string) bool {
 
 // renderBuildContent renders the table content
 func (m Model) renderBuildContent(availableHeight int) string {
+	var output bytes.Buffer
+
 	if m.isLoading {
 		// Show loading message in the middle of the screen
 		return lp.Place(
@@ -324,15 +317,11 @@ func (m Model) renderBuildContent(availableHeight int) string {
 		)
 	}
 
-	var output bytes.Buffer
-
-	// Add the table header to the top of the table, ensuring it ends with a newline
-	// Create header row with column styles
+	// Build header row
 	var headerBuffer bytes.Buffer
 	columns := GetBuildColumns(m.visibleColumns)
 	for colIdx, col := range columns {
 		if col.Visible {
-			// Apply the same style as rows but make headers bold
 			headerText := col.Name
 
 			// Add sort indicators for the currently sorted column
@@ -359,59 +348,9 @@ func (m Model) renderBuildContent(availableHeight int) string {
 	}
 	output.WriteString(headerStr)
 
-	// Calculate the header height by counting only non-empty lines
-	headerLines := 0
-	for _, line := range strings.Split(headerStr, "\n") {
-		if strings.TrimSpace(line) != "" {
-			headerLines++
-		}
-	}
-
-	// Calculate how many builds we can show in the available space dynamically
-	maxShownBuilds := availableHeight - headerLines
-
-	// Ensure we have at least 1 row
-	if maxShownBuilds < 1 {
-		maxShownBuilds = 1
-	}
-
-	// Update the model's visible rows count
-	m.visibleRows = maxShownBuilds
-
-	// Adjust scroll offset if needed to ensure the selected build is visible
-	if m.cursor < m.scrollOffset {
-		m.scrollOffset = m.cursor
-	} else if m.cursor >= m.scrollOffset+maxShownBuilds {
-		m.scrollOffset = m.cursor - maxShownBuilds + 1
-	}
-
-	// Ensure scroll offset doesn't go out of bounds
-	if m.scrollOffset < 0 {
-		m.scrollOffset = 0
-	}
-	if m.scrollOffset > len(m.builds)-1 {
-		m.scrollOffset = len(m.builds) - 1
-	}
-
-	// Calculate the end index for iteration
-	endIdx := m.scrollOffset + maxShownBuilds
-	if endIdx > len(m.builds) {
-		endIdx = len(m.builds)
-	}
-
-	// Render all rows using our new row.go functionality
-	rowsContent := RenderRows(m, maxShownBuilds)
+	// Render all rows without scrolling (simple navigation)
+	rowsContent := RenderRows(m)
 	output.WriteString(rowsContent)
-
-	// If there are more items below what we're showing, add an indicator
-	if len(m.builds) > endIdx {
-		moreIndicator := fmt.Sprintf(" ↓ %d more ", len(m.builds)-endIdx)
-		output.WriteString(lp.NewStyle().
-			Foreground(lp.Color(colorInfo)).
-			Align(lp.Right).
-			Width(m.terminalWidth).
-			Render(moreIndicator))
-	}
 
 	return lp.Place(m.terminalWidth, availableHeight, lp.Left, lp.Top, output.String())
 }

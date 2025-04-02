@@ -16,8 +16,6 @@ import (
 type Model struct {
 	builds           []model.BlenderBuild
 	cursor           int
-	scrollOffset     int // Tracks the scroll position in the build list
-	visibleRows      int // Number of rows that can be displayed at once
 	config           config.Config
 	err              error
 	terminalWidth    int

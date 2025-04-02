@@ -56,17 +56,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.UpdateWindowSize(msg.Width, msg.Height)
-		// Adjust cursor and scroll if needed
 		if len(m.builds) > 0 && m.cursor >= len(m.builds) {
 			m.cursor = len(m.builds) - 1
-		}
-		if m.cursor < m.scrollOffset {
-			m.scrollOffset = m.cursor
-		} else if m.cursor >= m.scrollOffset+m.visibleRows {
-			m.scrollOffset = m.cursor - m.visibleRows + 1
-		}
-		if m.scrollOffset < 0 {
-			m.scrollOffset = 0
 		}
 		return m, nil
 
@@ -304,90 +295,15 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))):
 			if m.cursor > 0 {
 				m.cursor--
-
-				// Handle scrolling: if cursor moves above visible area, scroll up
-				if m.cursor < m.scrollOffset {
-					m.scrollOffset = m.cursor
-				}
 			} else if len(m.builds) > 0 {
-				// Wrap around to bottom
 				m.cursor = len(m.builds) - 1
-
-				// When wrapping to bottom, set scroll to show the last page of items
-				lastPageStart := len(m.builds) - m.visibleRows
-				if lastPageStart < 0 {
-					lastPageStart = 0
-				}
-				m.scrollOffset = lastPageStart
 			}
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("down", "j"))):
 			if len(m.builds) > 0 && m.cursor < len(m.builds)-1 {
 				m.cursor++
-
-				// Handle scrolling: if cursor moves below visible area, scroll down
-				if m.cursor >= m.scrollOffset+m.visibleRows {
-					m.scrollOffset = m.cursor - m.visibleRows + 1
-				}
 			} else {
-				// Wrap around to top
 				m.cursor = 0
-				m.scrollOffset = 0 // Reset scroll to top when wrapping
-			}
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("page_up"))):
-			// Move cursor and scroll up a full page
-			if len(m.builds) > 0 {
-				// Calculate new cursor position (move up by visible rows)
-				m.cursor -= m.visibleRows
-				if m.cursor < 0 {
-					m.cursor = 0
-				}
-
-				// Also move scroll position up by visible rows
-				m.scrollOffset -= m.visibleRows
-				if m.scrollOffset < 0 {
-					m.scrollOffset = 0
-				}
-			}
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("page_down"))):
-			// Move cursor and scroll down a full page
-			if len(m.builds) > 0 {
-				// Calculate new cursor position (move down by visible rows)
-				m.cursor += m.visibleRows
-				if m.cursor >= len(m.builds) {
-					m.cursor = len(m.builds) - 1
-				}
-
-				// Also move scroll position down by visible rows
-				m.scrollOffset += m.visibleRows
-				maxScroll := len(m.builds) - m.visibleRows
-				if maxScroll < 0 {
-					maxScroll = 0
-				}
-				if m.scrollOffset > maxScroll {
-					m.scrollOffset = maxScroll
-				}
-			}
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("home"))):
-			// Move to the first build
-			if len(m.builds) > 0 {
-				m.cursor = 0
-				m.scrollOffset = 0
-			}
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("end"))):
-			// Move to the last build
-			if len(m.builds) > 0 {
-				m.cursor = len(m.builds) - 1
-
-				// Set scroll position to show last item
-				m.scrollOffset = len(m.builds) - m.visibleRows
-				if m.scrollOffset < 0 {
-					m.scrollOffset = 0
-				}
 			}
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("right", "l"))):
