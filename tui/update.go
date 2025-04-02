@@ -23,9 +23,6 @@ func (m Model) Init() tea.Cmd {
 	// Start with local build scan to get builds already on disk
 	cmds = append(cmds, m.scanLocalBuildsCmd())
 
-	// Get information about old builds
-	cmds = append(cmds, m.getOldBuildsInfoCmd())
-
 	// Start the continuous tick system for UI updates
 	cmds = append(cmds, m.tickCmd())
 
@@ -42,8 +39,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.currentView {
 		case viewSettings, viewInitialSetup:
 			return m.updateSettingsView(keyMsg)
-		case viewCleanupConfirm:
-			return m.updateCleanupConfirmView(keyMsg)
 		case viewQuitConfirm:
 			return m.updateQuitConfirmView(keyMsg)
 		default:
@@ -113,30 +108,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-
-	case oldBuildsInfo:
-		if msg.err != nil {
-			log.Printf("Error getting old builds info: %v", msg.err)
-		} else {
-			m.oldBuildsCount = msg.count
-			m.oldBuildsSize = msg.size
-		}
-		return m, nil
-
-	case cleanupOldBuildsMsg:
-		if msg.err != nil {
-			m.err = msg.err
-		} else {
-			return m, m.getOldBuildsInfoCmd()
-		}
-		return m, nil
-
-	case tickMsg:
-		return m.handleDownloadProgress(msg)
-
-	default:
-		return m, nil
 	}
+
+	// Default catch-all return
+	return m, nil
 }
 
 // updateSettingsView handles key events in the settings view
@@ -397,31 +372,10 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(
 				m.fetchBuildsCmd(),
 				m.scanLocalBuildsCmd(),
-				m.getOldBuildsInfoCmd(),
 			)
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("s"))):
 			return m.handleShowSettings()
-		}
-	}
-
-	return m, nil
-}
-
-// updateCleanupConfirmView handles key events in the cleanup confirmation dialog
-func (m Model) updateCleanupConfirmView(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, key.NewBinding(key.WithKeys("esc", "n", "ctrl+c"))):
-			// Cancel cleanup and return to list view
-			m.currentView = viewList
-			return m, nil
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("y", "enter"))):
-			// Confirm cleanup and execute it
-			m.currentView = viewList
-			return m, m.cleanupOldBuildsCmd()
 		}
 	}
 

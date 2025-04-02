@@ -8,14 +8,8 @@ import (
 // It picks either the settings page or builds page based on the current view.
 func (m Model) View() string {
 	// If an overlay dialog is active, render it centered.
-	if m.currentView == viewCleanupConfirm || m.currentView == viewQuitConfirm {
-		var dialogContent string
-		if m.currentView == viewCleanupConfirm {
-			dialogContent = m.renderCleanupConfirmDialog()
-		} else {
-			dialogContent = m.renderQuitConfirmDialog()
-		}
-		return lp.Place(m.terminalWidth, m.terminalHeight, lp.Center, lp.Center, dialogContent)
+	if m.currentView == viewQuitConfirm {
+		return lp.Place(m.terminalWidth, m.terminalHeight, lp.Center, lp.Center, m.renderQuitConfirmDialog())
 	}
 
 	return m.renderPageForView()

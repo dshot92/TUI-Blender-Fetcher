@@ -107,7 +107,7 @@ func GetBuildColumns(visibleColumns map[string]bool) []ColumnConfig {
 			Width:   columnConfigs["Version"].width,
 			Index:   0,
 			Style: func(s string) string {
-				return cellStyleLeft.Width(columnConfigs["Version"].width).Render(s)
+				return cellStyleCenter.Width(columnConfigs["Version"].width).Render(s)
 			},
 		},
 		{
@@ -157,7 +157,7 @@ func GetBuildColumns(visibleColumns map[string]bool) []ColumnConfig {
 			Width:   columnConfigs["Size"].width,
 			Index:   5,
 			Style: func(s string) string {
-				return cellStyleRight.Width(columnConfigs["Size"].width).Render(s)
+				return cellStyleCenter.Width(columnConfigs["Size"].width).Render(s)
 			},
 		},
 		{
@@ -303,11 +303,9 @@ func (m Model) renderBuildContent(availableHeight int) string {
 	if len(m.builds) == 0 {
 		// No builds to display
 		var msg string
-		if m.config.ManualFetch {
-			msg = "No Blender builds found locally.\nPress 'f' to fetch available builds."
-		} else {
-			msg = "No Blender builds found locally or online."
-		}
+
+		msg = "No Blender builds found locally or online."
+
 		return lp.Place(
 			m.terminalWidth,
 			availableHeight,

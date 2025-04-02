@@ -44,10 +44,7 @@ func (m Model) renderBuildFooter() string {
 		}
 	}
 
-	// Fetch command if manual fetch is enabled
-	if m.config.ManualFetch {
-		commands = append(commands, fmt.Sprintf("%s Fetch builds", keyStyle.Render("f")))
-	}
+	commands = append(commands, fmt.Sprintf("%s Fetch builds", keyStyle.Render("f")))
 
 	return strings.Join(commands, separator)
 }
@@ -63,7 +60,6 @@ func (m Model) renderSettingsFooter() string {
 	commands = append(commands, fmt.Sprintf("%s Save", keyStyle.Render("s")))
 	commands = append(commands, fmt.Sprintf("%s Quit", keyStyle.Render("q")))
 	commands = append(commands, fmt.Sprintf("%s Edit", keyStyle.Render("enter")))
-	commands = append(commands, fmt.Sprintf("%s Cleanup", keyStyle.Render("c")))
 
 	footerText := strings.Join(commands, separator)
 

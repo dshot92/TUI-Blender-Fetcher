@@ -4,7 +4,6 @@ import (
 	"TUI-Blender-Launcher/config"
 	"TUI-Blender-Launcher/model"
 	"TUI-Blender-Launcher/types"
-	"fmt"
 	"sync"
 	"time"
 
@@ -32,9 +31,6 @@ type Model struct {
 	downloadStates   map[string]*DownloadState // Key is now buildID instead of just version
 	downloadMutex    sync.Mutex
 	blenderRunning   string
-	oldBuildsCount   int
-	oldBuildsSize    int64
-	deleteCandidate  string // Version of build being considered for deletion
 	activeDownloadID string // Store the active download build ID for tracking
 }
 
@@ -75,7 +71,7 @@ func InitialModel(cfg config.Config, needsSetup bool) Model {
 
 	if needsSetup {
 		m.currentView = viewInitialSetup
-		m.settingsInputs = make([]textinput.Model, 3)
+		m.settingsInputs = make([]textinput.Model, 2)
 		m.editMode = true // Enable edit mode immediately for initial setup
 
 		var t textinput.Model
@@ -95,14 +91,6 @@ func InitialModel(cfg config.Config, needsSetup bool) Model {
 		t.CharLimit = 10
 		t.Width = 50
 		m.settingsInputs[1] = t
-
-		// Manual Fetch input
-		t = textinput.New()
-		t.Placeholder = "true/false"
-		t.SetValue(fmt.Sprintf("%t", cfg.ManualFetch))
-		t.CharLimit = 5
-		t.Width = 50
-		m.settingsInputs[2] = t
 
 		m.focusIndex = 0 // Start focus on the first input
 	} else {

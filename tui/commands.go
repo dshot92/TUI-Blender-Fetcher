@@ -313,22 +313,6 @@ func (cm *CommandManager) DoDownload(build model.BlenderBuild) tea.Cmd {
 	return nil
 }
 
-// GetOldBuildsInfo creates a command to check for old builds info
-func (cm *CommandManager) GetOldBuildsInfo() tea.Cmd {
-	return func() tea.Msg {
-		count, size, err := local.GetOldBuildsInfo(cm.Config.DownloadDir)
-		return oldBuildsInfo{count: count, size: size, err: err}
-	}
-}
-
-// CleanupOldBuilds creates a command to clean up old builds
-func (cm *CommandManager) CleanupOldBuilds() tea.Cmd {
-	return func() tea.Msg {
-		err := local.DeleteAllOldBuilds(cm.Config.DownloadDir)
-		return cleanupOldBuildsMsg{err: err}
-	}
-}
-
 // UIRefresh creates a command that forces a UI refresh
 func (cm *CommandManager) UIRefresh() tea.Cmd {
 	return func() tea.Msg {

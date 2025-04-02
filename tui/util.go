@@ -6,17 +6,6 @@ import (
 	"sort"
 )
 
-// pluralize returns singular or plural form based on count
-func pluralize(count int, singular string, plural string) string {
-	if count == 1 {
-		return singular
-	}
-	if plural == "" {
-		return singular + "s"
-	}
-	return plural
-}
-
 // formatByteSize converts bytes to human-readable sizes
 func formatByteSize(bytes int64) string {
 	const unit = 1024

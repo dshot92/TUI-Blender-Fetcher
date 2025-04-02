@@ -194,19 +194,11 @@ func (m Model) handleShowSettings() (tea.Model, tea.Cmd) {
 		t.CharLimit = 10
 		t.Width = 50
 		m.settingsInputs[1] = t
-
-		// Manual Fetch input
-		t = textinput.New()
-		t.Placeholder = "true/false"
-		t.CharLimit = 5
-		t.Width = 50
-		m.settingsInputs[2] = t
 	}
 
 	// Copy current config values
 	m.settingsInputs[0].SetValue(m.config.DownloadDir)
 	m.settingsInputs[1].SetValue(m.config.VersionFilter)
-	m.settingsInputs[2].SetValue(fmt.Sprintf("%t", m.config.ManualFetch))
 
 	// Focus first input (but don't focus for editing yet)
 	m.focusIndex = 0
@@ -231,21 +223,20 @@ func (m Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
 		selectedBuild := m.builds[m.cursor]
 		// Only allow deleting local builds or builds that can be updated
 		if selectedBuild.Status == types.StateLocal || selectedBuild.Status == types.StateUpdate {
-			m.deleteCandidate = selectedBuild.Version
 			// Directly delete the build without confirmation
 			return m, func() tea.Msg {
-				success, err := local.DeleteBuild(m.config.DownloadDir, m.deleteCandidate)
+				success, err := local.DeleteBuild(m.config.DownloadDir, selectedBuild.Version)
 				if err != nil {
 					return errMsg{err}
 				}
 
 				if !success {
-					return errMsg{fmt.Errorf("failed to delete build %s", m.deleteCandidate)}
+					return errMsg{fmt.Errorf("failed to delete build %s", selectedBuild.Version)}
 				}
 
 				// Update build statuses after deletion
 				for i := range m.builds {
-					if m.builds[i].Version == m.deleteCandidate {
+					if m.builds[i].Version == selectedBuild.Version {
 						m.builds[i].Status = types.StateOnline
 						break
 					}
@@ -261,11 +252,6 @@ func (m Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
 
 // handleCleanupOldBuilds prepares to clean up old builds
 func (m Model) handleCleanupOldBuilds() (tea.Model, tea.Cmd) {
-	if m.oldBuildsCount > 0 {
-		// Prompt for confirmation
-		m.currentView = viewCleanupConfirm
-		return m, nil
-	}
 	return m, nil
 }
 
@@ -580,7 +566,6 @@ func saveSettings(m *Model) (tea.Model, tea.Cmd) {
 	// Ensure we get the current values from the inputs
 	downloadDir := m.settingsInputs[0].Value()
 	versionFilter := m.settingsInputs[1].Value()
-	manualFetchStr := m.settingsInputs[2].Value()
 
 	// Validate and sanitize inputs
 	if downloadDir == "" {
@@ -589,18 +574,9 @@ func saveSettings(m *Model) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Verify boolean value
-	manualFetch := m.config.ManualFetch // Default to existing value
-	if manualFetchStr == "true" {
-		manualFetch = true
-	} else if manualFetchStr == "false" {
-		manualFetch = false
-	}
-
 	// Update config values
 	m.config.DownloadDir = downloadDir
 	m.config.VersionFilter = versionFilter
-	m.config.ManualFetch = manualFetch
 
 	// Save the config
 	err := config.SaveConfig(m.config)
@@ -618,7 +594,6 @@ func saveSettings(m *Model) (tea.Model, tea.Cmd) {
 		cmdManager := NewCommandManager(m.config, m.downloadStates, &m.downloadMutex)
 		return m, tea.Batch(
 			cmdManager.ScanLocalBuilds(),
-			cmdManager.GetOldBuildsInfo(),
 			cmdManager.FetchBuilds(),
 		)
 	}

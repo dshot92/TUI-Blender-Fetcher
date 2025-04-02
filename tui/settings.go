@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	lp "github.com/charmbracelet/lipgloss"
@@ -23,18 +22,21 @@ func (m Model) renderSettingsContent(availableHeight int) string {
 	settingLabels := []string{
 		"Download Directory:",
 		"Version Filter:",
-		"Manual Fetch:",
 	}
 
 	// Descriptions for each setting to help users understand
 	settingDescriptions := []string{
 		"Where Blender builds will be downloaded and installed",
 		"Only show versions matching this filter (e.g., '4.0' or '3.6')",
-		"If true, online builds are only checked when requested",
 	}
 
 	// Render each setting with label and input field
 	for i := 0; i < settingsCount; i++ {
+		// Skip if we don't have a corresponding label/description
+		if i >= len(settingLabels) || i >= len(settingDescriptions) {
+			continue
+		}
+
 		// Determine if this input is focused
 		isFocused := m.editMode && i == m.focusIndex
 
@@ -55,26 +57,6 @@ func (m Model) renderSettingsContent(availableHeight int) string {
 	return lp.Place(m.terminalWidth, availableHeight, lp.Left, lp.Top, b.String())
 }
 
-// renderCleanupConfirmDialog renders the dialog for confirming cleanup of older builds
-func (m Model) renderCleanupConfirmDialog() string {
-	var content strings.Builder
-
-	title := "Clean up old Blender builds?"
-	content.WriteString(lp.NewStyle().Bold(true).Render(title) + "\n\n")
-
-	// Show information about what will be removed
-	content.WriteString(fmt.Sprintf("This will remove %d %s, freeing up %s of disk space.\n\n",
-		m.oldBuildsCount,
-		pluralize(m.oldBuildsCount, "build", ""),
-		formatByteSize(m.oldBuildsSize)))
-
-	// Instructions
-	content.WriteString("Press Enter to confirm, Esc to cancel")
-
-	// Create a styled dialog box
-	return m.renderDialogBox(content.String(), cleanupDialogWidth)
-}
-
 // renderQuitConfirmDialog renders the dialog confirming a quit during an active download
 func (m Model) renderQuitConfirmDialog() string {
 	var content strings.Builder
@@ -90,7 +72,7 @@ func (m Model) renderQuitConfirmDialog() string {
 	content.WriteString("Press Enter to quit anyway, Esc to cancel")
 
 	// Create a styled dialog box
-	return m.renderDialogBox(content.String(), quitDialogWidth)
+	return m.renderDialogBox(content.String(), 60)
 }
 
 // renderDialogBox creates a styled dialog box with the given content
