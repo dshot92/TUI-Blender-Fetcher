@@ -7,7 +7,7 @@ import (
 )
 
 // renderSettingsContent renders the settings page content
-func (m Model) renderSettingsContent(availableHeight int) string {
+func (m *Model) renderSettingsContent(availableHeight int) string {
 	var b strings.Builder
 
 	if m.currentView == viewInitialSetup {
@@ -58,7 +58,7 @@ func (m Model) renderSettingsContent(availableHeight int) string {
 }
 
 // renderQuitConfirmDialog renders the dialog confirming a quit during an active download
-func (m Model) renderQuitConfirmDialog() string {
+func (m *Model) renderQuitConfirmDialog() string {
 	var content strings.Builder
 
 	title := "Quit during active download?"
@@ -76,7 +76,7 @@ func (m Model) renderQuitConfirmDialog() string {
 }
 
 // renderDialogBox creates a styled dialog box with the given content
-func (m Model) renderDialogBox(content string, width int) string {
+func (m *Model) renderDialogBox(content string, width int) string {
 	// Create a box with a border
 	boxStyle := lp.NewStyle().
 		Border(lp.NormalBorder()).

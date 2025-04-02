@@ -49,7 +49,7 @@ type DownloadState struct {
 }
 
 // InitialModel creates the initial state of the TUI model.
-func InitialModel(cfg config.Config, needsSetup bool) Model {
+func InitialModel(cfg config.Config, needsSetup bool) *Model {
 	// Configure the progress bar with fixed settings for consistent column display
 	progModel := progress.New(
 		progress.WithGradient("#FFAA00", "#FFD700"), // Orange gradient (was blue)
@@ -58,7 +58,7 @@ func InitialModel(cfg config.Config, needsSetup bool) Model {
 		progress.WithSolidFill("#FFAA00"),           // Orange fill for visibility (was blue)
 	)
 
-	m := Model{
+	m := &Model{
 		config:         cfg,
 		isLoading:      !needsSetup,
 		downloadStates: make(map[string]*DownloadState),

@@ -23,8 +23,7 @@ func (m *Model) updateInputs(msg tea.Msg) tea.Cmd {
 		return nil
 	}
 
-	var cmds []tea.Cmd
-	cmds = make([]tea.Cmd, len(m.settingsInputs))
+	var cmds []tea.Cmd = make([]tea.Cmd, len(m.settingsInputs))
 
 	// Only update the currently focused input
 	if m.focusIndex >= 0 && m.focusIndex < len(m.settingsInputs) {
