@@ -20,6 +20,11 @@ func formatByteSize(bytes int64) string {
 	return fmt.Sprintf("%.1f%cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
+// formatBuildDate formats a build date in yyyy-mm-dd-hh-mm format
+func formatBuildDate(t model.Timestamp) string {
+	return t.Time().Format("2006-01-02-15:04")
+}
+
 // sortBuilds sorts the builds based on the selected column and sort order
 func sortBuilds(builds []model.BlenderBuild, column int, reverse bool) []model.BlenderBuild {
 	// Create a copy of builds to avoid modifying the original

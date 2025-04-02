@@ -12,17 +12,17 @@ import (
 
 // Row represents a single row in the builds table
 type Row struct {
-	Build         model.BlenderBuild
-	IsSelected    bool
-	DownloadState *DownloadState
+	Build      model.BlenderBuild
+	IsSelected bool
+	Status     *DownloadState
 }
 
 // NewRow creates a new row instance from a build
-func NewRow(build model.BlenderBuild, isSelected bool, downloadState *DownloadState) Row {
+func NewRow(build model.BlenderBuild, isSelected bool, status *DownloadState) Row {
 	return Row{
-		Build:         build,
-		IsSelected:    isSelected,
-		DownloadState: downloadState,
+		Build:      build,
+		IsSelected: isSelected,
+		Status:     status,
 	}
 }
 
@@ -46,22 +46,11 @@ func (r Row) Render(columns []ColumnConfig) string {
 			case "Type":
 				cellContent = r.Build.ReleaseCycle
 			case "Hash":
-				// Truncate hash for display
-				if len(r.Build.Hash) > 8 {
-					cellContent = r.Build.Hash[:8]
-				} else {
-					cellContent = r.Build.Hash
-				}
+				cellContent = r.Build.Hash
 			case "Size":
 				cellContent = formatByteSize(r.Build.Size)
 			case "Build Date":
-				// Get timestamp as proper time.Time
-				buildTime := r.Build.BuildDate.Time()
-				if !buildTime.IsZero() {
-					cellContent = buildTime.Format("2006-01-02")
-				} else {
-					cellContent = "Unknown"
-				}
+				cellContent = formatBuildDate(r.Build.BuildDate)
 			}
 
 			// Apply column-specific style to cell content
@@ -84,7 +73,7 @@ func (r Row) Render(columns []ColumnConfig) string {
 // renderStatus renders the status cell with appropriate formatting
 // This is where download and extraction progress is displayed
 func (r Row) renderStatus() string {
-	return FormatBuildStatus(r.Build.Status, r.DownloadState)
+	return FormatBuildStatus(r.Build.Status, r.Status)
 }
 
 // ColumnConfig represents the configuration for a table column
