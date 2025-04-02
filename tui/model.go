@@ -157,3 +157,8 @@ func calculateColumnWidths(terminalWidth int) {
 		}
 	}
 }
+
+func (m *Model) View() string {
+	// Render the page using the custom render function.
+	return m.renderPageForView()
+}

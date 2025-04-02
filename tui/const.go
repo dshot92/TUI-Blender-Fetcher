@@ -33,9 +33,6 @@ const (
 	viewList viewState = iota
 	viewInitialSetup
 	viewSettings
-	viewDeleteConfirm  // New state for delete confirmation
-	viewCleanupConfirm // Confirmation for cleaning up old builds
-	viewQuitConfirm    // Confirmation for quitting during download
 )
 
 // Styles using lipgloss
@@ -49,7 +46,7 @@ var (
 	// Footer style
 	footerStyle = lp.NewStyle().MarginTop(1).Padding(1, 1).Foreground(lp.Color(colorForeground))
 	// Define base styles for columns (can be customized further)
-	cellStyleCenter = lp.NewStyle().Align(lp.Center)
+	
 )
 
 // Column configuration

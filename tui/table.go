@@ -88,6 +88,7 @@ type ColumnConfig struct {
 
 // GetBuildColumns returns the column configuration for the build table
 func GetBuildColumns(visibleColumns map[string]bool) []ColumnConfig {
+	var cellStyleCenter = lp.NewStyle().Align(lp.Center)
 	return []ColumnConfig{
 		{
 			Name:    "Version",

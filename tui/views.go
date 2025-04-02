@@ -4,17 +4,6 @@ import (
 	lp "github.com/charmbracelet/lipgloss"
 )
 
-// View renders the current view of the model using a unified layout.
-// It picks either the settings page or builds page based on the current view.
-func (m *Model) View() string {
-	// If an overlay dialog is active, render it centered.
-	if m.currentView == viewQuitConfirm {
-		return lp.Place(m.terminalWidth, m.terminalHeight, lp.Center, lp.Center, m.renderQuitConfirmDialog())
-	}
-
-	return m.renderPageForView()
-}
-
 func (m *Model) renderPageForView() string {
 	header := m.renderCommonHeader()
 	headerHeight := 5

@@ -3,7 +3,6 @@ package tui
 import (
 	"TUI-Blender-Launcher/model"
 	"TUI-Blender-Launcher/types"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,10 +38,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.currentView {
 		case viewSettings, viewInitialSetup:
 			return m.updateSettingsView(keyMsg)
-		case viewQuitConfirm:
-			return m.updateQuitConfirmView(keyMsg)
 		default:
-			// For viewList and any other views, use the list view handler
 			return m.updateListView(keyMsg)
 		}
 	}
@@ -79,10 +75,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case model.BlenderExecMsg:
 		return m.handleBlenderExec(msg)
-
-	case deleteBuildCompleteMsg:
-		m.currentView = viewList
-		return m, m.fetchBuildsCmd()
 
 	case startDownloadMsg:
 		m.activeDownloadID = msg.buildID
@@ -127,24 +119,6 @@ func (m *Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c", "q"))):
-			// Check if there are any active downloads before quitting
-			hasActiveDownloads := false
-			m.downloadMutex.Lock()
-			for _, state := range m.downloadStates {
-				if state.BuildState == types.StateDownloading ||
-					state.BuildState == types.StatePreparing ||
-					state.BuildState == types.StateExtracting {
-					hasActiveDownloads = true
-					break
-				}
-			}
-			m.downloadMutex.Unlock()
-
-			if hasActiveDownloads {
-				// Show confirmation dialog
-				m.currentView = viewQuitConfirm
-				return m, nil
-			}
 			// No active downloads, quit immediately
 			return m, tea.Quit
 
@@ -243,26 +217,6 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c", "q"))):
 			// Check if there are any active downloads before quitting
-			hasActiveDownloads := false
-			m.downloadMutex.Lock()
-			for _, state := range m.downloadStates {
-				if state.BuildState == types.StateDownloading ||
-					state.BuildState == types.StatePreparing ||
-					state.BuildState == types.StateExtracting {
-					hasActiveDownloads = true
-					break
-				}
-			}
-			m.downloadMutex.Unlock()
-
-			if hasActiveDownloads {
-				// Show confirmation dialog
-				m.currentView = viewQuitConfirm
-				return m, nil
-			}
-			// No active downloads, quit immediately
-			return m, tea.Quit
-
 		case key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))):
 			if m.cursor > 0 {
 				m.cursor--
@@ -372,92 +326,6 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("s"))):
 			return m.handleShowSettings()
-		}
-	}
-
-	return m, nil
-}
-
-// updateQuitConfirmView handles key events in the quit confirmation dialog
-func (m *Model) updateQuitConfirmView(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, key.NewBinding(key.WithKeys("esc", "n", "ctrl+c"))):
-			// Cancel quit and return to list view
-			m.currentView = viewList
-			return m, nil
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("y", "enter"))):
-			// Confirm quit and cancel all downloads
-			var versionsToCleanup []string
-
-			m.downloadMutex.Lock()
-			for version, state := range m.downloadStates {
-				if state.BuildState == types.StateDownloading ||
-					state.BuildState == types.StatePreparing ||
-					state.BuildState == types.StateExtracting {
-					// Signal cancellation by closing the channel
-					select {
-					case <-state.CancelCh:
-						// Already closed, do nothing
-					default:
-						// Close the channel to signal cancellation
-						close(state.CancelCh)
-					}
-
-					// Add this version to cleanup list
-					versionsToCleanup = append(versionsToCleanup, version)
-				}
-			}
-			m.downloadMutex.Unlock()
-
-			// Clean up any partial downloads
-			for _, version := range versionsToCleanup {
-				// Clean up downloaded file in .downloading directory
-				downloadDir := filepath.Join(m.config.DownloadDir, ".downloading")
-				files, err := os.ReadDir(downloadDir)
-				if err != nil {
-					log.Printf("Warning: couldn't read .downloading directory: %v", err)
-				} else {
-					for _, file := range files {
-						if strings.Contains(file.Name(), version) {
-							filePath := filepath.Join(downloadDir, file.Name())
-							if err := os.Remove(filePath); err != nil {
-								log.Printf("Warning: failed to remove partial download %s: %v", filePath, err)
-							} else {
-								log.Printf("Cleaned up partial download: %s", filePath)
-							}
-						}
-					}
-				}
-
-				// Also clean up any partially extracted directories
-				entries, err := os.ReadDir(m.config.DownloadDir)
-				if err != nil {
-					log.Printf("Warning: couldn't read download directory: %v", err)
-				} else {
-					for _, entry := range entries {
-						if entry.IsDir() && strings.Contains(entry.Name(), version) {
-							dirPath := filepath.Join(m.config.DownloadDir, entry.Name())
-
-							// Check if this is a complete build by looking for version.json
-							metaPath := filepath.Join(dirPath, "version.json")
-							if _, err := os.Stat(metaPath); os.IsNotExist(err) {
-								// No version.json, so this is likely a partial extraction
-								if err := os.RemoveAll(dirPath); err != nil {
-									log.Printf("Warning: failed to remove partial extraction %s: %v", dirPath, err)
-								} else {
-									log.Printf("Cleaned up partial extraction: %s", dirPath)
-								}
-							}
-						}
-					}
-				}
-			}
-
-			// Quit the application
-			return m, tea.Quit
 		}
 	}
 
