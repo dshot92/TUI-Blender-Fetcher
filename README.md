@@ -35,3 +35,21 @@ Run the application from your terminal:
 ```bash
 ./TUI-Blender-Launcher
 ```
+
+Builds page:
+q:Quit
+s:Settings
+r:Reverse Sort
+f:Fecth builds
+d:download build (only for online builds)
+enter:Launch Build
+o:Open build Dir
+x: delete build (only local builds)
+x:cancel build download (downloading/extracting builds)
+
+Settings Page: 
+s:save and back to build page
+q:Quit
+enter:edit setting
+c:cleanup old builds
+
