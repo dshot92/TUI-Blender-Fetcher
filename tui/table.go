@@ -40,18 +40,23 @@ func (m Model) renderBuildContent(availableHeight int) string {
 
 	var output bytes.Buffer
 
-	// Add the table header to the top of the table
-	output.WriteString(m.renderBuildTableHeader())
+	// Add the table header to the top of the table, ensuring it ends with a newline
+	headerStr := m.renderBuildTableHeader()
+	if !strings.HasSuffix(headerStr, "\n") {
+		headerStr += "\n"
+	}
+	output.WriteString(headerStr)
 
-	// Add a line separator between header and content
-	separator := strings.Repeat("─", m.terminalWidth)
-	output.WriteString(lp.NewStyle().
-		Foreground(lp.Color("240")).
-		Render(separator) + "\n")
+	// Calculate the header height by counting only non-empty lines
+	headerLines := 0
+	for _, line := range strings.Split(headerStr, "\n") {
+		if strings.TrimSpace(line) != "" {
+			headerLines++
+		}
+	}
 
-	// Calculate how many builds we can show in the available space
-	// Subtract 4 for the top/bottom padding, table header, and separator line
-	maxShownBuilds := availableHeight - 4
+	// Calculate how many builds we can show in the available space dynamically
+	maxShownBuilds := availableHeight - headerLines
 
 	// Ensure we have at least 1 row
 	if maxShownBuilds < 1 {

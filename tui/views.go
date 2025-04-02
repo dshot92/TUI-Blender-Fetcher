@@ -18,11 +18,24 @@ func (m Model) View() string {
 		return lp.Place(m.terminalWidth, m.terminalHeight, lp.Center, lp.Center, dialogContent)
 	}
 
-	var page string
+	return m.renderPageForView()
+}
+
+func (m Model) renderPageForView() string {
+	header := m.renderCommonHeader()
+	headerHeight := 5
+	var footer string
+	var footerHeight int
+	var content string
 	if m.currentView == viewInitialSetup || m.currentView == viewSettings {
-		page = m.renderSettingsPage()
+		footer = m.renderSettingsFooter()
+		footerHeight = 2
+		content = m.renderSettingsContent(m.terminalHeight - headerHeight - footerHeight)
 	} else {
-		page = m.renderBuildsPage()
+		footer = m.renderBuildFooter()
+		footerHeight = 1
+		content = m.renderBuildContent(m.terminalHeight - headerHeight - footerHeight)
 	}
-	return page
+	baseView := lp.JoinVertical(lp.Top, header, content, footer)
+	return lp.Place(m.terminalWidth, m.terminalHeight, lp.Left, lp.Top, baseView)
 }

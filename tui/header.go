@@ -10,12 +10,12 @@ import (
 // Modified renderTitleHeader to use a default width if m.terminalWidth is not set
 func (m Model) renderTitleHeader(text string) string {
 	width := m.terminalWidth
-	if width <= 0 {
-		width = 80 // default width
-	}
-	if width < len(text) {
-		width = len(text) + 4 // add some padding
-	}
+	// if width <= 0 {
+	// 	width = 80 // default width
+	// }
+	// if width < len(text) {
+	// 	width = len(text) + 4 // add some padding
+	// }
 	return headerStyle.Width(width).AlignHorizontal(lp.Center).Render(text) + "\n"
 }
 
@@ -26,8 +26,6 @@ func (m Model) renderCommonHeader() string {
 
 // renderBuildTableHeader returns the table header portion for the builds page.
 func (m Model) renderBuildTableHeader() string {
-	var b strings.Builder
-
 	// Column headers - create the header row with column names
 	headerRow := bytes.Buffer{}
 
@@ -102,9 +100,5 @@ func (m Model) renderBuildTableHeader() string {
 		}
 	}
 
-	headerBgStyle := lp.NewStyle().Background(lp.Color("236")).Bold(true).Width(m.terminalWidth)
-	b.WriteString(headerBgStyle.Render(headerRow.String()))
-	b.WriteString("\n")
-
-	return b.String()
+	return headerRow.String() + "\n" + lp.NewStyle().Foreground(lp.Color("240")).Render(strings.Repeat("─", m.terminalWidth))
 }
