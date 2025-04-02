@@ -7,15 +7,16 @@ import (
 // renderBuildsPage constructs the builds page with a common header, table header, build content and build footer.
 func (m Model) renderBuildsPage() string {
 	// Combine the common header and table header for builds page.
-	header := m.renderCommonHeader() + m.renderBuildTableHeader()
+	header := m.renderCommonHeader()
 
 	// Use fixed header and footer heights; adjust middle content accordingly.
-	headerHeight := 3
-	footerHeight := 2
+
+	headerHeight := 5
+	footerHeight := 1
 	middleHeight := m.terminalHeight - headerHeight - footerHeight
-	if middleHeight < 5 {
-		middleHeight = 5
-	}
+	// if middleHeight < 5 {
+	// 	middleHeight = 5
+	// }
 
 	body := m.renderBuildContent(middleHeight)
 	footer := m.renderBuildFooter()

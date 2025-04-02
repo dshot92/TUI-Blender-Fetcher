@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	lp "github.com/charmbracelet/lipgloss"
 )
@@ -39,8 +40,18 @@ func (m Model) renderBuildContent(availableHeight int) string {
 
 	var output bytes.Buffer
 
+	// Add the table header to the top of the table
+	output.WriteString(m.renderBuildTableHeader())
+
+	// Add a line separator between header and content
+	separator := strings.Repeat("─", m.terminalWidth)
+	output.WriteString(lp.NewStyle().
+		Foreground(lp.Color("240")).
+		Render(separator) + "\n")
+
 	// Calculate how many builds we can show in the available space
-	maxShownBuilds := availableHeight - 2 // Subtract 2 for the top/bottom padding
+	// Subtract 4 for the top/bottom padding, table header, and separator line
+	maxShownBuilds := availableHeight - 4
 
 	// Ensure we have at least 1 row
 	if maxShownBuilds < 1 {

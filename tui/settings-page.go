@@ -10,12 +10,9 @@ func (m Model) renderSettingsPage() string {
 	header := m.renderCommonHeader()
 
 	// Define header and footer heights; calculate available height for settings content.
-	headerHeight := 3
+	headerHeight := 5
 	footerHeight := 2
 	middleHeight := m.terminalHeight - headerHeight - footerHeight
-	if middleHeight < 5 {
-		middleHeight = 5
-	}
 
 	body := m.renderSettingsContent(middleHeight)
 	footer := m.renderSettingsFooter()
