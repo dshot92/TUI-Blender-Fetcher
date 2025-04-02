@@ -6,7 +6,7 @@ import (
 
 // View renders the current view of the model using a unified layout.
 // It picks either the settings page or builds page based on the current view.
-func (m Model) View() string {
+func (m *Model) View() string {
 	// If an overlay dialog is active, render it centered.
 	if m.currentView == viewQuitConfirm {
 		return lp.Place(m.terminalWidth, m.terminalHeight, lp.Center, lp.Center, m.renderQuitConfirmDialog())
@@ -15,7 +15,7 @@ func (m Model) View() string {
 	return m.renderPageForView()
 }
 
-func (m Model) renderPageForView() string {
+func (m *Model) renderPageForView() string {
 	header := m.renderCommonHeader()
 	headerHeight := 5
 	var footer string
@@ -35,6 +35,6 @@ func (m Model) renderPageForView() string {
 }
 
 // renderCommonHeader returns the common header (title) for both builds and settings pages.
-func (m Model) renderCommonHeader() string {
+func (m *Model) renderCommonHeader() string {
 	return headerStyle.Width(m.terminalWidth).AlignHorizontal(lp.Center).Render("TUI Blender Launcher") + "\n"
 }

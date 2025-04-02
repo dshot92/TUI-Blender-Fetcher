@@ -36,15 +36,15 @@ func main() {
 	m := tui.InitialModel(cfg, needsInitialSetup)
 
 	// Create and run the Bubble Tea program
-	p := tea.NewProgram(m, 
-		tea.WithAltScreen(),             // Use AltScreen
-		tea.WithMouseCellMotion(),       // Enable mouse support
+	p := tea.NewProgram(&m,
+		tea.WithAltScreen(),       // Use AltScreen
+		tea.WithMouseCellMotion(), // Enable mouse support
 	)
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error running program: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	// After TUI exits, check if we should launch Blender
 	launchPath := os.Getenv("TUI_BLENDER_LAUNCH")
 	if launchPath != "" {
@@ -52,16 +52,16 @@ func main() {
 		execBytes, err := os.ReadFile(launchPath)
 		if err == nil && len(execBytes) > 0 {
 			blenderExe := string(execBytes)
-			
+
 			// Clean up the temporary file
 			os.Remove(launchPath)
-			
+
 			// Launch Blender, replacing the current process
 			fmt.Printf("Launching Blender...\n")
-			
+
 			// Sleep briefly to allow terminal to reset after TUI exit
 			time.Sleep(100 * time.Millisecond)
-			
+
 			// Use syscall.Exec to replace current process with Blender
 			err = syscall.Exec(blenderExe, []string{blenderExe}, os.Environ())
 			if err != nil {

@@ -17,7 +17,7 @@ import (
 type deleteBuildCompleteMsg struct{}
 
 // Init initializes the model
-func (m Model) Init() tea.Cmd {
+func (m *Model) Init() tea.Cmd {
 	var cmds []tea.Cmd
 
 	// Start with local build scan to get builds already on disk
@@ -33,7 +33,7 @@ func (m Model) Init() tea.Cmd {
 }
 
 // Update updates the model based on messages
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle key messages first, routing based on the current view
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch m.currentView {
@@ -115,7 +115,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateSettingsView handles key events in the settings view
-func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle different message types
 	switch msg := msg.(type) {
 	case tickMsg:
@@ -152,7 +152,7 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.editMode {
 				// Exit edit mode and go back to navigation
 				m.editMode = false
-				updateFocusStyles(&m, m.focusIndex)
+				updateFocusStyles(m, m.focusIndex)
 				return m, nil
 			} else {
 				// When not in edit mode, ESC returns to the main view
@@ -164,7 +164,7 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// If not in edit mode, 's' takes us back to the build list and saves settings
 			if !m.editMode {
 				m.currentView = viewList
-				return saveSettings(&m)
+				return saveSettings(m)
 			}
 			return m, nil
 
@@ -173,7 +173,7 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.editMode {
 				oldFocus := m.focusIndex
 				m.focusIndex = (m.focusIndex + 1) % len(m.settingsInputs)
-				updateFocusStyles(&m, oldFocus)
+				updateFocusStyles(m, oldFocus)
 				m.settingsInputs[m.focusIndex].Focus()
 				return m, nil
 			}
@@ -184,7 +184,7 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.editMode {
 				oldFocus := m.focusIndex
 				m.focusIndex = (m.focusIndex - 1 + len(m.settingsInputs)) % len(m.settingsInputs)
-				updateFocusStyles(&m, oldFocus)
+				updateFocusStyles(m, oldFocus)
 				m.settingsInputs[m.focusIndex].Focus()
 				return m, nil
 			}
@@ -194,7 +194,7 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.editMode {
 				oldFocus := m.focusIndex
 				m.focusIndex = (m.focusIndex - 1 + len(m.settingsInputs)) % len(m.settingsInputs)
-				updateFocusStyles(&m, oldFocus)
+				updateFocusStyles(m, oldFocus)
 				return m, nil
 			}
 			return m, nil
@@ -203,7 +203,7 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.editMode {
 				oldFocus := m.focusIndex
 				m.focusIndex = (m.focusIndex + 1) % len(m.settingsInputs)
-				updateFocusStyles(&m, oldFocus)
+				updateFocusStyles(m, oldFocus)
 				return m, nil
 			}
 			return m, nil
@@ -212,12 +212,12 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.editMode {
 				// Save settings and return to navigation mode
 				m.editMode = false
-				updateFocusStyles(&m, m.focusIndex)
-				return saveSettings(&m)
+				updateFocusStyles(m, m.focusIndex)
+				return saveSettings(m)
 			} else {
 				// Focus the current field for editing
 				m.editMode = true
-				updateFocusStyles(&m, -1)
+				updateFocusStyles(m, -1)
 				return m, nil
 			}
 
@@ -237,7 +237,7 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateListView handles key events in the main list view
-func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
@@ -379,7 +379,7 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateQuitConfirmView handles key events in the quit confirmation dialog
-func (m Model) updateQuitConfirmView(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) updateQuitConfirmView(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {

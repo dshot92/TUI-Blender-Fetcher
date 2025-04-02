@@ -9,7 +9,7 @@ import (
 )
 
 // renderBuildFooter renders the footer for the build list view
-func (m Model) renderBuildFooter() string {
+func (m *Model) renderBuildFooter() string {
 	// Define key command display styles
 	keyStyle := lp.NewStyle().Foreground(lp.Color(colorInfo))
 	sepStyle := lp.NewStyle().Foreground(lp.Color("240"))
@@ -50,7 +50,7 @@ func (m Model) renderBuildFooter() string {
 }
 
 // renderSettingsFooter renders the footer for the settings view
-func (m Model) renderSettingsFooter() string {
+func (m *Model) renderSettingsFooter() string {
 	// Define key command display styles
 	keyStyle := lp.NewStyle().Foreground(lp.Color(colorInfo))
 	sepStyle := lp.NewStyle().Foreground(lp.Color("240"))

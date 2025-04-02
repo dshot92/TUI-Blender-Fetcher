@@ -163,7 +163,7 @@ func GetBuildColumns(visibleColumns map[string]bool) []ColumnConfig {
 }
 
 // RenderRows renders all rows without scrolling
-func RenderRows(m Model) string {
+func RenderRows(m *Model) string {
 	var output bytes.Buffer
 
 	// Get column configuration
@@ -275,7 +275,7 @@ func CancelDownload(states map[string]*DownloadState, buildID string) bool {
 }
 
 // renderBuildContent renders the table content
-func (m Model) renderBuildContent(availableHeight int) string {
+func (m *Model) renderBuildContent(availableHeight int) string {
 	var output bytes.Buffer
 
 	if m.isLoading {

@@ -38,7 +38,7 @@ func (m *Model) updateInputs(msg tea.Msg) tea.Cmd {
 }
 
 // Helper functions for handling specific actions in list view
-func (m Model) handleLaunchBlender() (tea.Model, tea.Cmd) {
+func (m *Model) handleLaunchBlender() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
 		// Only attempt to launch if it's a local build
@@ -53,7 +53,7 @@ func (m Model) handleLaunchBlender() (tea.Model, tea.Cmd) {
 }
 
 // handleOpenBuildDir opens the build directory for a specific version
-func (m Model) handleOpenBuildDir() (tea.Model, tea.Cmd) {
+func (m *Model) handleOpenBuildDir() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
 		// Only open dir if it's a local build or has an update available
@@ -94,7 +94,7 @@ func (m Model) handleOpenBuildDir() (tea.Model, tea.Cmd) {
 }
 
 // handleStartDownload initiates a download for the selected build
-func (m Model) handleStartDownload() (tea.Model, tea.Cmd) {
+func (m *Model) handleStartDownload() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
 		// Allow downloading both Online builds and Updates
@@ -125,7 +125,7 @@ func (m Model) handleStartDownload() (tea.Model, tea.Cmd) {
 }
 
 // handleCancelDownload cancels an active download
-func (m Model) handleCancelDownload() (tea.Model, tea.Cmd) {
+func (m *Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 	if len(m.builds) == 0 || m.cursor >= len(m.builds) {
 		return m, nil
 	}
@@ -172,7 +172,7 @@ func (m Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 }
 
 // handleShowSettings shows the settings screen
-func (m Model) handleShowSettings() (tea.Model, tea.Cmd) {
+func (m *Model) handleShowSettings() (tea.Model, tea.Cmd) {
 	m.currentView = viewSettings
 	m.editMode = false // Ensure we start in navigation mode
 
@@ -218,7 +218,7 @@ func (m Model) handleShowSettings() (tea.Model, tea.Cmd) {
 }
 
 // handleDeleteBuild prepares to delete a build
-func (m Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
+func (m *Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
 		// Only allow deleting local builds or builds that can be updated
@@ -251,7 +251,7 @@ func (m Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
 }
 
 // handleLocalBuildsScanned processes the result of scanning local builds
-func (m Model) handleLocalBuildsScanned(msg localBuildsScannedMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleLocalBuildsScanned(msg localBuildsScannedMsg) (tea.Model, tea.Cmd) {
 	m.isLoading = false
 	if msg.err != nil {
 		m.err = msg.err
@@ -272,7 +272,7 @@ func (m Model) handleLocalBuildsScanned(msg localBuildsScannedMsg) (tea.Model, t
 }
 
 // handleBuildsFetched processes the result of fetching builds from the API
-func (m Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 	m.isLoading = false
 	if msg.err != nil {
 		m.err = msg.err
@@ -299,7 +299,7 @@ func (m Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleBuildsUpdated processes the result of updating build statuses
-func (m Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
 	m.isLoading = false // Now loading is complete
 	m.builds = msg.builds
 	// Sort the builds based on current sort settings
@@ -316,7 +316,7 @@ func (m Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleBlenderExec handles launching Blender after selecting it
-func (m Model) handleBlenderExec(msg model.BlenderExecMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleBlenderExec(msg model.BlenderExecMsg) (tea.Model, tea.Cmd) {
 	// Store Blender info
 	execInfo := msg
 
@@ -344,7 +344,7 @@ func (m Model) handleBlenderExec(msg model.BlenderExecMsg) (tea.Model, tea.Cmd) 
 }
 
 // handleDownloadProgress processes tick messages for download progress updates
-func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	var commands []tea.Cmd
 	now := time.Now()
 
