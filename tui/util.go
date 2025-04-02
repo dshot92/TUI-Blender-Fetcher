@@ -60,112 +60,6 @@ func calculateSplitIndex(s string, targetWidth int) int {
 	return len(s) // Target width is >= string width
 }
 
-// calculateVisibleColumns determines which columns should be visible based on terminal width
-// and calculates appropriate widths to use full available space
-func calculateVisibleColumns(terminalWidth int) map[string]bool {
-	// Constants
-	const columnGap = 1 // Space between columns
-
-	// All possible columns in priority order (lower index = higher priority)
-	allColumns := []struct {
-		name   string
-		config columnConfig
-	}{
-		{"Version", columnConfigs["Version"]},
-		{"Status", columnConfigs["Status"]},
-		{"Branch", columnConfigs["Branch"]},
-		{"Type", columnConfigs["Type"]},
-		{"Hash", columnConfigs["Hash"]},
-		{"Size", columnConfigs["Size"]},
-		{"Build Date", columnConfigs["Build Date"]},
-	}
-
-	// Sort columns by priority
-	sort.Slice(allColumns, func(i, j int) bool {
-		return allColumns[i].config.priority < allColumns[j].config.priority
-	})
-
-	// Initialize visibility map
-	visibleColumns := make(map[string]bool)
-
-	// Step 1: Calculate how many columns can fit with their minimum widths
-	remainingWidth := terminalWidth
-	var visibleCols []string
-
-	// Always include Version and Status
-	visibleColumns["Version"] = true
-	visibleColumns["Status"] = true
-	visibleCols = append(visibleCols, "Version", "Status")
-
-	// Reserve space for the required columns and their gaps
-	remainingWidth -= columnConfigs["Version"].minWidth + columnConfigs["Status"].minWidth + columnGap
-
-	// Add additional columns by priority if they fit
-	for _, col := range allColumns {
-		// Skip already added columns
-		if col.name == "Version" || col.name == "Status" {
-			continue
-		}
-
-		// Check if this column fits
-		if remainingWidth >= (col.config.minWidth + columnGap) {
-			visibleColumns[col.name] = true
-			visibleCols = append(visibleCols, col.name)
-			remainingWidth -= (col.config.minWidth + columnGap)
-		} else {
-			visibleColumns[col.name] = false
-		}
-	}
-
-	// Step 2: Distribute available width proportionally using flex values
-	// Calculate total flex for visible columns
-	totalFlex := 0.0
-	for _, colName := range visibleCols {
-		totalFlex += columnConfigs[colName].flex
-	}
-
-	// Calculate exact distributed width (including fractional part)
-	availableWidth := terminalWidth - (len(visibleCols)-1)*columnGap
-	var distributedWidth float64
-	var widthAssignments = make(map[string]float64)
-
-	// First pass: calculate ideal width based on flex proportion
-	for _, colName := range visibleCols {
-		// Calculate proportional width
-		proportion := columnConfigs[colName].flex / totalFlex
-		idealWidth := float64(availableWidth) * proportion
-
-		// Ensure minimum width
-		if idealWidth < float64(columnConfigs[colName].minWidth) {
-			idealWidth = float64(columnConfigs[colName].minWidth)
-		}
-
-		widthAssignments[colName] = idealWidth
-		distributedWidth += idealWidth
-	}
-
-	// Second pass: adjust for integer widths and distribute remaining pixels
-	// We need to convert to integers, which might leave some pixels unallocated
-	remainingPixels := availableWidth - int(distributedWidth)
-
-	// Update the actual column configs with new widths
-	for colName, width := range widthAssignments {
-		config := columnConfigs[colName]
-		config.width = int(width)
-
-		// Distribute any remaining pixels to columns by priority
-		if remainingPixels > 0 {
-			config.width++
-			remainingPixels--
-		}
-
-		// Update column config
-		columnConfigs[colName] = config
-	}
-
-	return visibleColumns
-}
-
 // sortBuilds sorts the builds based on the selected column and sort order
 func sortBuilds(builds []model.BlenderBuild, column int, reverse bool) []model.BlenderBuild {
 	// Create a copy of builds to avoid modifying the original
@@ -175,7 +69,7 @@ func sortBuilds(builds []model.BlenderBuild, column int, reverse bool) []model.B
 	// Define sort function type for better organization
 	type sortFunc func(a, b model.BlenderBuild) bool
 
-	// Define the sort functions for each column
+	// Define the sort functions for each column based on the column index
 	sortFuncs := map[int]sortFunc{
 		0: func(a, b model.BlenderBuild) bool { // Version
 			return a.Version < b.Version
@@ -195,7 +89,7 @@ func sortBuilds(builds []model.BlenderBuild, column int, reverse bool) []model.B
 		5: func(a, b model.BlenderBuild) bool { // Size
 			return a.Size < b.Size
 		},
-		6: func(a, b model.BlenderBuild) bool { // Date
+		6: func(a, b model.BlenderBuild) bool { // Build Date
 			return a.BuildDate.Time().Before(b.BuildDate.Time())
 		},
 	}
@@ -203,7 +97,6 @@ func sortBuilds(builds []model.BlenderBuild, column int, reverse bool) []model.B
 	// Check if we have a sort function for this column
 	if sortFunc, ok := sortFuncs[column]; ok {
 		sort.SliceStable(sortedBuilds, func(i, j int) bool {
-			// Apply the sort function, handling the reverse flag
 			if reverse {
 				return !sortFunc(sortedBuilds[i], sortedBuilds[j])
 			}

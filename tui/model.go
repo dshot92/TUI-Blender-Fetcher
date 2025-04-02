@@ -70,19 +70,15 @@ func InitialModel(cfg config.Config, needsSetup bool) Model {
 		isLoading:        !needsSetup,
 		downloadStates:   make(map[string]*DownloadState),
 		progressBar:      progModel,
-		sortColumn:       0,                     // Default sort by Version
-		sortReversed:     true,                  // Default descending sort (newest versions first)
-		blenderRunning:   "",                    // No Blender running initially
-		editMode:         false,                 // Start in navigation mode, not edit mode
-		visibleColumns:   make(map[string]bool), // Initialize visible columns map
-		scrollOffset:     0,                     // Initialize scroll position to top
-		visibleRows:      10,                    // Default number of visible rows, will be adjusted based on terminal size
-		alwaysShowHeader: true,                  // Always show table header when scrolling
+		sortColumn:       0,                    // Default sort by Version
+		sortReversed:     true,                 // Default descending sort (newest versions first)
+		blenderRunning:   "",                   // No Blender running initially
+		editMode:         false,                // Start in navigation mode, not edit mode
+		visibleColumns:   initVisibleColumns(), // Initialize with all columns visible
+		scrollOffset:     0,                    // Initialize scroll position to top
+		visibleRows:      10,                   // Default number of visible rows, will be adjusted based on terminal size
+		alwaysShowHeader: true,                 // Always show table header when scrolling
 	}
-
-	// Ensure Version and Status columns are always visible by default
-	m.visibleColumns["Version"] = true
-	m.visibleColumns["Status"] = true
 
 	if needsSetup {
 		m.currentView = viewInitialSetup
@@ -128,12 +124,68 @@ func InitialModel(cfg config.Config, needsSetup bool) Model {
 
 // UpdateWindowSize updates the terminal dimensions and recalculates layout
 func (m *Model) UpdateWindowSize(width, height int) {
-	// Only update if size actually changed to avoid unnecessary calculations
-	if m.terminalWidth != width || m.terminalHeight != height {
-		m.terminalWidth = width
-		m.terminalHeight = height
+	m.terminalWidth = width
+	m.terminalHeight = height
 
-		// Recalculate column visibility and widths based on new width
-		m.visibleColumns = calculateVisibleColumns(width)
+	// Calculate and set column widths based on the terminal width
+	calculateColumnWidths(width)
+}
+
+// Helper function to initialize all columns as visible
+func initVisibleColumns() map[string]bool {
+	return map[string]bool{
+		"Version":    true,
+		"Status":     true,
+		"Branch":     true,
+		"Type":       true,
+		"Hash":       true,
+		"Size":       true,
+		"Build Date": true,
+	}
+}
+
+// calculateColumnWidths sets the width for each column based on the available terminal width
+func calculateColumnWidths(terminalWidth int) {
+	// Account for 1 space between each column
+	availableWidth := terminalWidth - (len(columnConfigs) - 1)
+
+	// First ensure all columns have at least their minimum width
+	totalMinWidth := 0
+	for _, config := range columnConfigs {
+		totalMinWidth += config.minWidth
+	}
+
+	// If we have enough space for all columns at their minimum width
+	if availableWidth >= totalMinWidth {
+		// Distribute remaining space based on flex values
+		remainingWidth := availableWidth - totalMinWidth
+		totalFlex := 0.0
+
+		for _, config := range columnConfigs {
+			totalFlex += config.flex
+		}
+
+		// Set widths based on flex ratios
+		for col, config := range columnConfigs {
+			extraWidth := int((config.flex / totalFlex) * float64(remainingWidth))
+			columnConfigs[col] = columnConfig{
+				width:    config.minWidth + extraWidth,
+				priority: config.priority,
+				visible:  true,
+				minWidth: config.minWidth,
+				flex:     config.flex,
+			}
+		}
+	} else {
+		// Not enough space - just use minimum widths
+		for col, config := range columnConfigs {
+			columnConfigs[col] = columnConfig{
+				width:    config.minWidth,
+				priority: config.priority,
+				visible:  true,
+				minWidth: config.minWidth,
+				flex:     config.flex,
+			}
+		}
 	}
 }

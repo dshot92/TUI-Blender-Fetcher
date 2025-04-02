@@ -36,13 +36,13 @@ func (m Model) renderBuildTableHeader() string {
 		visible bool
 		index   int
 	}{
-		{name: "Blender", width: columnConfigs["Version"].width, visible: true, index: 0}, // Always show Version
+		{name: "Version", width: columnConfigs["Version"].width, visible: true, index: 0}, // Always show Version
 		{name: "Status", width: columnConfigs["Status"].width, visible: true, index: 1},   // Always show Status
-		{name: "Branch", width: columnConfigs["Branch"].width, visible: m.visibleColumns["Branch"], index: 2},
-		{name: "Type", width: columnConfigs["Type"].width, visible: m.visibleColumns["Type"], index: 3},
-		{name: "Hash", width: columnConfigs["Hash"].width, visible: m.visibleColumns["Hash"], index: 4},
-		{name: "Size", width: columnConfigs["Size"].width, visible: m.visibleColumns["Size"], index: 5},
-		{name: "Build Date", width: columnConfigs["Build Date"].width, visible: m.visibleColumns["Build Date"], index: 6},
+		{name: "Branch", width: columnConfigs["Branch"].width, visible: true, index: 2},
+		{name: "Type", width: columnConfigs["Type"].width, visible: true, index: 3},
+		{name: "Hash", width: columnConfigs["Hash"].width, visible: true, index: 4},
+		{name: "Size", width: columnConfigs["Size"].width, visible: true, index: 5},
+		{name: "Build Date", width: columnConfigs["Build Date"].width, visible: true, index: 6},
 	}
 
 	// Ensure Version and Status are always visible regardless of terminal width
@@ -53,7 +53,7 @@ func (m Model) renderBuildTableHeader() string {
 	for i := range columns {
 		if columns[i].width == 0 {
 			switch columns[i].name {
-			case "Blender":
+			case "Version":
 				columns[i].width = columnConfigs["Version"].minWidth
 			case "Status":
 				columns[i].width = columnConfigs["Status"].minWidth
