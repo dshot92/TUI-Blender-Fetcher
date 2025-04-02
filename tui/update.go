@@ -221,10 +221,6 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-		case key.Matches(msg, key.NewBinding(key.WithKeys("c"))):
-			// Only in settings view, c will clean up old builds
-			return m.handleCleanupOldBuilds()
-
 		default:
 			// Pass other keys to the input field if in edit mode
 			if m.editMode {

@@ -20,11 +20,6 @@ type (
 	buildsUpdatedMsg struct { // Builds list updated (e.g., status change)
 		builds []model.BlenderBuild
 	}
-	oldBuildsInfo struct { // Information about old builds
-		count int
-		size  int64
-		err   error
-	}
 
 	// Action messages
 	startDownloadMsg struct { // Request to start download for a build
@@ -35,9 +30,6 @@ type (
 		buildVersion  string // Version of the build that finished
 		extractedPath string
 		err           error
-	}
-	cleanupOldBuildsMsg struct { // Result of cleaning up old builds
-		err error
 	}
 
 	// Progress updates

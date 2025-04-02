@@ -250,11 +250,6 @@ func (m Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleCleanupOldBuilds prepares to clean up old builds
-func (m Model) handleCleanupOldBuilds() (tea.Model, tea.Cmd) {
-	return m, nil
-}
-
 // handleLocalBuildsScanned processes the result of scanning local builds
 func (m Model) handleLocalBuildsScanned(msg localBuildsScannedMsg) (tea.Model, tea.Cmd) {
 	m.isLoading = false
