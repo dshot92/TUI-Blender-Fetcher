@@ -70,8 +70,6 @@ var (
 	regularRowStyle = lp.NewStyle()
 	// Footer style
 	footerStyle = lp.NewStyle().MarginTop(1).Padding(0, 1).Foreground(lp.Color(colorForeground))
-	// Separator style (using box characters)
-	separator = lp.NewStyle().SetString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━").Faint(true).String()
 
 	// Define base styles for columns (can be customized further)
 	cellStyleCenter = lp.NewStyle().Align(lp.Center)

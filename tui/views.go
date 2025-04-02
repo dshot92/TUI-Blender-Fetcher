@@ -39,3 +39,8 @@ func (m Model) renderPageForView() string {
 	baseView := lp.JoinVertical(lp.Top, header, content, footer)
 	return lp.Place(m.terminalWidth, m.terminalHeight, lp.Left, lp.Top, baseView)
 }
+
+// renderCommonHeader returns the common header (title) for both builds and settings pages.
+func (m Model) renderCommonHeader() string {
+	return headerStyle.Width(m.terminalWidth).AlignHorizontal(lp.Center).Render("TUI Blender Launcher") + "\n"
+}
