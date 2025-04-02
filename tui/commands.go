@@ -7,19 +7,35 @@ import (
 	"TUI-Blender-Launcher/local"
 	"TUI-Blender-Launcher/model"
 	"TUI-Blender-Launcher/types"
-	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// fetchBuildsCmd fetches builds from the API
-func fetchBuildsCmd(cfg config.Config) tea.Cmd {
+// CommandManager encapsulates all the command generation logic for the TUI
+type CommandManager struct {
+	Config        config.Config
+	DownloadMap   map[string]*DownloadState
+	DownloadMutex *sync.Mutex
+}
+
+// NewCommandManager creates a new CommandManager
+func NewCommandManager(cfg config.Config, downloadMap map[string]*DownloadState, mutex *sync.Mutex) *CommandManager {
+	return &CommandManager{
+		Config:        cfg,
+		DownloadMap:   downloadMap,
+		DownloadMutex: mutex,
+	}
+}
+
+// FetchBuilds creates a command to fetch builds from the API
+func (cm *CommandManager) FetchBuilds() tea.Cmd {
 	return func() tea.Msg {
-		// Pass config (specifically VersionFilter) to FetchBuilds
-		builds, err := api.FetchBuilds(cfg.VersionFilter)
+		builds, err := api.FetchBuilds(cm.Config.VersionFilter)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -27,26 +43,22 @@ func fetchBuildsCmd(cfg config.Config) tea.Cmd {
 	}
 }
 
-// scanLocalBuildsCmd scans for local builds
-func scanLocalBuildsCmd(cfg config.Config) tea.Cmd {
+// ScanLocalBuilds creates a command to scan for local builds
+func (cm *CommandManager) ScanLocalBuilds() tea.Cmd {
 	return func() tea.Msg {
-		builds, err := local.ScanLocalBuilds(cfg.DownloadDir)
-		// Return specific message for local scan results
+		builds, err := local.ScanLocalBuilds(cm.Config.DownloadDir)
 		return localBuildsScannedMsg{builds: builds, err: err}
 	}
 }
 
-// updateStatusFromLocalScanCmd updates status of builds based on local scan
-func updateStatusFromLocalScanCmd(onlineBuilds []model.BlenderBuild, cfg config.Config) tea.Cmd {
+// UpdateStatusFromLocalScan creates a command to update status of builds based on local scan
+func (cm *CommandManager) UpdateStatusFromLocalScan(onlineBuilds []model.BlenderBuild) tea.Cmd {
 	return func() tea.Msg {
-		// Get all local builds - use full scan to compare hash values
-		localBuilds, err := local.ScanLocalBuilds(cfg.DownloadDir)
+		localBuilds, err := local.ScanLocalBuilds(cm.Config.DownloadDir)
 		if err != nil {
-			// Propagate error if scanning fails
 			return errMsg{fmt.Errorf("failed local scan during status update: %w", err)}
 		}
 
-		// Create a map of local builds by version for easy lookup
 		localBuildMap := make(map[string]model.BlenderBuild)
 		for _, build := range localBuilds {
 			localBuildMap[build.Version] = build
@@ -57,9 +69,7 @@ func updateStatusFromLocalScanCmd(onlineBuilds []model.BlenderBuild, cfg config.
 
 		for i := range updatedBuilds {
 			if localBuild, found := localBuildMap[updatedBuilds[i].Version]; found {
-				// We found a matching version locally
 				if local.CheckUpdateAvailable(localBuild, updatedBuilds[i]) {
-					// Using our new function to check if update is available based on build date
 					updatedBuilds[i].Status = types.StateUpdate
 				} else {
 					updatedBuilds[i].Status = types.StateLocal
@@ -72,28 +82,23 @@ func updateStatusFromLocalScanCmd(onlineBuilds []model.BlenderBuild, cfg config.
 	}
 }
 
-// tickCmd sends a tickMsg after a short delay
-func tickCmd() tea.Cmd {
+// Tick creates a tick command with fixed rate
+func (cm *CommandManager) Tick() tea.Cmd {
 	return tea.Tick(downloadTickRate, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
 
-// adaptiveTickCmd creates a tick with adaptive rate based on download activity
-func adaptiveTickCmd(activeCount int, isExtracting bool) tea.Cmd {
-	// Base rate is our standard download tick rate
+// AdaptiveTick creates a tick command with adaptive rate based on download activity
+func (cm *CommandManager) AdaptiveTick(activeCount int, isExtracting bool) tea.Cmd {
 	rate := downloadTickRate
 
-	// If there are no active downloads, we can slow down the tick rate
 	if activeCount == 0 {
 		rate = 500 * time.Millisecond // Slower when idle
 	} else if isExtracting {
-		// During extraction, we can use a slightly slower rate
-		rate = 250 * time.Millisecond
+		rate = 250 * time.Millisecond // During extraction
 	} else if activeCount > 1 {
-		// With multiple downloads, we can use a slightly faster rate
-		// to make the UI more responsive, but not too fast to cause system load
-		rate = 80 * time.Millisecond
+		rate = 80 * time.Millisecond // Multiple downloads
 	}
 
 	return tea.Tick(rate, func(t time.Time) tea.Msg {
@@ -101,11 +106,11 @@ func adaptiveTickCmd(activeCount int, isExtracting bool) tea.Cmd {
 	})
 }
 
-// doDownloadCmd starts the download in a goroutine
-func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[string]*DownloadState, mutex *sync.Mutex) tea.Cmd {
+// DoDownload creates a command to download and extract a build
+func (cm *CommandManager) DoDownload(build model.BlenderBuild) tea.Cmd {
 	now := time.Now()
 
-	// Create a unique build ID using version and hash
+	// Create a unique build ID
 	buildID := build.Version
 	if build.Hash != "" {
 		buildID = build.Version + "-" + build.Hash[:8]
@@ -114,23 +119,22 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 	// Create a cancel channel specific to this download
 	downloadCancelCh := make(chan struct{})
 
-	mutex.Lock()
-	if _, exists := downloadMap[buildID]; !exists {
-		// Initialize download state with defaults
-		downloadMap[buildID] = &DownloadState{
+	cm.DownloadMutex.Lock()
+	if _, exists := cm.DownloadMap[buildID]; !exists {
+		cm.DownloadMap[buildID] = &DownloadState{
 			BuildID:       buildID,
 			BuildState:    types.StatePreparing,
 			StartTime:     now,
 			LastUpdated:   now,
 			Progress:      0.0,
-			StallDuration: downloadStallTime, // Initial stall timeout
+			StallDuration: downloadStallTime,
 			CancelCh:      downloadCancelCh,
 		}
 	} else {
-		mutex.Unlock()
+		cm.DownloadMutex.Unlock()
 		return nil
 	}
-	mutex.Unlock()
+	cm.DownloadMutex.Unlock()
 
 	// Create a done channel for this download
 	done := make(chan struct{})
@@ -183,12 +187,12 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 			}
 
 			// Try to lock, skip update if contended
-			if !mutex.TryLock() {
+			if !cm.DownloadMutex.TryLock() {
 				return
 			}
-			defer mutex.Unlock()
+			defer cm.DownloadMutex.Unlock()
 
-			if state, ok := downloadMap[buildID]; ok {
+			if state, ok := cm.DownloadMap[buildID]; ok {
 				// If already cancelled, don't update progress
 				if state.BuildState == types.StateNone {
 					return
@@ -219,6 +223,18 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 					state.BuildState = types.StateDownloading
 					state.StallDuration = downloadStallTime
 				}
+
+				// Update the download state
+				updated := UpdateDownloadProgress(cm.DownloadMap, buildID, downloaded, total, types.StateDownloading)
+
+				if updated {
+					// Also update speed if we have a new value
+					if currentSpeed > 0 {
+						if state, ok := cm.DownloadMap[buildID]; ok {
+							state.Speed = currentSpeed
+						}
+					}
+				}
 			}
 		}
 
@@ -226,11 +242,11 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 		select {
 		case <-downloadCancelCh:
 			// Download canceled before starting
-			mutex.Lock()
-			if state, ok := downloadMap[buildID]; ok {
+			cm.DownloadMutex.Lock()
+			if state, ok := cm.DownloadMap[buildID]; ok {
 				state.BuildState = types.StateNone
 			}
-			mutex.Unlock()
+			cm.DownloadMutex.Unlock()
 			close(done)
 			return
 		default:
@@ -238,78 +254,96 @@ func doDownloadCmd(build model.BlenderBuild, cfg config.Config, downloadMap map[
 		}
 
 		// Download and extract the build
-		_, err := download.DownloadAndExtractBuild(build, cfg.DownloadDir, progressCallback, downloadCancelCh)
+		extractPath, err := download.DownloadAndExtractBuild(build, cm.Config.DownloadDir, progressCallback, downloadCancelCh)
 
 		// Check for cancellation or handle completion
 		select {
 		case <-downloadCancelCh:
 			// Download was cancelled during execution
-			mutex.Lock()
-			if state, ok := downloadMap[buildID]; ok {
+			cm.DownloadMutex.Lock()
+			if state, ok := cm.DownloadMap[buildID]; ok {
 				state.BuildState = types.StateNone
 			}
-			mutex.Unlock()
+			cm.DownloadMutex.Unlock()
 			close(done)
 			return
 		default:
-			// Continue processing result
-		}
+			// Download completed (success or error)
+			cm.DownloadMutex.Lock()
+			defer cm.DownloadMutex.Unlock()
 
-		// Update final status based on result
-		mutex.Lock()
-		if state, ok := downloadMap[buildID]; ok {
-			if state.BuildState == types.StateNone {
-				// Keep as cancelled
-			} else if err != nil {
-				if errors.Is(err, download.ErrCancelled) {
-					state.BuildState = types.StateNone
+			if state, ok := cm.DownloadMap[buildID]; ok {
+				if err != nil {
+					// Handle download error
+					state.BuildState = types.StateFailed
+					// Send completion message with error
+					go func() {
+						time.Sleep(3 * time.Second) // Keep error visible for a moment
+						deletePath := filepath.Join(cm.Config.DownloadDir, ".downloading", build.Version)
+						os.RemoveAll(deletePath) // Clean up partial download
+						programCh <- downloadCompleteMsg{
+							buildVersion:  build.Version,
+							extractedPath: "",
+							err:           err,
+						}
+						close(done)
+					}()
 				} else {
-					// StateNone for error states, will be displayed with additional context in UI
-					state.BuildState = types.StateNone
+					// Handle download success
+					state.BuildState = types.StateLocal
+					state.Progress = 1.0 // Ensure progress is shown as complete
+					// Send completion message
+					go func() {
+						time.Sleep(1 * time.Second) // Brief pause to show completion
+						programCh <- downloadCompleteMsg{
+							buildVersion:  build.Version,
+							extractedPath: extractPath,
+							err:           nil,
+						}
+						close(done)
+					}()
 				}
 			} else {
-				state.BuildState = types.StateLocal
+				close(done)
 			}
 		}
-		mutex.Unlock()
-
-		// Signal completion
-		close(done)
 	}()
 
-	// Return the buildID with the command so the model can track the active download
+	// Return a no-op command - real messages will be sent via programCh
+	return nil
+}
+
+// GetOldBuildsInfo creates a command to check for old builds info
+func (cm *CommandManager) GetOldBuildsInfo() tea.Cmd {
 	return func() tea.Msg {
-		return startDownloadMsg{
-			build:   build,
-			buildID: buildID,
-		}
+		count, size, err := local.GetOldBuildsInfo(cm.Config.DownloadDir)
+		return oldBuildsInfo{count: count, size: size, err: err}
 	}
 }
 
-// Command to get info about old builds
-func getOldBuildsInfoCmd(cfg config.Config) tea.Cmd {
+// CleanupOldBuilds creates a command to clean up old builds
+func (cm *CommandManager) CleanupOldBuilds() tea.Cmd {
 	return func() tea.Msg {
-		count, size, err := local.GetOldBuildsInfo(cfg.DownloadDir)
-		return oldBuildsInfo{
-			count: count,
-			size:  size,
-			err:   err,
-		}
-	}
-}
-
-// Command to clean up old builds
-func cleanupOldBuildsCmd(cfg config.Config) tea.Cmd {
-	return func() tea.Msg {
-		err := local.DeleteAllOldBuilds(cfg.DownloadDir)
+		err := local.DeleteAllOldBuilds(cm.Config.DownloadDir)
 		return cleanupOldBuildsMsg{err: err}
 	}
 }
 
-// uiRefreshCmd creates a command that forces the UI to refresh continuously without user input
-func uiRefreshCmd() tea.Cmd {
-	return tea.Tick(uiRefreshRate, func(t time.Time) tea.Msg {
-		// We use a custom message just for UI refresh
+// UIRefresh creates a command that forces a UI refresh
+func (cm *CommandManager) UIRefresh() tea.Cmd {
+	return func() tea.Msg {
+		// Short pause to avoid excessive refreshes
+		time.Sleep(time.Millisecond * 500)
 		return forceRenderMsg{}
-	})
+	}
+}
+
+// Global channel for program messages
+var programCh = make(chan tea.Msg)
+
+// ProgramMsgListener returns a command that listens for program messages
+func (cm *CommandManager) ProgramMsgListener() tea.Cmd {
+	return func() tea.Msg {
+		return <-programCh
+	}
 }

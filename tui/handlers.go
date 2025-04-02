@@ -313,7 +313,8 @@ func (m Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Now update the status of the builds based on local scan
-	return m, updateStatusFromLocalScanCmd(m.builds, m.config)
+	cmdManager := NewCommandManager(m.config, m.downloadStates, &m.downloadMutex)
+	return m, cmdManager.UpdateStatusFromLocalScan(m.builds)
 }
 
 // handleBuildsUpdated processes the result of updating build statuses
@@ -374,7 +375,6 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	completedDownloads := make([]string, 0)
 	stalledDownloads := make([]string, 0)
 	cancelledDownloads := make([]string, 0)
-	extractingInProgress := false
 
 	// Temporary copy of download states for use after unlock
 	tempStates := make(map[string]DownloadState)
@@ -407,9 +407,6 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 			} else {
 				// Active download that's not stalled
 				activeDownloads++
-				if state.BuildState == types.StateExtracting {
-					extractingInProgress = true
-				}
 
 				// Only update progress bar for the active download
 				if id == m.activeDownloadID {
@@ -516,9 +513,10 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Create any needed commands
+	cmdManager := NewCommandManager(m.config, m.downloadStates, &m.downloadMutex)
 	if activeDownloads > 0 {
 		// Continue ticking for active downloads
-		commands = append(commands, adaptiveTickCmd(activeDownloads, extractingInProgress))
+		commands = append(commands, cmdManager.Tick())
 		// Add progress bar updates
 		if len(progressCmds) > 0 {
 			commands = append(commands, progressCmds...)
@@ -529,7 +527,7 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	} else {
 		// No active downloads, but we still want to keep the tick system running
 		// Use a slower tick rate when idle
-		commands = append(commands, adaptiveTickCmd(0, false))
+		commands = append(commands, cmdManager.Tick())
 	}
 
 	// Force UI refresh on each tick, even without user input
@@ -543,7 +541,7 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Fallback to ensure we always have a tick scheduled
-	return m, tickCmd()
+	return m, cmdManager.Tick()
 }
 
 // Helper function to update focus styling for settings inputs
@@ -617,10 +615,11 @@ func saveSettings(m *Model) (tea.Model, tea.Cmd) {
 	// If returning to list view, trigger a new scan
 	if m.currentView == viewList {
 		m.isLoading = true
+		cmdManager := NewCommandManager(m.config, m.downloadStates, &m.downloadMutex)
 		return m, tea.Batch(
-			scanLocalBuildsCmd(m.config),
-			getOldBuildsInfoCmd(m.config),
-			fetchBuildsCmd(m.config),
+			cmdManager.ScanLocalBuilds(),
+			cmdManager.GetOldBuildsInfo(),
+			cmdManager.FetchBuilds(),
 		)
 	}
 

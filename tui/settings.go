@@ -11,20 +11,7 @@ import (
 func (m Model) renderSettingsContent(availableHeight int) string {
 	var b strings.Builder
 
-	settingHeight := 3 // Each setting takes 3 lines: label, input, and spacing
 	settingsCount := len(m.settingsInputs)
-	totalSettingsHeight := settingsCount * settingHeight
-
-	// Center the settings vertically if there's room
-	topPadding := (availableHeight - totalSettingsHeight) / 2
-	if topPadding < 0 {
-		topPadding = 0
-	}
-
-	// Add top padding
-	for i := 0; i < topPadding; i++ {
-		b.WriteString("\n")
-	}
 
 	// Setting labels, matching the order in initialization
 	settingLabels := []string{
@@ -59,7 +46,7 @@ func (m Model) renderSettingsContent(availableHeight int) string {
 		b.WriteString(descStyle.Render(settingDescriptions[i]) + "\n\n")
 	}
 
-	return b.String()
+	return lp.Place(m.terminalWidth, availableHeight, lp.Left, lp.Top, b.String())
 }
 
 // renderInitialSetupView renders the initial setup view when app is first run

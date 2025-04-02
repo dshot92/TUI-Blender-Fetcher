@@ -39,25 +39,54 @@ func (m Model) renderBuildHeader() string {
 	columns[0].visible = true
 	columns[1].visible = true
 
+	// After the columns slice is defined, insert the following code block:
+
+	for i := range columns {
+		if columns[i].width == 0 {
+			switch columns[i].name {
+			case "Blender":
+				columns[i].width = columnConfigs["Version"].minWidth
+			case "Status":
+				columns[i].width = columnConfigs["Status"].minWidth
+			case "Branch":
+				columns[i].width = columnConfigs["Branch"].minWidth
+			case "Type":
+				columns[i].width = columnConfigs["Type"].minWidth
+			case "Hash":
+				columns[i].width = columnConfigs["Hash"].minWidth
+			case "Size":
+				columns[i].width = columnConfigs["Size"].minWidth
+			case "Build Date":
+				columns[i].width = columnConfigs["Build Date"].minWidth
+			}
+		}
+	}
+
+	// This block ensures that each column gets a default width if its computed width is zero
+
 	// Add header columns with sort indicators - use bold style to make them more visible
 	for i, col := range columns {
 		if col.visible {
-			// Add sort indicator to column name if this is the sort column
+			// Get the header label with sort indicator
 			colTitle := getSortIndicator(m, col.index, col.name)
-
-			// Apply style and padding based on column type
-			switch i {
-			case 0: // Version - left align
-				headerRow.WriteString(cellStyleLeft.Copy().Bold(true).Width(col.width).Render(colTitle))
-			case 5: // Size - right align
-				headerRow.WriteString(cellStyleRight.Copy().Bold(true).Width(col.width).Render(colTitle))
-			case 6: // Date - center
-				headerRow.WriteString(cellStyleCenter.Copy().Bold(true).Width(col.width).Render(colTitle))
-			default: // Others - center
-				headerRow.WriteString(cellStyleCenter.Copy().Bold(true).Width(col.width).Render(colTitle))
+			// Ensure the cell width is at least as wide as the header label
+			displayWidth := col.width
+			if len(colTitle) > displayWidth {
+				displayWidth = len(colTitle)
 			}
 
-			// Add space between columns
+			switch i {
+			case 0: // Version - left align
+				headerRow.WriteString(cellStyleLeft.Copy().Bold(true).Width(displayWidth).Render(colTitle))
+			case 5: // Size - right align
+				headerRow.WriteString(cellStyleRight.Copy().Bold(true).Width(displayWidth).Render(colTitle))
+			case 6: // Build Date - center align
+				headerRow.WriteString(cellStyleCenter.Copy().Bold(true).Width(displayWidth).Render(colTitle))
+			default: // Others - center align
+				headerRow.WriteString(cellStyleCenter.Copy().Bold(true).Width(displayWidth).Render(colTitle))
+			}
+
+			// Add a space between columns if not the last column
 			if i < len(columns)-1 {
 				headerRow.WriteString(" ")
 			}

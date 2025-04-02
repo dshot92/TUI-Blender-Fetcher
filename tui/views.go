@@ -27,7 +27,7 @@ func (m Model) View() string {
 	var footerContent string
 
 	// Calculate dynamic heights for responsive layout
-	headerHeight := 2 // Title + separator
+	headerHeight := 3 // Title + table header + separator
 	footerHeight := 2 // Commands + 1 for separator
 	middleHeight := m.terminalHeight - headerHeight - footerHeight
 
@@ -67,14 +67,7 @@ func (m Model) View() string {
 
 	// If we're showing a dialog, place it on top of the base view
 	if isDialog {
-		return lp.Place(
-			m.terminalWidth,
-			m.terminalHeight,
-			lp.Center,
-			lp.Center,
-			dialogContent,
-		)
+		return lp.Place(m.terminalWidth, m.terminalHeight, lp.Center, lp.Center, dialogContent)
 	}
-
-	return baseView
+	return lp.Place(m.terminalWidth, m.terminalHeight, lp.Left, lp.Top, baseView)
 }
