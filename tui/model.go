@@ -37,7 +37,6 @@ type Model struct {
 	oldBuildsCount   int
 	oldBuildsSize    int64
 	deleteCandidate  string // Version of build being considered for deletion
-	alwaysShowHeader bool   // Always show the table header when scrolling
 	activeDownloadID string // Store the active download build ID for tracking
 }
 
@@ -66,18 +65,14 @@ func InitialModel(cfg config.Config, needsSetup bool) Model {
 	)
 
 	m := Model{
-		config:           cfg,
-		isLoading:        !needsSetup,
-		downloadStates:   make(map[string]*DownloadState),
-		progressBar:      progModel,
-		sortColumn:       0,                    // Default sort by Version
-		sortReversed:     true,                 // Default descending sort (newest versions first)
-		blenderRunning:   "",                   // No Blender running initially
-		editMode:         false,                // Start in navigation mode, not edit mode
-		visibleColumns:   initVisibleColumns(), // Initialize with all columns visible
-		scrollOffset:     0,                    // Initialize scroll position to top
-		visibleRows:      10,                   // Default number of visible rows, will be adjusted based on terminal size
-		alwaysShowHeader: true,                 // Always show table header when scrolling
+		config:         cfg,
+		isLoading:      !needsSetup,
+		downloadStates: make(map[string]*DownloadState),
+		progressBar:    progModel,
+		sortColumn:     0,     // Default sort by Version
+		sortReversed:   true,  // Default descending sort (newest versions first)
+		blenderRunning: "",    // No Blender running initially
+		editMode:       false, // Start in navigation mode, not edit mode
 	}
 
 	if needsSetup {
@@ -129,19 +124,6 @@ func (m *Model) UpdateWindowSize(width, height int) {
 
 	// Calculate and set column widths based on the terminal width
 	calculateColumnWidths(width)
-}
-
-// Helper function to initialize all columns as visible
-func initVisibleColumns() map[string]bool {
-	return map[string]bool{
-		"Version":    true,
-		"Status":     true,
-		"Branch":     true,
-		"Type":       true,
-		"Hash":       true,
-		"Size":       true,
-		"Build Date": true,
-	}
 }
 
 // calculateColumnWidths sets the width for each column based on the available terminal width

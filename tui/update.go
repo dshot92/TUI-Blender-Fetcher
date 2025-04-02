@@ -392,13 +392,13 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("right", "l"))):
 			// Cycle sort column forward
-			lastCol := getLastVisibleColumn()
+			lastCol := len(columnConfigs) - 1
 			m.sortColumn = (m.sortColumn + 1) % (lastCol + 1)
 			m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("left", "h"))):
 			// Cycle sort column backward
-			lastCol := getLastVisibleColumn()
+			lastCol := len(columnConfigs) - 1
 			m.sortColumn = (m.sortColumn - 1 + (lastCol + 1)) % (lastCol + 1)
 			m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
 

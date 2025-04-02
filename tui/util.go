@@ -2,12 +2,20 @@ package tui
 
 import (
 	"TUI-Blender-Launcher/model"
-	"TUI-Blender-Launcher/types"
 	"fmt"
 	"sort"
-
-	"github.com/mattn/go-runewidth"
 )
+
+// pluralize returns singular or plural form based on count
+func pluralize(count int, singular string, plural string) string {
+	if count == 1 {
+		return singular
+	}
+	if plural == "" {
+		return singular + "s"
+	}
+	return plural
+}
 
 // formatByteSize converts bytes to human-readable sizes
 func formatByteSize(bytes int64) string {
@@ -21,43 +29,6 @@ func formatByteSize(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f%cB", float64(bytes)/float64(div), "KMGTPE"[exp])
-}
-
-// buildStateToString converts build state to display string
-func buildStateToString(state types.BuildState) string {
-	switch state {
-	case types.StateDownloading:
-		return "Downloading"
-	case types.StateExtracting:
-		return "Extracting"
-	case types.StatePreparing:
-		return "Preparing"
-	case types.StateLocal:
-		return "Local"
-	case types.StateOnline:
-		return "Online"
-	case types.StateUpdate:
-		return "Update"
-	case types.StateFailed:
-		return "Failed"
-	case types.StateNone:
-		return "Cancelled"
-	default:
-		return state.String()
-	}
-}
-
-// calculateSplitIndex finds the rune index to split a string for a given visual width.
-func calculateSplitIndex(s string, targetWidth int) int {
-	currentWidth := 0
-	for i, r := range s {
-		runeWidth := runewidth.RuneWidth(r)
-		if currentWidth+runeWidth > targetWidth {
-			return i // Split before this rune
-		}
-		currentWidth += runeWidth
-	}
-	return len(s) // Target width is >= string width
 }
 
 // sortBuilds sorts the builds based on the selected column and sort order
@@ -105,72 +76,4 @@ func sortBuilds(builds []model.BlenderBuild, column int, reverse bool) []model.B
 	}
 
 	return sortedBuilds
-}
-
-// getSortIndicator returns a string indicating the sort direction for a given column
-func getSortIndicator(m Model, column int, title string) string {
-	if m.sortColumn == column {
-		if m.sortReversed {
-			return "↓ " + title
-		} else {
-			return "↑ " + title
-		}
-	}
-	return title
-}
-
-// Helper function to check if a column is visible
-func isColumnVisible(column int) bool {
-	switch column {
-	case 0:
-		return true // Version is always visible
-	case 1:
-		return true // Status is always visible
-	case 2:
-		return columnConfigs["Branch"].visible
-	case 3:
-		return columnConfigs["Type"].visible
-	case 4:
-		return columnConfigs["Hash"].visible
-	case 5:
-		return columnConfigs["Size"].visible
-	case 6:
-		return columnConfigs["Build Date"].visible
-	default:
-		return false
-	}
-}
-
-// Helper function to get the last visible column index
-func getLastVisibleColumn() int {
-	for i := 6; i >= 0; i-- {
-		if isColumnVisible(i) {
-			return i
-		}
-	}
-	return 0 // Fallback to first column (should never happen as Version is always visible)
-}
-
-// Helper function to count visible columns
-func countVisibleColumns(columns []struct {
-	name    string
-	width   int
-	visible bool
-	index   int
-}) int {
-	count := 0
-	for _, col := range columns {
-		if col.visible {
-			count++
-		}
-	}
-	return count
-}
-
-// Utility function to create plural words
-func pluralize(word string, count int) string {
-	if count == 1 {
-		return word
-	}
-	return word + "s"
 }

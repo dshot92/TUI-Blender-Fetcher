@@ -85,29 +85,7 @@ func (r Row) Render(columns []ColumnConfig) string {
 // renderStatus renders the status cell with appropriate formatting
 // This is where download and extraction progress is displayed
 func (r Row) renderStatus() string {
-	// If there's an active download for this build, show progress information
-	if r.DownloadState != nil && (r.DownloadState.BuildState == types.StateDownloading || r.DownloadState.BuildState == types.StateExtracting) {
-		if r.DownloadState.BuildState == types.StateDownloading {
-			// Show download progress with percentage and speed
-			if r.DownloadState.Total > 0 {
-				percent := (float64(r.DownloadState.Current) / float64(r.DownloadState.Total)) * 100
-				speed := r.DownloadState.Speed
-				if speed == 0 && !r.DownloadState.StartTime.IsZero() {
-					elapsedSecs := time.Since(r.DownloadState.StartTime).Seconds()
-					if elapsedSecs > 0 {
-						speed = float64(r.DownloadState.Current) / elapsedSecs
-					}
-				}
-				return fmt.Sprintf("%.1f%% (%.1f MB/s)", percent, speed/1024/1024)
-			}
-			return "Downloading..."
-		} else if r.DownloadState.BuildState == types.StateExtracting {
-			return "Extracting..."
-		}
-	}
-
-	// For non-downloading builds, show the regular state
-	return buildStateToString(r.Build.Status)
+	return FormatBuildStatus(r.Build.Status, r.DownloadState)
 }
 
 // ColumnConfig represents the configuration for a table column
@@ -349,7 +327,33 @@ func (m Model) renderBuildContent(availableHeight int) string {
 	var output bytes.Buffer
 
 	// Add the table header to the top of the table, ensuring it ends with a newline
-	headerStr := m.renderBuildTableHeader()
+	// Create header row with column styles
+	var headerBuffer bytes.Buffer
+	columns := GetBuildColumns(m.visibleColumns)
+	for colIdx, col := range columns {
+		if col.Visible {
+			// Apply the same style as rows but make headers bold
+			headerText := col.Name
+
+			// Add sort indicators for the currently sorted column
+			if col.Index == m.sortColumn {
+				if m.sortReversed {
+					headerText += " ↓"
+				} else {
+					headerText += " ↑"
+				}
+			}
+
+			headerContent := lp.NewStyle().Bold(true).Render(headerText)
+			headerBuffer.WriteString(col.Style(headerContent))
+
+			// Add space between columns
+			if colIdx < len(columns)-1 {
+				headerBuffer.WriteString(" ")
+			}
+		}
+	}
+	headerStr := headerBuffer.String()
 	if !strings.HasSuffix(headerStr, "\n") {
 		headerStr += "\n"
 	}

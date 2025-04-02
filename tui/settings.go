@@ -65,7 +65,7 @@ func (m Model) renderCleanupConfirmDialog() string {
 	// Show information about what will be removed
 	content.WriteString(fmt.Sprintf("This will remove %d %s, freeing up %s of disk space.\n\n",
 		m.oldBuildsCount,
-		pluralize("build", m.oldBuildsCount),
+		pluralize(m.oldBuildsCount, "build", ""),
 		formatByteSize(m.oldBuildsSize)))
 
 	// Instructions
