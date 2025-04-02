@@ -15,8 +15,8 @@ import (
 
 // API endpoint
 // const blenderAPIURL = "https://builder.blender.org/download/experimental/?format=json&v=1"
-const blenderAPIURL = "https://builder.blender.org/download/patch/?format=json&v=1"
-// const blenderAPIURL = "https://builder.blender.org/download/daily/?format=json&v=1"
+// const blenderAPIURL = "https://builder.blender.org/download/patch/?format=json&v=1"
+const blenderAPIURL = "https://builder.blender.org/download/daily/?format=json&v=1"
 
 // FetchBuilds fetches the list of Blender builds from the official API,
 // filtering for the current OS/architecture, file extensions, and minimum version.

@@ -222,16 +222,6 @@ func (m Model) renderListView() string {
 	var b strings.Builder
 
 	// ===== HEADER SECTION - ALWAYS VISIBLE =====
-	// Header Row with TUI title
-	title := "TUI Blender Launcher"
-
-	if m.blenderRunning != "" {
-		title += fmt.Sprintf(" - Launching Blender %s...", m.blenderRunning)
-	}
-
-	// Use the updated headerStyle from const.go for the title
-	b.WriteString(headerStyle.Width(m.terminalWidth).AlignHorizontal(lp.Center).Render(title))
-	b.WriteString("\n")
 
 	// Column headers - create the header row with column names
 	headerRow := bytes.Buffer{}
@@ -613,8 +603,6 @@ func (m Model) renderListView() string {
 
 	// ===== FOOTER SECTION - ALWAYS AT BOTTOM =====
 	// Add separator before footer - match width of header
-	// b.WriteString(separator[:headerRow.Len()])
-	// b.WriteString("\n")
 
 	// First footer row - Contextual actions based on selected build
 	var footerTopRow strings.Builder
