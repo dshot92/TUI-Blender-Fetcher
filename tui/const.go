@@ -26,9 +26,10 @@ const (
 	maxTickCounter = 1000 // Maximum ticks to prevent infinite loops
 
 	// Performance constants
-	downloadTickRate    = 100 * time.Millisecond // How often to update download progress
-	downloadStallTime   = 3 * time.Minute        // Default timeout for detecting stalled downloads
-	extractionStallTime = 10 * time.Minute       // Longer timeout for extraction which can take longer
+	downloadTickRate    = 50 * time.Millisecond // How often to update download progress (faster for smoother UI)
+	downloadStallTime   = 30 * time.Second      // How long a download can stall before marking as failed
+	extractionStallTime = 120 * time.Second     // Longer timeout for extraction phase
+	uiRefreshRate       = 33 * time.Millisecond // How often to refresh the UI without user input (30 FPS)
 
 	// Environment variables
 	envLaunchVariable = "TUI_BLENDER_LAUNCH"
@@ -81,18 +82,20 @@ type columnConfig struct {
 	width    int
 	priority int // Lower number = higher priority (will be shown first)
 	visible  bool
+	minWidth int     // Minimum width for the column
+	flex     float64 // Flex ratio for dynamic width calculation
 }
 
 // Column configurations
 var (
-	// Column configurations with priorities (lower = higher priority)
+	// Column configurations with priorities and flex values
 	columnConfigs = map[string]columnConfig{
-		"Version":    {width: colWidthVersion, priority: 1},
-		"Status":     {width: colWidthStatus, priority: 2},
-		"Branch":     {width: colWidthBranch, priority: 5},
-		"Type":       {width: colWidthType, priority: 4},
-		"Hash":       {width: colWidthHash, priority: 6},
-		"Size":       {width: colWidthSize, priority: 7},
-		"Build Date": {width: colWidthDate, priority: 3},
+		"Version":    {width: 0, priority: 1, minWidth: 7, flex: 1.0},  // Version gets more space
+		"Status":     {width: 0, priority: 2, minWidth: 12, flex: 1.2}, // Status needs room for different states
+		"Branch":     {width: 0, priority: 5, minWidth: 6, flex: 0.8},
+		"Type":       {width: 0, priority: 4, minWidth: 10, flex: 1.0},
+		"Hash":       {width: 0, priority: 6, minWidth: 9, flex: 0.8},
+		"Size":       {width: 0, priority: 7, minWidth: 8, flex: 0.8},
+		"Build Date": {width: 0, priority: 3, minWidth: 10, flex: 1.0},
 	}
 )

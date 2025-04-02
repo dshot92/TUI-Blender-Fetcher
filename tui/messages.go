@@ -59,6 +59,9 @@ type (
 
 	// Timer message
 	tickMsg time.Time
+
+	// UI refresh message
+	forceRenderMsg struct{} // Message used just to force UI rendering
 )
 
 // Implement the error interface for errMsg

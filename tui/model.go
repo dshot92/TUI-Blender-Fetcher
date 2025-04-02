@@ -125,3 +125,15 @@ func InitialModel(cfg config.Config, needsSetup bool) Model {
 
 	return m
 }
+
+// UpdateWindowSize updates the terminal dimensions and recalculates layout
+func (m *Model) UpdateWindowSize(width, height int) {
+	// Only update if size actually changed to avoid unnecessary calculations
+	if m.terminalWidth != width || m.terminalHeight != height {
+		m.terminalWidth = width
+		m.terminalHeight = height
+
+		// Recalculate column visibility and widths based on new width
+		m.visibleColumns = calculateVisibleColumns(width)
+	}
+}

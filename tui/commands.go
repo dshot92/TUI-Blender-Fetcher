@@ -305,3 +305,11 @@ func cleanupOldBuildsCmd(cfg config.Config) tea.Cmd {
 		return cleanupOldBuildsMsg{err: err}
 	}
 }
+
+// uiRefreshCmd creates a command that forces the UI to refresh continuously without user input
+func uiRefreshCmd() tea.Cmd {
+	return tea.Tick(uiRefreshRate, func(t time.Time) tea.Msg {
+		// We use a custom message just for UI refresh
+		return forceRenderMsg{}
+	})
+}

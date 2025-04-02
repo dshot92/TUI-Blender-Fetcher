@@ -1,10 +1,8 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/local"
 	"TUI-Blender-Launcher/model"
 	"TUI-Blender-Launcher/types"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -28,46 +26,41 @@ func (m Model) Init() tea.Cmd {
 	// Get information about old builds
 	cmds = append(cmds, getOldBuildsInfoCmd(m.config))
 
+	// Start the continuous tick system for UI updates
+	cmds = append(cmds, tickCmd())
+
+	// Start a dedicated UI refresh cycle
+	cmds = append(cmds, uiRefreshCmd())
+
 	return tea.Batch(cmds...)
 }
 
 // Update updates the model based on messages
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// First handle the current view state
+	// Special priority handling for view-specific cases
 	switch m.currentView {
-	case viewSettings:
-		return m.updateSettingsView(msg)
-	case viewDeleteConfirm:
-		return m.updateDeleteConfirmView(msg)
+	case viewSettings, viewInitialSetup:
+		// In settings screens, let the settings handler take priority for key events
+		if _, ok := msg.(tea.KeyMsg); ok {
+			return m.updateSettingsView(msg)
+		}
 	case viewCleanupConfirm:
-		return m.updateCleanupConfirmView(msg)
+		// In cleanup confirm dialog, handle keys there first
+		if _, ok := msg.(tea.KeyMsg); ok {
+			return m.updateCleanupConfirmView(msg)
+		}
 	case viewQuitConfirm:
-		return m.updateQuitConfirmView(msg)
+		// In quit confirm dialog, handle keys there first
+		if _, ok := msg.(tea.KeyMsg); ok {
+			return m.updateQuitConfirmView(msg)
+		}
 	}
 
-	// Then handle the type of message
+	// Handle global messages
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		// Update window dimensions
-		m.terminalWidth = msg.Width
-		m.terminalHeight = msg.Height
-
-		// Calculate visible rows for table based on terminal height
-		// Reserve space for header (3 lines) and footer (3 lines)
-		reservedLines := 6
-		m.visibleRows = m.terminalHeight - reservedLines
-		if m.visibleRows < 5 {
-			m.visibleRows = 5 // Ensure at least 5 rows for content
-		}
-
-		// Recalculate which columns should be visible
-		m.visibleColumns = calculateVisibleColumns(m.terminalWidth)
-
-		// Ensure Version and Status columns are always visible regardless of terminal width
-		if m.visibleColumns != nil {
-			m.visibleColumns["Version"] = true
-			m.visibleColumns["Status"] = true
-		}
+		// Update window dimensions and layout using our new method
+		m.UpdateWindowSize(msg.Width, msg.Height)
 
 		// Make sure cursor position is still valid
 		if len(m.builds) > 0 && m.cursor >= len(m.builds) {
@@ -88,22 +81,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, nil
 
-	case tea.KeyMsg:
-		// Handle key messages with the list view handler
-		return m.updateListView(msg)
-
 	case progress.FrameMsg:
 		// Update the progress bar if we're displaying it
 		progressModel, cmd := m.progressBar.Update(msg)
 		m.progressBar = progressModel.(progress.Model)
 		return m, cmd
 
-	// Success messages
-	case buildsFetchedMsg:
-		return m.handleBuildsFetched(msg)
+	case forceRenderMsg:
+		// This is just to force the UI to refresh
+		// Return the model with another UI refresh command to keep the cycle going
+		return m, uiRefreshCmd()
 
+	// Handle errors first, showing them in any view
+	case errMsg:
+		m.err = msg.err
+		return m, nil
+
+	// Handle various update message types
 	case localBuildsScannedMsg:
 		return m.handleLocalBuildsScanned(msg)
+
+	case buildsFetchedMsg:
+		return m.handleBuildsFetched(msg)
 
 	case buildsUpdatedMsg:
 		return m.handleBuildsUpdated(msg)
@@ -112,15 +111,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleBlenderExec(msg)
 
 	case deleteBuildCompleteMsg:
-		// Handle build deletion completion
+		// When build deletion is complete, return to list view
 		m.currentView = viewList
-		return m, nil
+		return m, fetchBuildsCmd(m.config)
 
 	case startDownloadMsg:
 		// Store the active download ID for UI rendering
 		m.activeDownloadID = msg.buildID
-		// Start download for the build
-		return m, doDownloadCmd(msg.build, m.config, m.downloadStates, &m.downloadMutex)
+
+		// Ensure we have a continuous UI refresh during download/extraction operations
+		// so the user can still interact with the TUI
+		var cmds []tea.Cmd
+
+		// Add download command
+		cmds = append(cmds, doDownloadCmd(msg.build, m.config, m.downloadStates, &m.downloadMutex))
+
+		// Add continuous UI refresh command during active processes
+		cmds = append(cmds, uiRefreshCmd())
+
+		return m, tea.Batch(cmds...)
 
 	case downloadCompleteMsg:
 		// Post-download processing is now handled in the download command
@@ -163,11 +172,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case errMsg:
-		// A command returned an error
-		m.err = msg
-		return m, nil
-
 	case tickMsg:
 		// Tick events for updating downloads
 		return m.handleDownloadProgress(msg)
@@ -175,11 +179,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+
+	// Based on the current view, update accordingly
+	switch m.currentView {
+	case viewList:
+		return m.updateListView(msg)
+	case viewSettings:
+		return m.updateSettingsView(msg)
+	case viewInitialSetup:
+		return m.updateSettingsView(msg)
+	case viewCleanupConfirm:
+		return m.updateCleanupConfirmView(msg)
+	case viewQuitConfirm:
+		return m.updateQuitConfirmView(msg)
+	}
+
+	return m, nil
 }
 
 // updateSettingsView handles key events in the settings view
 func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Handle different message types
 	switch msg := msg.(type) {
+	case tickMsg:
+		// Process tick messages for downloads but continue with other processing
+		newModel, cmd := m.handleDownloadProgress(msg)
+		// Return the updated model and command, but don't short-circuit other message handling
+		return newModel, cmd
+
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c", "q"))):
@@ -211,7 +238,8 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 				updateFocusStyles(&m, m.focusIndex)
 				return m, nil
 			} else {
-				// Esc does nothing when not in edit mode
+				// When not in edit mode, ESC returns to the main view
+				m.currentView = viewList
 				return m, nil
 			}
 
@@ -283,11 +311,15 @@ func (m Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			// Pass other keys to the input field if in edit mode
 			if m.editMode {
-				return &m, m.updateInputs(msg)
+				// Create a copy of the model to avoid pointer issues
+				updatedModel := m
+				cmd := updatedModel.updateInputs(msg)
+				return updatedModel, cmd
 			}
 		}
 	}
 
+	// Default: keep the current model and continue the UI refresh
 	return m, nil
 }
 
@@ -459,19 +491,34 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.builds) > 0 && m.cursor < len(m.builds) {
 				selectedBuild := m.builds[m.cursor]
 
-				// Check if it's a download in progress first
+				// First priority: cancel any active download
 				m.downloadMutex.Lock()
-				downloadState, isDownloading := m.downloadStates[selectedBuild.Version]
-				canCancel := isDownloading &&
-					(downloadState.BuildState == types.StateDownloading ||
-						downloadState.BuildState == types.StatePreparing ||
-						downloadState.BuildState == types.StateExtracting)
+				canCancel := false
+				// Search for any download state that matches this version
+				// Need to check all keys since buildID might include hash
+				for id, state := range m.downloadStates {
+					// Extract version from buildID
+					downloadVersion := id
+					if strings.Contains(id, "-") {
+						downloadVersion = strings.Split(id, "-")[0]
+					}
+
+					if downloadVersion == selectedBuild.Version &&
+						(state.BuildState == types.StateDownloading ||
+							state.BuildState == types.StatePreparing ||
+							state.BuildState == types.StateExtracting) {
+						canCancel = true
+						// Set the activeDownloadID to ensure we're canceling the right one
+						m.activeDownloadID = id
+						break
+					}
+				}
 				m.downloadMutex.Unlock()
 
 				if canCancel {
 					return m.handleCancelDownload()
 				} else if selectedBuild.Status == types.StateLocal || selectedBuild.Status == types.StateUpdate {
-					// Use x for deleting builds too
+					// Secondary action: delete builds
 					return m.handleDeleteBuild()
 				}
 			}
@@ -488,52 +535,6 @@ func (m Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("s"))):
 			return m.handleShowSettings()
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("c"))):
-			return m.handleShowSettings()
-		}
-	}
-
-	return m, nil
-}
-
-// updateDeleteConfirmView handles key events in the delete confirmation dialog
-func (m Model) updateDeleteConfirmView(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, key.NewBinding(key.WithKeys("esc", "n", "ctrl+c"))):
-			// Cancel deletion and return to list view
-			m.currentView = viewList
-			return m, nil
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("y", "enter"))):
-			// Confirm deletion and execute it
-			if m.deleteCandidate != "" {
-				return m, func() tea.Msg {
-					success, err := local.DeleteBuild(m.config.DownloadDir, m.deleteCandidate)
-					if err != nil {
-						return errMsg{err}
-					}
-
-					if !success {
-						return errMsg{fmt.Errorf("failed to delete build %s", m.deleteCandidate)}
-					}
-
-					// Update build statuses after deletion
-					for i := range m.builds {
-						if m.builds[i].Version == m.deleteCandidate {
-							m.builds[i].Status = types.StateOnline
-							break
-						}
-					}
-					m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
-					// Return a proper message instead of setting view directly
-					return deleteBuildCompleteMsg{}
-				}
-			}
-			m.currentView = viewList
-			return m, nil
 		}
 	}
 

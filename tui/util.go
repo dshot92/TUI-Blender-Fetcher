@@ -2,10 +2,50 @@ package tui
 
 import (
 	"TUI-Blender-Launcher/model"
+	"TUI-Blender-Launcher/types"
+	"fmt"
 	"sort"
 
 	"github.com/mattn/go-runewidth"
 )
+
+// formatByteSize converts bytes to human-readable sizes
+func formatByteSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// buildStateToString converts build state to display string
+func buildStateToString(state types.BuildState) string {
+	switch state {
+	case types.StateDownloading:
+		return "Downloading"
+	case types.StateExtracting:
+		return "Extracting"
+	case types.StatePreparing:
+		return "Preparing"
+	case types.StateLocal:
+		return "Local"
+	case types.StateOnline:
+		return "Online"
+	case types.StateUpdate:
+		return "Update"
+	case types.StateFailed:
+		return "Failed"
+	case types.StateNone:
+		return "Cancelled"
+	default:
+		return state.String()
+	}
+}
 
 // calculateSplitIndex finds the rune index to split a string for a given visual width.
 func calculateSplitIndex(s string, targetWidth int) int {
@@ -23,135 +63,107 @@ func calculateSplitIndex(s string, targetWidth int) int {
 // calculateVisibleColumns determines which columns should be visible based on terminal width
 // and calculates appropriate widths to use full available space
 func calculateVisibleColumns(terminalWidth int) map[string]bool {
-	// Minimum column widths for readability
-	minColumnWidths := map[string]int{
-		"Version":    12, // Need space for "Blender X.Y.Z"
-		"Status":     8,  // Status messages like "Local", "Online"
-		"Branch":     6,  // Branch names
-		"Type":       8,  // Types like "stable", "alpha"
-		"Hash":       10, // Commit hashes
-		"Size":       8,  // File sizes
-		"Build Date": 10, // Dates (YYYY-MM-DD)
-	}
+	// Constants
+	const columnGap = 1 // Space between columns
 
 	// All possible columns in priority order (lower index = higher priority)
 	allColumns := []struct {
-		name     string
-		priority int
+		name   string
+		config columnConfig
 	}{
-		{"Version", 1},
-		{"Status", 2},
-		{"Branch", 3},
-		{"Build Date", 4},
-		{"Type", 5},
-		{"Size", 6},
-		{"Hash", 7},
+		{"Version", columnConfigs["Version"]},
+		{"Status", columnConfigs["Status"]},
+		{"Branch", columnConfigs["Branch"]},
+		{"Type", columnConfigs["Type"]},
+		{"Hash", columnConfigs["Hash"]},
+		{"Size", columnConfigs["Size"]},
+		{"Build Date", columnConfigs["Build Date"]},
 	}
 
-	// Initialize configs with minimum width values
-	newConfigs := make(map[string]columnConfig)
-	for _, col := range allColumns {
-		newConfigs[col.name] = columnConfig{
-			width:    minColumnWidths[col.name],
-			priority: col.priority,
-			visible:  false,
-		}
-	}
-
-	// Always make Version and Status visible regardless of terminal width
-	newConfigs["Version"] = columnConfig{
-		width:    minColumnWidths["Version"],
-		priority: 1,
-		visible:  true,
-	}
-	newConfigs["Status"] = columnConfig{
-		width:    minColumnWidths["Status"],
-		priority: 2,
-		visible:  true,
-	}
-
-	// Calculate minimum required width for a functional table
-	// Start with Version and Status already visible
-	remainingWidth := terminalWidth - minColumnWidths["Version"] - minColumnWidths["Status"] - 1 // -1 for gap between them
-
-	// Sort all columns by priority, skipping Version and Status which are already handled
-	sortedColumns := make([]string, 0, len(allColumns)-2)
-	for _, col := range allColumns {
-		if col.name != "Version" && col.name != "Status" {
-			sortedColumns = append(sortedColumns, col.name)
-		}
-	}
-	sort.Slice(sortedColumns, func(i, j int) bool {
-		return newConfigs[sortedColumns[i]].priority < newConfigs[sortedColumns[j]].priority
+	// Sort columns by priority
+	sort.Slice(allColumns, func(i, j int) bool {
+		return allColumns[i].config.priority < allColumns[j].config.priority
 	})
 
-	// Start adding columns by priority until we run out of space
-	visibleCount := 2 // Version and Status are already visible
-	for _, name := range sortedColumns {
-		colWidth := minColumnWidths[name]
+	// Initialize visibility map
+	visibleColumns := make(map[string]bool)
 
-		// For each column we need its width plus one space for the gap
-		neededWidth := colWidth + 1 // Always add gap width after the first two columns
+	// Step 1: Calculate how many columns can fit with their minimum widths
+	remainingWidth := terminalWidth
+	var visibleCols []string
+
+	// Always include Version and Status
+	visibleColumns["Version"] = true
+	visibleColumns["Status"] = true
+	visibleCols = append(visibleCols, "Version", "Status")
+
+	// Reserve space for the required columns and their gaps
+	remainingWidth -= columnConfigs["Version"].minWidth + columnConfigs["Status"].minWidth + columnGap
+
+	// Add additional columns by priority if they fit
+	for _, col := range allColumns {
+		// Skip already added columns
+		if col.name == "Version" || col.name == "Status" {
+			continue
+		}
 
 		// Check if this column fits
-		if remainingWidth >= neededWidth {
-			// It fits, mark it visible
-			config := newConfigs[name]
-			config.visible = true
-			config.width = colWidth
-			newConfigs[name] = config
-
-			remainingWidth -= neededWidth
-			visibleCount++
+		if remainingWidth >= (col.config.minWidth + columnGap) {
+			visibleColumns[col.name] = true
+			visibleCols = append(visibleCols, col.name)
+			remainingWidth -= (col.config.minWidth + columnGap)
 		} else {
-			// No more space - this and remaining columns stay hidden
-			break
+			visibleColumns[col.name] = false
 		}
 	}
 
-	// Now distribute any remaining width to make visible columns wider
-	if remainingWidth > 0 && visibleCount > 0 {
-		// Get list of visible columns
-		visibleCols := []string{"Version", "Status"}
-		for _, name := range sortedColumns {
-			if newConfigs[name].visible {
-				visibleCols = append(visibleCols, name)
-			}
+	// Step 2: Distribute available width proportionally using flex values
+	// Calculate total flex for visible columns
+	totalFlex := 0.0
+	for _, colName := range visibleCols {
+		totalFlex += columnConfigs[colName].flex
+	}
+
+	// Calculate exact distributed width (including fractional part)
+	availableWidth := terminalWidth - (len(visibleCols)-1)*columnGap
+	var distributedWidth float64
+	var widthAssignments = make(map[string]float64)
+
+	// First pass: calculate ideal width based on flex proportion
+	for _, colName := range visibleCols {
+		// Calculate proportional width
+		proportion := columnConfigs[colName].flex / totalFlex
+		idealWidth := float64(availableWidth) * proportion
+
+		// Ensure minimum width
+		if idealWidth < float64(columnConfigs[colName].minWidth) {
+			idealWidth = float64(columnConfigs[colName].minWidth)
 		}
 
-		// Calculate equal distribution
-		extraPerCol := remainingWidth / visibleCount
-		remainder := remainingWidth % visibleCount
+		widthAssignments[colName] = idealWidth
+		distributedWidth += idealWidth
+	}
 
-		// First pass: give each column its fair share
-		for _, name := range visibleCols {
-			config := newConfigs[name]
-			config.width += extraPerCol
-			newConfigs[name] = config
-		}
+	// Second pass: adjust for integer widths and distribute remaining pixels
+	// We need to convert to integers, which might leave some pixels unallocated
+	remainingPixels := availableWidth - int(distributedWidth)
 
-		// Second pass: distribute remainder from highest to lowest priority
-		for i := 0; i < remainder && i < len(visibleCols); i++ {
-			config := newConfigs[visibleCols[i]]
+	// Update the actual column configs with new widths
+	for colName, width := range widthAssignments {
+		config := columnConfigs[colName]
+		config.width = int(width)
+
+		// Distribute any remaining pixels to columns by priority
+		if remainingPixels > 0 {
 			config.width++
-			newConfigs[visibleCols[i]] = config
+			remainingPixels--
 		}
+
+		// Update column config
+		columnConfigs[colName] = config
 	}
 
-	// Build visibility map for return
-	visible := make(map[string]bool)
-	for name, config := range newConfigs {
-		visible[name] = config.visible
-	}
-
-	// Ensure Version and Status are always visible
-	visible["Version"] = true
-	visible["Status"] = true
-
-	// Update global config
-	columnConfigs = newConfigs
-
-	return visible
+	return visibleColumns
 }
 
 // sortBuilds sorts the builds based on the selected column and sort order
@@ -260,4 +272,12 @@ func countVisibleColumns(columns []struct {
 		}
 	}
 	return count
+}
+
+// Utility function to create plural words
+func pluralize(word string, count int) string {
+	if count == 1 {
+		return word
+	}
+	return word + "s"
 }

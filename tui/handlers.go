@@ -24,9 +24,16 @@ func (m *Model) updateInputs(msg tea.Msg) tea.Cmd {
 	}
 
 	var cmds []tea.Cmd
-	for i := range m.settingsInputs {
-		m.settingsInputs[i], cmds[i] = m.settingsInputs[i].Update(msg)
+	cmds = make([]tea.Cmd, len(m.settingsInputs))
+
+	// Only update the currently focused input
+	if m.focusIndex >= 0 && m.focusIndex < len(m.settingsInputs) {
+		// Update only the focused input field
+		var cmd tea.Cmd
+		m.settingsInputs[m.focusIndex], cmd = m.settingsInputs[m.focusIndex].Update(msg)
+		cmds[m.focusIndex] = cmd
 	}
+
 	return tea.Batch(cmds...)
 }
 
@@ -123,23 +130,26 @@ func (m Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	selectedBuild := m.builds[m.cursor]
-
-	// Generate the build ID in the same way as we do for download
-	buildID := selectedBuild.Version
-	if selectedBuild.Hash != "" {
-		buildID = selectedBuild.Version + "-" + selectedBuild.Hash[:8]
+	// Use the activeDownloadID that was set when detecting the cancellable download
+	buildID := m.activeDownloadID
+	if buildID == "" {
+		// Fallback to build version if activeDownloadID isn't set
+		selectedBuild := m.builds[m.cursor]
+		buildID = selectedBuild.Version
+		// Try to recreate the buildID format
+		if selectedBuild.Hash != "" {
+			buildID = selectedBuild.Version + "-" + selectedBuild.Hash[:8]
+		}
 	}
 
-	// Lock *only* to safely read the map
+	// Lock to safely read the map
 	m.downloadMutex.Lock()
 	downloadState, isDownloading := m.downloadStates[buildID]
-	// Check if it's in a cancellable state *while holding the lock*
 	canCancel := isDownloading &&
 		(downloadState.BuildState == types.StateDownloading ||
 			downloadState.BuildState == types.StatePreparing ||
 			downloadState.BuildState == types.StateExtracting)
-	m.downloadMutex.Unlock() // Unlock immediately after reading
+	m.downloadMutex.Unlock()
 
 	// If not downloading or not in a cancellable state, do nothing
 	if !canCancel {
@@ -147,7 +157,6 @@ func (m Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 	}
 
 	// Signal cancellation by closing the channel (thread-safe)
-	// No mutex needed here.
 	select {
 	case <-downloadState.CancelCh:
 		// Already closed, do nothing
@@ -156,14 +165,9 @@ func (m Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 		close(downloadState.CancelCh)
 	}
 
-	// Clear the active download ID if it's the one being cancelled
-	if m.activeDownloadID == buildID {
-		m.activeDownloadID = ""
-	}
+	// We've already used activeDownloadID, now clear it
+	m.activeDownloadID = ""
 
-	// The download goroutine will see this and update its state message to "Cancelled"
-	// The tick handler will then pick up that state change.
-	// Return immediately, no command, no UI update here.
 	return m, nil
 }
 
@@ -228,8 +232,28 @@ func (m Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
 		// Only allow deleting local builds or builds that can be updated
 		if selectedBuild.Status == types.StateLocal || selectedBuild.Status == types.StateUpdate {
 			m.deleteCandidate = selectedBuild.Version
-			m.currentView = viewDeleteConfirm
-			return m, nil
+			// Directly delete the build without confirmation
+			return m, func() tea.Msg {
+				success, err := local.DeleteBuild(m.config.DownloadDir, m.deleteCandidate)
+				if err != nil {
+					return errMsg{err}
+				}
+
+				if !success {
+					return errMsg{fmt.Errorf("failed to delete build %s", m.deleteCandidate)}
+				}
+
+				// Update build statuses after deletion
+				for i := range m.builds {
+					if m.builds[i].Version == m.deleteCandidate {
+						m.builds[i].Status = types.StateOnline
+						break
+					}
+				}
+				m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
+				// Return a proper message instead of setting view directly
+				return deleteBuildCompleteMsg{}
+			}
 		}
 	}
 	return m, nil
@@ -502,13 +526,24 @@ func (m Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	} else if len(progressCmds) > 0 {
 		// Handle final progress updates if any
 		commands = append(commands, progressCmds...)
+	} else {
+		// No active downloads, but we still want to keep the tick system running
+		// Use a slower tick rate when idle
+		commands = append(commands, adaptiveTickCmd(0, false))
 	}
+
+	// Force UI refresh on each tick, even without user input
+	commands = append(commands, tea.Sequence(
+		// No-op command to force refresh
+		func() tea.Msg { return nil },
+	))
 
 	if len(commands) > 0 {
 		return m, tea.Batch(commands...)
 	}
 
-	return m, nil
+	// Fallback to ensure we always have a tick scheduled
+	return m, tickCmd()
 }
 
 // Helper function to update focus styling for settings inputs
@@ -534,24 +569,60 @@ func updateFocusStyles(m *Model, oldFocus int) {
 			m.settingsInputs[i].Blur()
 		}
 	}
+
+	// Special case when entering edit mode
+	if m.editMode && m.focusIndex >= 0 && m.focusIndex < len(m.settingsInputs) {
+		// Make sure the focused input is actually focused
+		m.settingsInputs[m.focusIndex].Focus()
+	}
 }
 
 // Helper function to save settings
 func saveSettings(m *Model) (tea.Model, tea.Cmd) {
-	m.config.DownloadDir = m.settingsInputs[0].Value()
-	m.config.VersionFilter = m.settingsInputs[1].Value()
-	m.config.ManualFetch = m.settingsInputs[2].Value() == "true"
+	// Ensure we get the current values from the inputs
+	downloadDir := m.settingsInputs[0].Value()
+	versionFilter := m.settingsInputs[1].Value()
+	manualFetchStr := m.settingsInputs[2].Value()
 
+	// Validate and sanitize inputs
+	if downloadDir == "" {
+		// Don't allow empty download dir
+		m.err = fmt.Errorf("download directory cannot be empty")
+		return m, nil
+	}
+
+	// Verify boolean value
+	manualFetch := m.config.ManualFetch // Default to existing value
+	if manualFetchStr == "true" {
+		manualFetch = true
+	} else if manualFetchStr == "false" {
+		manualFetch = false
+	}
+
+	// Update config values
+	m.config.DownloadDir = downloadDir
+	m.config.VersionFilter = versionFilter
+	m.config.ManualFetch = manualFetch
+
+	// Save the config
 	err := config.SaveConfig(m.config)
 	if err != nil {
 		m.err = fmt.Errorf("failed to save config: %w", err)
-	} else {
-		m.err = nil
-		// If list is empty, trigger initial local scan
-		if len(m.builds) == 0 && m.currentView == viewList {
-			m.isLoading = true
-			return m, scanLocalBuildsCmd(m.config)
-		}
+		return m, nil
 	}
+
+	// Clear any errors and trigger rescans if needed
+	m.err = nil
+
+	// If returning to list view, trigger a new scan
+	if m.currentView == viewList {
+		m.isLoading = true
+		return m, tea.Batch(
+			scanLocalBuildsCmd(m.config),
+			getOldBuildsInfoCmd(m.config),
+			fetchBuildsCmd(m.config),
+		)
+	}
+
 	return m, nil
 }
