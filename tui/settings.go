@@ -7,9 +7,15 @@ import (
 	lp "github.com/charmbracelet/lipgloss"
 )
 
-// renderSettingsContent renders the settings page
+// renderSettingsContent renders the settings page content
 func (m Model) renderSettingsContent(availableHeight int) string {
 	var b strings.Builder
+
+	if m.currentView == viewInitialSetup {
+		welcome := lp.NewStyle().Bold(true).Foreground(lp.Color(colorSuccess)).Render("Welcome to TUI Blender Launcher")
+		b.WriteString(welcome + "\n\n")
+		b.WriteString("Please configure the following settings to get started:\n\n")
+	}
 
 	settingsCount := len(m.settingsInputs)
 
@@ -47,33 +53,6 @@ func (m Model) renderSettingsContent(availableHeight int) string {
 	}
 
 	return lp.Place(m.terminalWidth, availableHeight, lp.Left, lp.Top, b.String())
-}
-
-// renderInitialSetupView renders the initial setup view when app is first run
-func (m Model) renderInitialSetupView() string {
-	var b strings.Builder
-
-	// Welcome message
-	welcome := lp.NewStyle().Bold(true).Foreground(lp.Color(colorSuccess)).Render("Welcome to TUI Blender Launcher")
-	b.WriteString(welcome + "\n\n")
-
-	// Instructions for the setup
-	instructions := "Please configure the following settings to get started:\n\n"
-	b.WriteString(instructions)
-
-	// Add the settings form
-	b.WriteString(m.renderSettingsContent(m.terminalHeight - 10))
-
-	return b.String()
-}
-
-// renderSettingsView renders the settings view
-func (m Model) renderSettingsView() string {
-	var b strings.Builder
-
-	b.WriteString(m.renderSettingsContent(m.terminalHeight - 5))
-
-	return b.String()
 }
 
 // renderCleanupConfirmDialog renders the dialog for confirming cleanup of older builds
