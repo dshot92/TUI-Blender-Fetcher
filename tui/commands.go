@@ -212,21 +212,36 @@ func (c *Commands) UpdateBuildStatus(onlineBuilds []model.BlenderBuild) tea.Cmd 
 			localBuildMap[build.Version] = build
 		}
 
-		// Copy builds to avoid modifying originals
-		updatedBuilds := make([]model.BlenderBuild, len(onlineBuilds))
-		copy(updatedBuilds, onlineBuilds)
+		// Create a map to track versions we've seen
+		seenVersions := make(map[string]bool)
+
+		// Copy builds to avoid modifying originals, ensuring no duplicates
+		updatedBuilds := make([]model.BlenderBuild, 0, len(onlineBuilds))
 
 		// Update status for each build
-		for i := range updatedBuilds {
-			if localBuild, found := localBuildMap[updatedBuilds[i].Version]; found {
-				if local.CheckUpdateAvailable(localBuild, updatedBuilds[i]) {
-					updatedBuilds[i].Status = model.StateUpdate
+		for _, build := range onlineBuilds {
+			// Skip if we've already processed this version
+			if _, seen := seenVersions[build.Version]; seen {
+				continue
+			}
+
+			// Mark this version as seen
+			seenVersions[build.Version] = true
+
+			// Create a copy of the build to update
+			updatedBuild := build
+
+			if localBuild, found := localBuildMap[build.Version]; found {
+				if local.CheckUpdateAvailable(localBuild, build) {
+					updatedBuild.Status = model.StateUpdate
 				} else {
-					updatedBuilds[i].Status = model.StateLocal
+					updatedBuild.Status = model.StateLocal
 				}
 			} else {
-				updatedBuilds[i].Status = model.StateOnline
+				updatedBuild.Status = model.StateOnline
 			}
+
+			updatedBuilds = append(updatedBuilds, updatedBuild)
 		}
 
 		return buildsUpdatedMsg{builds: updatedBuilds}

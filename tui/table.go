@@ -46,9 +46,9 @@ func (r Row) Render(columns []ColumnConfig) string {
 			case "Hash":
 				cellContent = r.Build.Hash
 			case "Size":
-				cellContent = formatByteSize(r.Build.Size)
+				cellContent = model.FormatByteSize(r.Build.Size)
 			case "Build Date":
-				cellContent = formatBuildDate(r.Build.BuildDate)
+				cellContent = model.FormatBuildDate(r.Build.BuildDate)
 			}
 
 			// Apply column-specific style to cell content

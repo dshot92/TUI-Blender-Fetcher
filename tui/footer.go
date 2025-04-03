@@ -22,7 +22,7 @@ func (m *Model) renderBuildFooter() string {
 	commands = append(commands, fmt.Sprintf("%s Quit", keyStyle.Render("q")))
 	commands = append(commands, fmt.Sprintf("%s Settings", keyStyle.Render("s")))
 	commands = append(commands, fmt.Sprintf("%s Reverse Sort", keyStyle.Render("r")))
-	commands = append(commands, fmt.Sprintf("%s Fetch builds", keyStyle.Render("f")))
+	commands = append(commands, fmt.Sprintf("%s Fetch online builds", keyStyle.Render("f")))
 
 	// Add build-specific commands
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {

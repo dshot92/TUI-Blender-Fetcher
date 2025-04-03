@@ -25,5 +25,5 @@ func (m *Model) renderPageForView() string {
 
 // renderCommonHeader returns the common header (title) for both builds and settings pages.
 func (m *Model) renderCommonHeader() string {
-	return headerStyle.Width(m.terminalWidth).AlignHorizontal(lp.Center).Render("TUI Blender Launcher") + "\n"
+	return headerStyle.Width(m.terminalWidth).AlignHorizontal(lp.Center).Render("TUI Blender Launcher")
 }

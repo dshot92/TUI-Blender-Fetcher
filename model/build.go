@@ -2,6 +2,8 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
+	"sort"
 	"time"
 )
 
@@ -135,4 +137,70 @@ type DownloadState struct {
 	StartTime     time.Time     // When the download started
 	StallDuration time.Duration // How long download can stall before timeout
 	CancelCh      chan struct{} // Per-download cancel channel
+}
+
+// FormatByteSize converts bytes to human-readable sizes
+func FormatByteSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// FormatBuildDate formats a build date in yyyy-mm-dd-hh-mm format
+func FormatBuildDate(t Timestamp) string {
+	return t.Time().Format("2006-01-02-15:04")
+}
+
+// SortBuilds sorts the builds based on the selected column and sort order
+func SortBuilds(builds []BlenderBuild, column int, reverse bool) []BlenderBuild {
+	// Create a copy of builds to avoid modifying the original
+	sortedBuilds := make([]BlenderBuild, len(builds))
+	copy(sortedBuilds, builds)
+
+	// Define sort function type for better organization
+	type sortFunc func(a, b BlenderBuild) bool
+
+	// Define the sort functions for each column based on the column index
+	sortFuncs := map[int]sortFunc{
+		0: func(a, b BlenderBuild) bool { // Version
+			return a.Version < b.Version
+		},
+		1: func(a, b BlenderBuild) bool { // Status
+			return a.Status < b.Status
+		},
+		2: func(a, b BlenderBuild) bool { // Branch
+			return a.Branch < b.Branch
+		},
+		3: func(a, b BlenderBuild) bool { // Type/ReleaseCycle
+			return a.ReleaseCycle < b.ReleaseCycle
+		},
+		4: func(a, b BlenderBuild) bool { // Hash
+			return a.Hash < b.Hash
+		},
+		5: func(a, b BlenderBuild) bool { // Size
+			return a.Size < b.Size
+		},
+		6: func(a, b BlenderBuild) bool { // Build Date
+			return a.BuildDate.Time().Before(b.BuildDate.Time())
+		},
+	}
+
+	// Check if we have a sort function for this column
+	if sortFunc, ok := sortFuncs[column]; ok {
+		sort.SliceStable(sortedBuilds, func(i, j int) bool {
+			if reverse {
+				return !sortFunc(sortedBuilds[i], sortedBuilds[j])
+			}
+			return sortFunc(sortedBuilds[i], sortedBuilds[j])
+		})
+	}
+
+	return sortedBuilds
 }

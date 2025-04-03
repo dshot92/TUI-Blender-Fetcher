@@ -3,6 +3,7 @@ package tui
 import (
 	"TUI-Blender-Launcher/config"
 	"TUI-Blender-Launcher/model"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -28,6 +29,8 @@ type Model struct {
 	commands         *Commands
 	blenderRunning   string
 	activeDownloadID string // Store the active download build ID for tracking
+	downloadMutex    sync.Mutex
+	downloadStates   map[string]*model.DownloadState
 }
 
 // InitialModel creates the initial state of the TUI model.
@@ -49,6 +52,7 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 		sortReversed:   true,  // Default descending sort (newest versions first)
 		blenderRunning: "",    // No Blender running initially
 		editMode:       false, // Start in navigation mode, not edit mode
+		downloadStates: make(map[string]*model.DownloadState),
 	}
 
 	if needsSetup {

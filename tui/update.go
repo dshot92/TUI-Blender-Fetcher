@@ -112,7 +112,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Re-sort the builds since status has changed
-		m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
+		m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
 
 		// Start listening for more program messages
 		cmdManager := NewCommands(m.config)
@@ -164,12 +164,7 @@ func (m *Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case key.Matches(msg, key.NewBinding(key.WithKeys("c"))):
-			// Cleanup old builds
-			if !m.editMode {
-				return m.handleCleanupOldBuilds()
-			}
-			return m, nil
+
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))):
 			if !m.editMode {
@@ -222,15 +217,12 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, key.NewBinding(key.WithKeys("r"))):
 			// Toggle sort order (reverse)
 			m.sortReversed = !m.sortReversed
-			m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
+			m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("f"))):
-			// Fetch builds
+			// Fetch online builds only
 			m.isLoading = true
-			return m, tea.Batch(
-				m.fetchBuildsCmd(),
-				m.scanLocalBuildsCmd(),
-			)
+			return m, m.fetchBuildsCmd()
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("d"))):
 			// Download build (only for online builds)
@@ -308,12 +300,12 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, key.NewBinding(key.WithKeys("left", "h"))):
 			// Change sort column to the left
 			m.updateSortColumn("left")
-			m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
+			m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("right", "l"))):
 			// Change sort column to the right
 			m.updateSortColumn("right")
-			m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
+			m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
 		}
 	}
 
