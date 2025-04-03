@@ -4,7 +4,6 @@ import (
 	"TUI-Blender-Launcher/model"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"runtime"
 	"strings"
@@ -142,33 +141,18 @@ func FetchBuilds(versionFilter string) ([]model.BlenderBuild, error) { // Added 
 		filteredBuilds = append(filteredBuilds, build)
 	}
 
-	// TODO: Sort builds (e.g., by date or version)
+	// DEBUG: Duplicate builds multiple times for testing
+	// duplicatedBuilds := make([]model.BlenderBuild, 0, len(filteredBuilds)*5)
+	// for i := 0; i < 5; i++ {
+	// 	for _, build := range filteredBuilds {
+	// 		// Create a copy of the build to avoid pointer issues
+	// 		buildCopy := build
+	// 		// Add a suffix to make each copy unique
+	// 		buildCopy.Version = fmt.Sprintf("%s (Copy %d)", build.Version, i+1)
+	// 		duplicatedBuilds = append(duplicatedBuilds, buildCopy)
+	// 	}
+	// }
+	// filteredBuilds = duplicatedBuilds
 
 	return filteredBuilds, nil
-}
-
-// GetBuilds fetches available Blender builds from the API
-func (a *API) GetBuilds() ([]model.BlenderBuild, error) {
-	resp, err := a.client.Get("https://builder.blender.org/download/")
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch builds: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	var builds []model.BlenderBuild
-	if err := json.Unmarshal(body, &builds); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	// Set status for all builds
-	for i := range builds {
-		builds[i].Status = model.StateOnline
-	}
-
-	return builds, nil
 }

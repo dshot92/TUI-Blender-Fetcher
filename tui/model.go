@@ -13,6 +13,7 @@ import (
 type Model struct {
 	builds           []model.BlenderBuild
 	cursor           int
+	startIndex       int // Added: tracks the first visible row when scrolling
 	config           config.Config
 	err              error
 	terminalWidth    int

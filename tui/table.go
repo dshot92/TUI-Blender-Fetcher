@@ -114,15 +114,23 @@ func GetBuildColumns(terminalWidth int) []ColumnConfig {
 	return columns
 }
 
-// Update RenderRows to pass terminalWidth
-func RenderRows(m *Model) string {
+// Update RenderRows to pass terminalWidth and respect visibleRowsCount
+func RenderRows(m *Model, visibleRowsCount int) string {
 	var output strings.Builder
 
 	// Get column configuration with computed widths
 	columns := GetBuildColumns(m.terminalWidth)
 
-	// Render each row
-	for i, build := range m.builds {
+	// Calculate visible range
+	endIndex := m.startIndex + visibleRowsCount
+	if endIndex > len(m.builds) {
+		endIndex = len(m.builds)
+	}
+
+	// Only render rows in the visible range
+	for i := m.startIndex; i < endIndex; i++ {
+		build := m.builds[i]
+
 		// Create a buildID to check for download state
 		buildID := build.Version
 		if build.Hash != "" {
@@ -144,7 +152,7 @@ func RenderRows(m *Model) string {
 	return output.String()
 }
 
-// Update renderBuildContent to pass terminalWidth
+// Update renderBuildContent to pass terminalWidth and handle scrolling
 func (m *Model) renderBuildContent(availableHeight int) string {
 	var output strings.Builder
 
@@ -203,8 +211,15 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 	// Add the styled header to output
 	output.WriteString(styledHeader)
 
-	// Render all rows without scrolling
-	rowsContent := RenderRows(m)
+	// Calculate how many rows can be displayed in the available height
+	// Subtract 1 for the header row
+	visibleRowsCount := availableHeight - 1
+	if visibleRowsCount < 1 {
+		visibleRowsCount = 1
+	}
+
+	// Render visible rows with scrolling
+	rowsContent := RenderRows(m, visibleRowsCount)
 	output.WriteString(rowsContent)
 
 	// Create the final styled table with proper width

@@ -192,6 +192,12 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleDownloadProgress(msg)
 
 	case tea.KeyMsg:
+		// Calculate visible rows count for all navigation commands
+		visibleRowsCount := m.terminalHeight - 7 // Approximate height for header, footer, separators
+		if visibleRowsCount < 1 {
+			visibleRowsCount = 1
+		}
+
 		// Use centralized command handling
 		for _, cmd := range GetCommandsForView(viewList) {
 			if key.Matches(msg, GetKeyBinding(cmd.Type)) {
@@ -201,110 +207,164 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Quit
 
 				case CmdShowSettings:
-					// Show settings
+					// Switch to settings view
 					return m.handleShowSettings()
 
 				case CmdToggleSortOrder:
-					// Toggle sort order (reverse)
+					// Toggle sort direction
 					m.sortReversed = !m.sortReversed
 					m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
+					m.ensureCursorVisible(visibleRowsCount)
+					return m, nil
+
+				case CmdMoveUp:
+					m.updateCursor("up", visibleRowsCount)
+					return m, nil
+
+				case CmdMoveDown:
+					m.updateCursor("down", visibleRowsCount)
+					return m, nil
+
+				case CmdMoveLeft:
+					// Move sort column left
+					m.updateSortColumn("left")
+					m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
+					m.ensureCursorVisible(visibleRowsCount)
+					return m, nil
+
+				case CmdMoveRight:
+					// Move sort column right
+					m.updateSortColumn("right")
+					m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
+					m.ensureCursorVisible(visibleRowsCount)
+					return m, nil
+
+				case CmdPageUp:
+					m.updateCursor("pageup", visibleRowsCount)
+					return m, nil
+
+				case CmdPageDown:
+					m.updateCursor("pagedown", visibleRowsCount)
+					return m, nil
+
+				case CmdHome:
+					m.updateCursor("home", visibleRowsCount)
+					return m, nil
+
+				case CmdEnd:
+					m.updateCursor("end", visibleRowsCount)
 					return m, nil
 
 				case CmdFetchBuilds:
 					// Fetch online builds only
-					cmdManager := NewCommands(m.config)
-					return m, cmdManager.FetchBuilds()
+					if !m.isLoading {
+						m.isLoading = true
+						// Start with a clean slate for messages
+						m.err = nil
+
+						// Update the builds using the existing command manager
+						return m, m.commands.FetchBuilds()
+					}
+					return m, nil
 
 				case CmdDownloadBuild:
-					// Download build (only for online builds)
-					if len(m.builds) > 0 && m.cursor < len(m.builds) {
-						selectedBuild := m.builds[m.cursor]
-						if selectedBuild.Status == model.StateOnline || selectedBuild.Status == model.StateUpdate {
-							return m.handleStartDownload()
-						}
-					}
-					return m, nil
+					// Start download for selected build
+					return m.handleStartDownload()
 
 				case CmdLaunchBuild:
-					// Launch build
-					if len(m.builds) > 0 && m.cursor < len(m.builds) {
-						selectedBuild := m.builds[m.cursor]
-						if selectedBuild.Status == model.StateLocal {
-							return m.handleLaunchBlender()
-						}
-					}
-					return m, nil
+					// Launch the selected build
+					return m.handleLaunchBlender()
 
 				case CmdOpenBuildDir:
-					// Open build directory
-					if len(m.builds) > 0 && m.cursor < len(m.builds) {
-						selectedBuild := m.builds[m.cursor]
-						if selectedBuild.Status == model.StateLocal || selectedBuild.Status == model.StateUpdate {
-							return m.handleOpenBuildDir()
-						}
-					}
-					return m, nil
+					// Open the directory for the selected build
+					return m.handleOpenBuildDir()
 
 				case CmdDeleteBuild:
-					// Delete build (local) or cancel download (downloading/extracting)
-					if len(m.builds) > 0 && m.cursor < len(m.builds) {
-						selectedBuild := m.builds[m.cursor]
-
-						// Check if the build is currently downloading or extracting
-						canCancel := false
-						buildID := selectedBuild.Version
-						if selectedBuild.Hash != "" {
-							buildID = selectedBuild.Version + "-" + selectedBuild.Hash[:8]
-						}
-
-						// Check if this build has an active download
-						state := m.commands.downloads.GetState(buildID)
-						if state != nil && (state.BuildState == model.StateDownloading ||
-							state.BuildState == model.StateExtracting) {
-							canCancel = true
-							m.activeDownloadID = buildID
-						}
-
-						if canCancel {
-							return m.handleCancelDownload()
-						} else if selectedBuild.Status == model.StateLocal {
-							// Delete local build
-							return m.handleDeleteBuild()
-						}
+					build := m.builds[m.cursor]
+					if build.Status == model.StateLocal {
+						// Delete the build
+						return m.handleDeleteBuild()
+					} else if build.Status == model.StateDownloading || build.Status == model.StateExtracting {
+						// Cancel the download
+						return m.handleCancelDownload()
 					}
-					return m, nil
-
-				case CmdMoveUp:
-					if m.cursor > 0 {
-						m.cursor--
-					} else if len(m.builds) > 0 {
-						m.cursor = len(m.builds) - 1
-					}
-					return m, nil
-
-				case CmdMoveDown:
-					if len(m.builds) > 0 && m.cursor < len(m.builds)-1 {
-						m.cursor++
-					} else {
-						m.cursor = 0
-					}
-					return m, nil
-
-				case CmdMoveLeft:
-					// Change sort column to the left
-					m.updateSortColumn("left")
-					m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
-					return m, nil
-
-				case CmdMoveRight:
-					// Change sort column to the right
-					m.updateSortColumn("right")
-					m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
+					// For other states, do nothing
 					return m, nil
 				}
 			}
 		}
 	}
 
+	// If no specific action, return the model unchanged
 	return m, nil
+}
+
+// Add this function to update cursor position with scrolling
+func (m *Model) updateCursor(direction string, visibleRowsCount int) {
+	if len(m.builds) == 0 {
+		return
+	}
+
+	switch direction {
+	case "up":
+		m.cursor--
+		if m.cursor < 0 {
+			m.cursor = len(m.builds) - 1
+		}
+	case "down":
+		m.cursor++
+		if m.cursor >= len(m.builds) {
+			m.cursor = 0
+		}
+	case "home":
+		m.cursor = 0
+	case "end":
+		m.cursor = len(m.builds) - 1
+	case "pageup":
+		m.cursor -= visibleRowsCount
+		if m.cursor < 0 {
+			m.cursor = 0
+		}
+	case "pagedown":
+		m.cursor += visibleRowsCount
+		if m.cursor >= len(m.builds) {
+			m.cursor = len(m.builds) - 1
+		}
+	}
+
+	// Adjust startIndex to ensure cursor is visible
+	if m.cursor < m.startIndex {
+		// Cursor moved above visible area, scroll up
+		m.startIndex = m.cursor
+	} else if m.cursor >= m.startIndex+visibleRowsCount {
+		// Cursor moved below visible area, scroll down
+		m.startIndex = m.cursor - visibleRowsCount + 1
+	}
+}
+
+// ensureCursorVisible ensures the cursor is visible within the scrolling window
+func (m *Model) ensureCursorVisible(visibleRowsCount int) {
+	if len(m.builds) == 0 {
+		m.startIndex = 0
+		return
+	}
+
+	// Ensure cursor is within bounds
+	if m.cursor >= len(m.builds) {
+		m.cursor = len(m.builds) - 1
+	} else if m.cursor < 0 {
+		m.cursor = 0
+	}
+
+	// Adjust startIndex to ensure cursor is visible
+	if m.cursor < m.startIndex {
+		// Cursor is above visible area
+		m.startIndex = m.cursor
+	} else if m.cursor >= m.startIndex+visibleRowsCount {
+		// Cursor is below visible area
+		m.startIndex = m.cursor - visibleRowsCount + 1
+		if m.startIndex < 0 {
+			m.startIndex = 0
+		}
+	}
 }

@@ -250,6 +250,12 @@ func (m *Model) handleLocalBuildsScanned(msg localBuildsScannedMsg) (tea.Model, 
 	// Mark loading as complete
 	m.isLoading = false
 
+	// Reset cursor and startIndex when loading new builds
+	if len(m.builds) > 0 {
+		m.cursor = 0
+		m.startIndex = 0
+	}
+
 	return m, nil
 }
 
@@ -280,6 +286,12 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 	// Only sort after updating local builds' status
 	m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
 
+	// Reset cursor and startIndex for consistent view
+	if len(m.builds) > 0 {
+		m.cursor = 0
+		m.startIndex = 0
+	}
+
 	// Update the status based on what's available locally
 	return m, m.commands.UpdateBuildStatus(m.builds)
 }
@@ -290,6 +302,27 @@ func (m *Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
 	m.builds = msg.builds
 	m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
 	m.isLoading = false
+
+	// Ensure cursor is within bounds and visible
+	visibleRowsCount := m.terminalHeight - 7
+	if visibleRowsCount < 1 {
+		visibleRowsCount = 1
+	}
+
+	if len(m.builds) > 0 {
+		if m.cursor >= len(m.builds) {
+			m.cursor = len(m.builds) - 1
+		}
+
+		// Ensure cursor is visible
+		if m.cursor < m.startIndex || m.cursor >= m.startIndex+visibleRowsCount {
+			// If cursor is outside visible area, adjust startIndex
+			m.startIndex = m.cursor - visibleRowsCount/2
+			if m.startIndex < 0 {
+				m.startIndex = 0
+			}
+		}
+	}
 
 	// Start the downloads manager to handle any existing downloads
 	// No need for a command manager, use the model's DownloadManager
