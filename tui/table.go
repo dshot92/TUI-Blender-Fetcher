@@ -28,26 +28,24 @@ func NewRow(build model.BlenderBuild, isSelected bool, status *model.DownloadSta
 func (r Row) Render(columns []ColumnConfig) string {
 	var cells []string
 	for _, col := range columns {
-		if col.Visible {
-			var cellContent string
-			switch col.Key {
-			case "Version":
-				cellContent = r.Build.Version
-			case "Status":
-				cellContent = r.renderStatus()
-			case "Branch":
-				cellContent = r.Build.Branch
-			case "Type":
-				cellContent = r.Build.ReleaseCycle
-			case "Hash":
-				cellContent = r.Build.Hash
-			case "Size":
-				cellContent = model.FormatByteSize(r.Build.Size)
-			case "Build Date":
-				cellContent = model.FormatBuildDate(r.Build.BuildDate)
-			}
-			cells = append(cells, col.Style(cellContent))
+		var cellContent string
+		switch col.Key {
+		case "Version":
+			cellContent = r.Build.Version
+		case "Status":
+			cellContent = r.renderStatus()
+		case "Branch":
+			cellContent = r.Build.Branch
+		case "Type":
+			cellContent = r.Build.ReleaseCycle
+		case "Hash":
+			cellContent = r.Build.Hash
+		case "Size":
+			cellContent = model.FormatByteSize(r.Build.Size)
+		case "Build Date":
+			cellContent = model.FormatBuildDate(r.Build.BuildDate)
 		}
+		cells = append(cells, col.Style(cellContent))
 	}
 	rowString := lp.JoinHorizontal(lp.Left, cells...)
 	if r.IsSelected {
@@ -64,25 +62,24 @@ func (r Row) renderStatus() string {
 
 // ColumnConfig represents the configuration for a table column
 type ColumnConfig struct {
-	Name    string
-	Key     string
-	Visible bool
-	Width   int
-	Index   int
-	Style   func(string) string
+	Name  string
+	Key   string
+	Width int
+	Index int
+	Style func(string) string
 }
 
 // Updated GetBuildColumns to accept terminalWidth and compute widths
-func GetBuildColumns(visibleColumns map[string]bool, terminalWidth int) []ColumnConfig {
+func GetBuildColumns(terminalWidth int) []ColumnConfig {
 	var cellStyleCenter = lp.NewStyle().Align(lp.Center)
 	columns := []ColumnConfig{
-		{Name: "Version", Key: "Version", Visible: true, Index: 0},
-		{Name: "Status", Key: "Status", Visible: true, Index: 1},
-		{Name: "Branch", Key: "Branch", Visible: true, Index: 2},
-		{Name: "Type", Key: "Type", Visible: true, Index: 3},
-		{Name: "Hash", Key: "Hash", Visible: true, Index: 4},
-		{Name: "Size", Key: "Size", Visible: true, Index: 5},
-		{Name: "Build Date", Key: "Build Date", Visible: true, Index: 6},
+		{Name: "Version", Key: "Version", Index: 0},
+		{Name: "Status", Key: "Status", Index: 1},
+		{Name: "Branch", Key: "Branch", Index: 2},
+		{Name: "Type", Key: "Type", Index: 3},
+		{Name: "Hash", Key: "Hash", Index: 4},
+		{Name: "Size", Key: "Size", Index: 5},
+		{Name: "Build Date", Key: "Build Date", Index: 6},
 	}
 	// Compute total flex for all columns
 	totalFlex := 0.0
@@ -108,7 +105,7 @@ func RenderRows(m *Model) string {
 	var output bytes.Buffer
 
 	// Get column configuration with computed widths
-	columns := GetBuildColumns(m.visibleColumns, m.terminalWidth)
+	columns := GetBuildColumns(m.terminalWidth)
 
 	// Render each row
 	for i, build := range m.builds {
@@ -159,23 +156,19 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 	}
 
 	// Build header row using lipgloss.JoinHorizontal
-	columns := GetBuildColumns(m.visibleColumns, m.terminalWidth)
+	columns := GetBuildColumns(m.terminalWidth)
 	var headerCells []string
 	for _, col := range columns {
-		if col.Visible {
-			headerText := col.Name
-
-			// Add sort indicators for the currently sorted column
-			if col.Index == m.sortColumn {
-				if m.sortReversed {
-					headerText += " ↓"
-				} else {
-					headerText += " ↑"
-				}
+		headerText := col.Name
+		if col.Index == m.sortColumn {
+			if m.sortReversed {
+				headerText += " ↓"
+			} else {
+				headerText += " ↑"
 			}
-			headerContent := lp.NewStyle().Bold(true).Render(headerText)
-			headerCells = append(headerCells, col.Style(headerContent))
 		}
+		headerContent := lp.NewStyle().Bold(true).Render(headerText)
+		headerCells = append(headerCells, col.Style(headerContent))
 	}
 	// Join header cells horizontally
 	headerRow := lp.JoinHorizontal(lp.Left, headerCells...)
@@ -203,7 +196,8 @@ func (m *Model) updateSortColumn(key string) {
 			m.sortColumn--
 		}
 	case "right":
-		if m.sortColumn < 6 { // total columns are 7 (0 to 6)
+		// Use columnConfigs map to determine total column count
+		if m.sortColumn < len(columnConfigs)-1 {
 			m.sortColumn++
 		}
 	}
