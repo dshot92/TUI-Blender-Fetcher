@@ -542,13 +542,13 @@ func saveSettings(m *Model) (tea.Model, tea.Cmd) {
 	// Clear any errors and trigger rescans if needed
 	m.err = nil
 
-	// If returning to list view, trigger a new scan
+	// If returning to list view, only trigger a scan if no builds are present
 	if m.currentView == viewList {
-		m.isLoading = true
-		return m, tea.Batch(
-			m.commands.ScanLocalBuilds(),
-			m.commands.FetchBuilds(),
-		)
+		if len(m.builds) == 0 {
+			m.isLoading = true
+			return m, m.commands.ScanLocalBuilds()
+		}
+		return m, nil
 	}
 
 	return m, nil
