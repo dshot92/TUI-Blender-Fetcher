@@ -2,8 +2,6 @@ package tui
 
 import (
 	"TUI-Blender-Launcher/model"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -84,24 +82,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case downloadCompleteMsg:
 		return m, nil
-
-	case resetStatusMsg:
-		for i := range m.builds {
-			if m.builds[i].Version == msg.version {
-				localPath := filepath.Join(m.config.DownloadDir, m.builds[i].Version)
-				if _, err := os.Stat(localPath); err == nil {
-					m.builds[i].Status = model.StateUpdate
-				} else {
-					m.builds[i].Status = model.StateOnline
-				}
-				m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
-				break
-			}
-		}
-		return m, nil
 	}
 
-	// Default catch-all return
 	return m, nil
 }
 

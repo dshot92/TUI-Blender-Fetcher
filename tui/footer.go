@@ -67,9 +67,3 @@ func (m *Model) renderSettingsFooter() string {
 		separator,
 		footerStyle.Width(m.terminalWidth).Render(footerText))
 }
-
-// UpdateFooter updates the footer with relevant commands
-func (m *Model) UpdateFooter() {
-	// This function appears to be incomplete or contains references to undefined variables
-	// Let's remove the problematic sections until we can implement it properly
-}

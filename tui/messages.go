@@ -31,21 +31,6 @@ type (
 		extractedPath string
 		err           error
 	}
-
-	// Progress updates
-	downloadProgressMsg struct { // Reports download progress
-		BuildVersion string // Identifier for the build being downloaded
-		CurrentBytes int64
-		TotalBytes   int64
-		Percent      float64 // Calculated percentage 0.0 to 1.0
-		Speed        float64 // Bytes per second
-	}
-
-	// Message to reset a build's status after cancellation cleanup
-	resetStatusMsg struct {
-		version string
-	}
-
 	// Error message
 	errMsg struct{ err error }
 
