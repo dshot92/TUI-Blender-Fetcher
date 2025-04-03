@@ -14,8 +14,3 @@ func renderHeader(width int) string {
 		Align(lp.Center).
 		Render("TUI Blender Launcher")
 }
-
-// getHeaderHeight returns the height of the header in lines
-func getHeaderHeight() int {
-	return 1
-}

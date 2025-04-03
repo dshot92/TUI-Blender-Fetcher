@@ -8,11 +8,6 @@ import (
 	lp "github.com/charmbracelet/lipgloss"
 )
 
-// getFooterHeight returns the height of the footer in lines
-func getFooterHeight() int {
-	return 2
-}
-
 // renderBuildFooter renders the footer for the build list view
 func (m *Model) renderBuildFooter() string {
 	keyStyle := lp.NewStyle().Foreground(lp.Color(colorInfo))
