@@ -22,31 +22,39 @@ func (m *Model) renderBuildFooter() string {
 	commands = append(commands, fmt.Sprintf("%s Quit", keyStyle.Render("q")))
 	commands = append(commands, fmt.Sprintf("%s Settings", keyStyle.Render("s")))
 	commands = append(commands, fmt.Sprintf("%s Reverse Sort", keyStyle.Render("r")))
+	commands = append(commands, fmt.Sprintf("%s Fetch builds", keyStyle.Render("f")))
 
-	// Add commands for the selected build
+	// Add build-specific commands
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
+		build := m.builds[m.cursor]
+
+		// Launch and Open build directory
 		commands = append(commands, fmt.Sprintf("%s Launch Build", keyStyle.Render("enter")))
 		commands = append(commands, fmt.Sprintf("%s Open build Dir", keyStyle.Render("o")))
 
-		build := m.builds[m.cursor]
+		// Status-dependent commands
 		if build.Status == model.StateLocal {
-			// For local builds, key 'x' deletes the build
-			commands = append(commands, fmt.Sprintf("%s Delete", keyStyle.Render("x")))
-		} else {
-			// For non-local builds, use key 'x' for cancel if a download is active, otherwise 'd' to download
-			buildID := build.Version + "-" + build.Hash
-			if state, exists := m.downloadStates[buildID]; exists &&
-				(state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting) {
-				commands = append(commands, fmt.Sprintf("%s Cancel", keyStyle.Render("x")))
-			} else {
-				commands = append(commands, fmt.Sprintf("%s Download", keyStyle.Render("d")))
-			}
+			// For local builds, show delete option
+			commands = append(commands, fmt.Sprintf("%s Delete build", keyStyle.Render("x")))
+		} else if build.Status == model.StateOnline || build.Status == model.StateUpdate {
+			// For online builds, show download option
+			commands = append(commands, fmt.Sprintf("%s Download build", keyStyle.Render("d")))
+		}
+
+		// If downloading or extracting, show cancel option
+		buildID := build.Version
+		if build.Hash != "" {
+			buildID = build.Version + "-" + build.Hash[:8]
+		}
+
+		state := m.commands.downloads.GetState(buildID)
+		if state != nil && (state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting) {
+			// Replace any previous command with cancel
+			commands = append(commands, fmt.Sprintf("%s Cancel download", keyStyle.Render("x")))
 		}
 	}
 
-	commands = append(commands, fmt.Sprintf("%s Fetch builds", keyStyle.Render("f")))
-
-	return strings.Join(commands, separator)
+	return footerStyle.Width(m.terminalWidth).Render(strings.Join(commands, separator))
 }
 
 // renderSettingsFooter renders the footer for the settings view
@@ -57,13 +65,11 @@ func (m *Model) renderSettingsFooter() string {
 	separator := sepStyle.Render(" · ")
 
 	var commands []string
-	commands = append(commands, fmt.Sprintf("%s Save", keyStyle.Render("s")))
+
+	// Always show these commands
+	commands = append(commands, fmt.Sprintf("%s Save and exit", keyStyle.Render("s")))
 	commands = append(commands, fmt.Sprintf("%s Quit", keyStyle.Render("q")))
-	commands = append(commands, fmt.Sprintf("%s Edit", keyStyle.Render("enter")))
+	commands = append(commands, fmt.Sprintf("%s Edit setting", keyStyle.Render("enter")))
 
-	footerText := strings.Join(commands, separator)
-
-	return fmt.Sprintf("%s\n%s",
-		separator,
-		footerStyle.Width(m.terminalWidth).Render(footerText))
+	return footerStyle.Width(m.terminalWidth).Render(strings.Join(commands, separator))
 }

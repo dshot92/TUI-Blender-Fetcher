@@ -20,9 +20,9 @@ const (
 	colorForeground = "255" // White foreground
 
 	// Performance constants
-	downloadTickRate    = 50 * time.Millisecond // How often to update download progress (faster for smoother UI)
-	downloadStallTime   = 30 * time.Second      // How long a download can stall before marking as failed
-	extractionStallTime = 120 * time.Second     // Longer timeout for extraction phase
+	downloadTickRate    = 100 * time.Millisecond
+	downloadStallTime   = 30 * time.Second
+	extractionStallTime = 2 * time.Minute
 	uiRefreshRate       = 33 * time.Millisecond // How often to refresh the UI without user input (30 FPS)
 )
 

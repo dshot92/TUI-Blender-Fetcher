@@ -4,7 +4,6 @@ import (
 	"TUI-Blender-Launcher/model"
 	"bytes"
 	"strings"
-	"time"
 
 	lp "github.com/charmbracelet/lipgloss"
 )
@@ -172,13 +171,13 @@ func RenderRows(m *Model) string {
 	// Render each row
 	for i, build := range m.builds {
 		// Create buildID to check for download state
-		buildID := build.Version + "-" + build.Hash
+		buildID := build.Version
+		if build.Hash != "" {
+			buildID = build.Version + "-" + build.Hash[:8]
+		}
 
 		// Get download state if exists
-		var downloadState *model.DownloadState
-		if state, exists := m.downloadStates[buildID]; exists {
-			downloadState = state
-		}
+		var downloadState *model.DownloadState = m.commands.downloads.GetState(buildID)
 
 		// Create and render row; highlight if this is the current row
 		row := NewRow(build, i == m.cursor, downloadState)
@@ -187,90 +186,6 @@ func RenderRows(m *Model) string {
 	}
 
 	return output.String()
-}
-
-// UpdateDownloadProgress updates the progress for a specific build row
-// Returns true if the UI should be refreshed
-func UpdateDownloadProgress(states map[string]*model.DownloadState, buildID string, current, total int64, buildState model.BuildState) bool {
-	state, exists := states[buildID]
-	if !exists {
-		// Create a new download state if one doesn't exist
-		state = &model.DownloadState{
-			BuildID:       buildID,
-			BuildState:    buildState,
-			Current:       current,
-			Total:         total,
-			StartTime:     time.Now(),
-			LastUpdated:   time.Now(),
-			StallDuration: downloadStallTime,
-			CancelCh:      make(chan struct{}),
-		}
-		states[buildID] = state
-		return true
-	}
-
-	// Check if state actually changed to avoid unnecessary updates
-	if state.Current == current && state.BuildState == buildState {
-		return false
-	}
-
-	// Update the state
-	state.Current = current
-	state.Total = total
-	state.BuildState = buildState
-
-	// Calculate progress percentage
-	if total > 0 {
-		state.Progress = float64(current) / float64(total)
-	}
-
-	// Calculate download speed
-	elapsed := time.Since(state.LastUpdated).Seconds()
-	if elapsed > 0 && state.BuildState == model.StateDownloading {
-		bytesDownloaded := current - state.Current
-		state.Speed = float64(bytesDownloaded) / elapsed
-	}
-
-	// Update timestamps
-	state.LastUpdated = time.Now()
-
-	// Update stall duration based on state
-	if buildState == model.StateExtracting {
-		state.StallDuration = extractionStallTime
-	} else {
-		state.StallDuration = downloadStallTime
-	}
-
-	return true
-}
-
-// CancelDownload signals cancellation for a specific build row
-// Returns true if a download was actually cancelled
-func CancelDownload(states map[string]*model.DownloadState, buildID string) bool {
-	state, exists := states[buildID]
-	if !exists {
-		return false
-	}
-
-	// Only cancel if the build is in a cancellable state
-	if state.BuildState != model.StateDownloading &&
-		state.BuildState != model.StateExtracting {
-		return false
-	}
-
-	// Signal cancellation by closing the channel if it hasn't been closed already
-	select {
-	case <-state.CancelCh:
-		// Channel already closed (cancel already called)
-		return false
-	default:
-		// Close the channel to signal cancellation
-		close(state.CancelCh)
-
-		// Update the state
-		state.BuildState = model.StateNone
-		return true
-	}
 }
 
 // renderBuildContent renders the table content

@@ -140,27 +140,22 @@ func (m *Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Lock to safely read the map
-	m.downloadMutex.Lock()
-	downloadState, isDownloading := m.downloadStates[buildID]
-	canCancel := isDownloading &&
-		(downloadState.BuildState == model.StateDownloading ||
-			downloadState.BuildState == model.StateExtracting)
-	m.downloadMutex.Unlock()
+	// Get download state from the manager
+	downloadState := m.commands.downloads.GetState(buildID)
+	if downloadState == nil {
+		return m, nil // Nothing to cancel
+	}
+
+	canCancel := downloadState.BuildState == model.StateDownloading ||
+		downloadState.BuildState == model.StateExtracting
 
 	// If not downloading or not in a cancellable state, do nothing
 	if !canCancel {
 		return m, nil
 	}
 
-	// Signal cancellation by closing the channel (thread-safe)
-	select {
-	case <-downloadState.CancelCh:
-		// Already closed, do nothing
-	default:
-		// Close the channel to signal cancellation
-		close(downloadState.CancelCh)
-	}
+	// Cancel the download
+	m.commands.downloads.CancelDownload(buildID)
 
 	// We've already used activeDownloadID, now clear it
 	m.activeDownloadID = ""
@@ -291,8 +286,8 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Now update the status of the builds based on local scan
-	cmdManager := NewCommandManager(m.config, m.downloadStates, &m.downloadMutex)
-	return m, cmdManager.UpdateStatusFromLocalScan(m.builds)
+	cmdManager := NewCommands(m.config)
+	return m, cmdManager.UpdateBuildStatus(m.builds)
 }
 
 // handleBuildsUpdated processes the result of updating build statuses
@@ -344,20 +339,21 @@ func (m *Model) handleBlenderExec(msg model.BlenderExecMsg) (tea.Model, tea.Cmd)
 func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	now := time.Now()
 
-	m.downloadMutex.Lock() // Lock early
+	// Get all download states
+	states := m.commands.downloads.GetAllStates()
 
 	activeDownloads := 0
 	var progressCmds []tea.Cmd
-	// Lists to store IDs identified for state change/cleanup
+	// Lists to track completed, stalled, and cancelled downloads
 	completedDownloads := make([]string, 0)
 	stalledDownloads := make([]string, 0)
 	cancelledDownloads := make([]string, 0)
 
-	// Temporary copy of download states for use after unlock
+	// Temporary copy of states for use
 	tempStates := make(map[string]model.DownloadState)
 
-	// Process download states while holding the lock
-	for id, state := range m.downloadStates {
+	// Process download states
+	for id, state := range states {
 		tempStates[id] = *state // Store a copy
 
 		if state.BuildState == model.StateLocal || strings.HasPrefix(state.BuildState.String(), "Failed") {
@@ -380,6 +376,9 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 				tempStateCopy.BuildState = model.StateFailed
 				tempStates[id] = tempStateCopy
 				stalledDownloads = append(stalledDownloads, id)
+
+				// Cancel the stalled download
+				m.commands.downloads.CancelDownload(id)
 			} else {
 				// Active download that's not stalled
 				activeDownloads++
@@ -392,31 +391,6 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-
-	// Clean up completed/stalled/cancelled downloads
-	for _, id := range completedDownloads {
-		delete(m.downloadStates, id)
-		// Clear activeDownloadID if this was the active download
-		if id == m.activeDownloadID {
-			m.activeDownloadID = ""
-		}
-	}
-	for _, id := range stalledDownloads {
-		delete(m.downloadStates, id)
-		// Clear activeDownloadID if this was the active download
-		if id == m.activeDownloadID {
-			m.activeDownloadID = ""
-		}
-	}
-	for _, id := range cancelledDownloads {
-		delete(m.downloadStates, id)
-		// Clear activeDownloadID if this was the active download
-		if id == m.activeDownloadID {
-			m.activeDownloadID = ""
-		}
-	}
-
-	m.downloadMutex.Unlock() // Unlock after map modifications
 
 	// Update build statuses based on download states
 	needsSort := false
@@ -469,7 +443,7 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 
 			for i := range m.builds {
 				if m.builds[i].Version == version {
-					m.builds[i].Status = state.BuildState
+					m.builds[i].Status = model.StateOnline
 					needsSort = true
 					break
 				}
@@ -547,7 +521,7 @@ func saveSettings(m *Model) (tea.Model, tea.Cmd) {
 	// If returning to list view, trigger a new scan
 	if m.currentView == viewList {
 		m.isLoading = true
-		cmdManager := NewCommandManager(m.config, m.downloadStates, &m.downloadMutex)
+		cmdManager := NewCommands(m.config)
 		return m, tea.Batch(
 			cmdManager.ScanLocalBuilds(),
 			cmdManager.FetchBuilds(),
@@ -555,4 +529,83 @@ func saveSettings(m *Model) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// handleCleanupOldBuilds handles cleaning up old Blender builds
+func (m *Model) handleCleanupOldBuilds() (tea.Model, tea.Cmd) {
+	return m, func() tea.Msg {
+		// Create .oldbuilds directory if it doesn't exist
+		oldBuildsDir := filepath.Join(m.config.DownloadDir, ".oldbuilds")
+		if err := os.MkdirAll(oldBuildsDir, 0755); err != nil {
+			return errMsg{fmt.Errorf("failed to create .oldbuilds directory: %w", err)}
+		}
+
+		// Get local builds and group by major version
+		builds, err := local.ScanLocalBuilds(m.config.DownloadDir)
+		if err != nil {
+			return errMsg{fmt.Errorf("failed to scan local builds: %w", err)}
+		}
+
+		// Group builds by major version (e.g., "3.6", "4.0")
+		buildsByVersion := make(map[string][]model.BlenderBuild)
+		for _, build := range builds {
+			// Extract major version (e.g., "3.6" from "3.6.1")
+			parts := strings.Split(build.Version, ".")
+			if len(parts) >= 2 {
+				majorVersion := parts[0] + "." + parts[1]
+				buildsByVersion[majorVersion] = append(buildsByVersion[majorVersion], build)
+			}
+		}
+
+		// For each major version, keep only the latest build
+		for majorVersion, versionBuilds := range buildsByVersion {
+			// Skip if there's only one build for this major version
+			if len(versionBuilds) <= 1 {
+				continue
+			}
+
+			// Sort builds by version (newest first)
+			// We can use the sortBuilds function to do this
+			sortedBuilds := sortBuilds(versionBuilds, 0, true)
+
+			// Keep the newest build, move others to .oldbuilds
+			for i := 1; i < len(sortedBuilds); i++ {
+				oldBuild := sortedBuilds[i]
+
+				// Get the build directory by version
+				entries, err := os.ReadDir(m.config.DownloadDir)
+				if err != nil {
+					continue
+				}
+
+				for _, entry := range entries {
+					if !entry.IsDir() || entry.Name() == ".downloading" || entry.Name() == ".oldbuilds" {
+						continue
+					}
+
+					dirPath := filepath.Join(m.config.DownloadDir, entry.Name())
+					buildInfo, err := local.ReadBuildInfo(dirPath)
+					if err != nil || buildInfo == nil {
+						continue
+					}
+
+					// Found the build directory for this version
+					if buildInfo.Version == oldBuild.Version {
+						// Move to .oldbuilds directory
+						target := filepath.Join(oldBuildsDir, entry.Name())
+						if err := os.Rename(dirPath, target); err != nil {
+							log.Printf("Failed to move old build %s (major version %s): %v",
+								oldBuild.Version, majorVersion, err)
+						} else {
+							log.Printf("Moved old build %s (major version %s) to .oldbuilds",
+								oldBuild.Version, majorVersion)
+						}
+						break
+					}
+				}
+			}
+		}
+
+		return cleanupCompleteMsg{}
+	}
 }

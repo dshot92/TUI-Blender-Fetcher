@@ -3,7 +3,6 @@ package tui
 import (
 	"TUI-Blender-Launcher/config"
 	"TUI-Blender-Launcher/model"
-	"sync"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -26,8 +25,7 @@ type Model struct {
 	editMode         bool
 	settingsInputs   []textinput.Model
 	progressBar      progress.Model
-	downloadStates   map[string]*model.DownloadState // Key is now buildID instead of just version
-	downloadMutex    sync.Mutex
+	commands         *Commands
 	blenderRunning   string
 	activeDownloadID string // Store the active download build ID for tracking
 }
@@ -45,7 +43,7 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 	m := &Model{
 		config:         cfg,
 		isLoading:      !needsSetup,
-		downloadStates: make(map[string]*model.DownloadState),
+		commands:       NewCommands(cfg),
 		progressBar:    progModel,
 		sortColumn:     0,     // Default sort by Version
 		sortReversed:   true,  // Default descending sort (newest versions first)
