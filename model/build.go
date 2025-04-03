@@ -13,17 +13,11 @@ type BuildState int
 const (
 	// StateNone is the default state
 	StateNone BuildState = iota
-	// StateInstalled indicates the build is installed locally
 	StateDownloading
-	// StateExtracting indicates the build is being extracted
 	StateExtracting
-	// StateRunning indicates Blender is currently running
 	StateLocal
-	// StateOnline indicates the build is available online
 	StateOnline
-	// StateUpdate indicates a newer version is available online
 	StateUpdate
-	// StateFailed indicates a failed operation
 	StateFailed
 )
 
@@ -127,15 +121,15 @@ type BlenderExecMsg struct {
 
 // DownloadState holds progress info for an active download
 type DownloadState struct {
-	BuildID       string        // Unique identifier for build (version + hash)
-	Progress      float64       // Progress from 0.0 to 1.0
-	Current       int64         // Bytes downloaded so far (renamed from CurrentBytes)
-	Total         int64         // Total bytes to download (renamed from TotalBytes)
-	Speed         float64       // Download speed in bytes/sec
-	BuildState    BuildState    // Changed from Message to BuildState
-	LastUpdated   time.Time     // Timestamp of last progress update
-	StartTime     time.Time     // When the download started
-	CancelCh      chan struct{} // Per-download cancel channel
+	BuildID     string        // Unique identifier for build (version + hash)
+	Progress    float64       // Progress from 0.0 to 1.0
+	Current     int64         // Bytes downloaded so far (renamed from CurrentBytes)
+	Total       int64         // Total bytes to download (renamed from TotalBytes)
+	Speed       float64       // Download speed in bytes/sec
+	BuildState  BuildState    // Changed from Message to BuildState
+	LastUpdated time.Time     // Timestamp of last progress update
+	StartTime   time.Time     // When the download started
+	CancelCh    chan struct{} // Per-download cancel channel
 }
 
 // FormatByteSize converts bytes to human-readable sizes
