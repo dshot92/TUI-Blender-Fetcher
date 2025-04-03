@@ -25,6 +25,27 @@ func NewRow(build model.BlenderBuild, isSelected bool, status *model.DownloadSta
 	}
 }
 
+// Column configuration
+type columnConfig struct {
+	width    int
+	priority int     // Lower number = higher priority (will be shown first)
+	flex     float64 // Flex ratio for dynamic width calculation
+}
+
+// Column configurations
+var (
+	// Column configurations with priorities and flex values
+	columnConfigs = map[string]columnConfig{
+		"Version":    {width: 0, priority: 1, flex: 1.0}, // Version gets more space
+		"Status":     {width: 0, priority: 2, flex: 1.0}, // Status needs room for different states
+		"Branch":     {width: 0, priority: 5, flex: 1.0},
+		"Type":       {width: 0, priority: 4, flex: 1.0},
+		"Hash":       {width: 0, priority: 6, flex: 1.0},
+		"Size":       {width: 0, priority: 7, flex: 1.0},
+		"Build Date": {width: 0, priority: 3, flex: 1.0},
+	}
+)
+
 // Render renders a single row with the given column configuration
 func (r Row) Render(columns []ColumnConfig) string {
 	var cells []string
