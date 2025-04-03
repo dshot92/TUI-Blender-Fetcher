@@ -304,6 +304,16 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.cursor = 0
 			}
+
+		case key.Matches(msg, key.NewBinding(key.WithKeys("left", "h"))):
+			// Change sort column to the left
+			m.updateSortColumn("left")
+			m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
+
+		case key.Matches(msg, key.NewBinding(key.WithKeys("right", "l"))):
+			// Change sort column to the right
+			m.updateSortColumn("right")
+			m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
 		}
 	}
 
