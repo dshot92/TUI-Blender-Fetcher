@@ -4,7 +4,6 @@ import (
 	"TUI-Blender-Launcher/config"
 	"TUI-Blender-Launcher/local"
 	"TUI-Blender-Launcher/model"
-	"TUI-Blender-Launcher/types"
 	"fmt"
 	"log"
 	"os"
@@ -41,7 +40,7 @@ func (m *Model) handleLaunchBlender() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
 		// Only attempt to launch if it's a local build
-		if selectedBuild.Status == types.StateLocal {
+		if selectedBuild.Status == model.StateLocal {
 			// Add launch logic here
 			log.Printf("Launching Blender %s", selectedBuild.Version)
 			cmd := local.LaunchBlenderCmd(m.config.DownloadDir, selectedBuild.Version)
@@ -56,7 +55,7 @@ func (m *Model) handleOpenBuildDir() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
 		// Only open dir if it's a local build or has an update available
-		if selectedBuild.Status == types.StateLocal || selectedBuild.Status == types.StateUpdate {
+		if selectedBuild.Status == model.StateLocal || selectedBuild.Status == model.StateUpdate {
 			// Create a command that locates the correct build directory by version
 			return m, func() tea.Msg {
 				entries, err := os.ReadDir(m.config.DownloadDir)
@@ -97,7 +96,7 @@ func (m *Model) handleStartDownload() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
 		// Allow downloading both Online builds and Updates
-		if selectedBuild.Status == types.StateOnline || selectedBuild.Status == types.StateUpdate {
+		if selectedBuild.Status == model.StateOnline || selectedBuild.Status == model.StateUpdate {
 			// Generate a unique build ID using version and hash
 			buildID := selectedBuild.Version
 			if selectedBuild.Hash != "" {
@@ -105,7 +104,7 @@ func (m *Model) handleStartDownload() (tea.Model, tea.Cmd) {
 			}
 
 			// Update status to avoid duplicate downloads
-			selectedBuild.Status = types.StatePreparing
+			selectedBuild.Status = model.StateDownloading
 			m.builds[m.cursor] = selectedBuild
 
 			// Store the active download ID for UI rendering
@@ -145,9 +144,8 @@ func (m *Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 	m.downloadMutex.Lock()
 	downloadState, isDownloading := m.downloadStates[buildID]
 	canCancel := isDownloading &&
-		(downloadState.BuildState == types.StateDownloading ||
-			downloadState.BuildState == types.StatePreparing ||
-			downloadState.BuildState == types.StateExtracting)
+		(downloadState.BuildState == model.StateDownloading ||
+			downloadState.BuildState == model.StateExtracting)
 	m.downloadMutex.Unlock()
 
 	// If not downloading or not in a cancellable state, do nothing
@@ -221,7 +219,7 @@ func (m *Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
 		// Only allow deleting local builds or builds that can be updated
-		if selectedBuild.Status == types.StateLocal || selectedBuild.Status == types.StateUpdate {
+		if selectedBuild.Status == model.StateLocal || selectedBuild.Status == model.StateUpdate {
 			// Directly delete the build without confirmation
 			return m, func() tea.Msg {
 				success, err := local.DeleteBuild(m.config.DownloadDir, selectedBuild.Version)
@@ -236,7 +234,7 @@ func (m *Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
 				// Update build statuses after deletion
 				for i := range m.builds {
 					if m.builds[i].Version == selectedBuild.Version {
-						m.builds[i].Status = types.StateOnline
+						m.builds[i].Status = model.StateOnline
 						break
 					}
 				}
@@ -344,7 +342,6 @@ func (m *Model) handleBlenderExec(msg model.BlenderExecMsg) (tea.Model, tea.Cmd)
 
 // handleDownloadProgress processes tick messages for download progress updates
 func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
-	var commands []tea.Cmd
 	now := time.Now()
 
 	m.downloadMutex.Lock() // Lock early
@@ -357,21 +354,20 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	cancelledDownloads := make([]string, 0)
 
 	// Temporary copy of download states for use after unlock
-	tempStates := make(map[string]DownloadState)
+	tempStates := make(map[string]model.DownloadState)
 
 	// Process download states while holding the lock
 	for id, state := range m.downloadStates {
 		tempStates[id] = *state // Store a copy
 
-		if state.BuildState == types.StateLocal || strings.HasPrefix(state.BuildState.String(), "Failed") {
+		if state.BuildState == model.StateLocal || strings.HasPrefix(state.BuildState.String(), "Failed") {
 			// Download completed or failed
 			completedDownloads = append(completedDownloads, id)
-		} else if state.BuildState == types.StateNone {
+		} else if state.BuildState == model.StateNone {
 			// Download was cancelled
 			cancelledDownloads = append(cancelledDownloads, id)
-		} else if state.BuildState == types.StateDownloading ||
-			state.BuildState == types.StatePreparing ||
-			state.BuildState == types.StateExtracting {
+		} else if state.BuildState == model.StateDownloading ||
+			state.BuildState == model.StateExtracting {
 			// Active download
 			timeSinceUpdate := now.Sub(state.LastUpdated)
 			if timeSinceUpdate > state.StallDuration {
@@ -381,7 +377,7 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 
 				// Update status in our temporary copy
 				tempStateCopy := *state
-				tempStateCopy.BuildState = types.StateFailed
+				tempStateCopy.BuildState = model.StateFailed
 				tempStates[id] = tempStateCopy
 				stalledDownloads = append(stalledDownloads, id)
 			} else {
@@ -473,55 +469,21 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 
 			for i := range m.builds {
 				if m.builds[i].Version == version {
-					m.builds[i].Status = types.StateNone
+					m.builds[i].Status = state.BuildState
 					needsSort = true
-
-					// Schedule the status reset command after cancellation
-					version := m.builds[i].Version // Capture version for closure
-					commands = append(commands, tea.Tick(150*time.Millisecond, func(t time.Time) tea.Msg {
-						return resetStatusMsg{version: version}
-					}))
 					break
 				}
 			}
 		}
 	}
 
-	// Re-sort if any status changed
+	// Sort if needed
 	if needsSort {
 		m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
 	}
 
-	// Create any needed commands
-	cmdManager := NewCommandManager(m.config, m.downloadStates, &m.downloadMutex)
-	if activeDownloads > 0 {
-		// Continue ticking for active downloads
-		commands = append(commands, cmdManager.Tick())
-		// Add progress bar updates
-		if len(progressCmds) > 0 {
-			commands = append(commands, progressCmds...)
-		}
-	} else if len(progressCmds) > 0 {
-		// Handle final progress updates if any
-		commands = append(commands, progressCmds...)
-	} else {
-		// No active downloads, but we still want to keep the tick system running
-		// Use a slower tick rate when idle
-		commands = append(commands, cmdManager.Tick())
-	}
-
-	// Force UI refresh on each tick, even without user input
-	commands = append(commands, tea.Sequence(
-		// No-op command to force refresh
-		func() tea.Msg { return nil },
-	))
-
-	if len(commands) > 0 {
-		return m, tea.Batch(commands...)
-	}
-
-	// Fallback to ensure we always have a tick scheduled
-	return m, cmdManager.Tick()
+	// Return any progress bar update commands
+	return m, tea.Batch(progressCmds...)
 }
 
 // Helper function to update focus styling for settings inputs

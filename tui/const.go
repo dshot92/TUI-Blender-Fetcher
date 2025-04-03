@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/types"
+	"TUI-Blender-Launcher/model"
 	"fmt"
 	"time"
 
@@ -46,7 +46,7 @@ var (
 	// Footer style
 	footerStyle = lp.NewStyle().MarginTop(1).Padding(1, 1).Foreground(lp.Color(colorForeground))
 	// Define base styles for columns (can be customized further)
-	
+
 )
 
 // Column configuration
@@ -74,10 +74,10 @@ var (
 
 // FormatBuildStatus converts a build state to a human-readable string with proper formatting
 // including download progress information if available
-func FormatBuildStatus(buildState types.BuildState, downloadState *DownloadState) string {
+func FormatBuildStatus(buildState model.BuildState, downloadState *model.DownloadState) string {
 	// If there's an active download, show progress information
-	if downloadState != nil && (downloadState.BuildState == types.StateDownloading || downloadState.BuildState == types.StateExtracting) {
-		if downloadState.BuildState == types.StateDownloading {
+	if downloadState != nil && (downloadState.BuildState == model.StateDownloading || downloadState.BuildState == model.StateExtracting) {
+		if downloadState.BuildState == model.StateDownloading {
 			// Show download progress with percentage and speed
 			if downloadState.Total > 0 {
 				percent := (float64(downloadState.Current) / float64(downloadState.Total)) * 100
@@ -91,7 +91,7 @@ func FormatBuildStatus(buildState types.BuildState, downloadState *DownloadState
 				return fmt.Sprintf("%.1f%% (%.1f MB/s)", percent, speed/1024/1024)
 			}
 			return "Downloading..."
-		} else if downloadState.BuildState == types.StateExtracting {
+		} else if downloadState.BuildState == model.StateExtracting {
 			return "Extracting..."
 		}
 	}

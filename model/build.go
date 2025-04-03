@@ -1,10 +1,51 @@
 package model
 
 import (
-	"TUI-Blender-Launcher/types"
 	"encoding/json"
 	"time"
 )
+
+// BuildState represents the current state of a Blender build
+type BuildState int
+
+const (
+	// StateNone is the default state
+	StateNone BuildState = iota
+	// StateInstalled indicates the build is installed locally
+	StateDownloading
+	// StateExtracting indicates the build is being extracted
+	StateExtracting
+	// StateRunning indicates Blender is currently running
+	StateLocal
+	// StateOnline indicates the build is available online
+	StateOnline
+	// StateUpdate indicates a newer version is available online
+	StateUpdate
+	// StateFailed indicates a failed operation
+	StateFailed
+)
+
+// String returns the string representation of the BuildState
+func (s BuildState) String() string {
+	switch s {
+	case StateNone:
+		return "Cancelled"
+	case StateDownloading:
+		return "Downloading"
+	case StateExtracting:
+		return "Extracting"
+	case StateLocal:
+		return "Local"
+	case StateOnline:
+		return "Online"
+	case StateUpdate:
+		return "Update"
+	case StateFailed:
+		return "Failed"
+	default:
+		return "Unknown"
+	}
+}
 
 // Timestamp is a custom type to handle Unix timestamp decoding from JSON numbers.
 type Timestamp time.Time
@@ -65,7 +106,7 @@ type BlenderBuild struct {
 	ReleaseCycle    string    `json:"release_cycle"`  // e.g., "daily", "stable", "candidate" (replaces previous 'Type')
 
 	// Internal state (not from API)
-	Status types.BuildState // Changed from string to types.BuildState
+	Status BuildState // Changed from types.BuildState to BuildState
 	// Selected field removed - we only work with highlighted builds now
 }
 
@@ -80,4 +121,18 @@ type BlenderLaunchedMsg struct {
 type BlenderExecMsg struct {
 	Version    string // The version of Blender to launch
 	Executable string // The path to the Blender executable
+}
+
+// DownloadState holds progress info for an active download
+type DownloadState struct {
+	BuildID       string        // Unique identifier for build (version + hash)
+	Progress      float64       // Progress from 0.0 to 1.0
+	Current       int64         // Bytes downloaded so far (renamed from CurrentBytes)
+	Total         int64         // Total bytes to download (renamed from TotalBytes)
+	Speed         float64       // Download speed in bytes/sec
+	BuildState    BuildState    // Changed from Message to BuildState
+	LastUpdated   time.Time     // Timestamp of last progress update
+	StartTime     time.Time     // When the download started
+	StallDuration time.Duration // How long download can stall before timeout
+	CancelCh      chan struct{} // Per-download cancel channel
 }

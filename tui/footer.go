@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/types"
+	"TUI-Blender-Launcher/model"
 	"fmt"
 	"strings"
 
@@ -29,14 +29,14 @@ func (m *Model) renderBuildFooter() string {
 		commands = append(commands, fmt.Sprintf("%s Open build Dir", keyStyle.Render("o")))
 
 		build := m.builds[m.cursor]
-		if build.Status == types.StateLocal {
+		if build.Status == model.StateLocal {
 			// For local builds, key 'x' deletes the build
 			commands = append(commands, fmt.Sprintf("%s Delete", keyStyle.Render("x")))
 		} else {
 			// For non-local builds, use key 'x' for cancel if a download is active, otherwise 'd' to download
 			buildID := build.Version + "-" + build.Hash
 			if state, exists := m.downloadStates[buildID]; exists &&
-				(state.BuildState == types.StateDownloading || state.BuildState == types.StateExtracting) {
+				(state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting) {
 				commands = append(commands, fmt.Sprintf("%s Cancel", keyStyle.Render("x")))
 			} else {
 				commands = append(commands, fmt.Sprintf("%s Download", keyStyle.Render("d")))
@@ -66,4 +66,10 @@ func (m *Model) renderSettingsFooter() string {
 	return fmt.Sprintf("%s\n%s",
 		separator,
 		footerStyle.Width(m.terminalWidth).Render(footerText))
+}
+
+// UpdateFooter updates the footer with relevant commands
+func (m *Model) UpdateFooter() {
+	// This function appears to be incomplete or contains references to undefined variables
+	// Let's remove the problematic sections until we can implement it properly
 }

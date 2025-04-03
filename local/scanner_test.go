@@ -2,7 +2,6 @@ package local
 
 import (
 	"TUI-Blender-Launcher/model"
-	"TUI-Blender-Launcher/types"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -126,7 +125,7 @@ func TestReadBuildInfo(t *testing.T) {
 		metadataJSON   string              // JSON content for version.json
 		expectedBuild  *model.BlenderBuild // Expected build info
 		expectError    bool                // Whether an error is expected
-		expectedStatus types.BuildState    // Expected status in the build info
+		expectedStatus model.BuildState    // Expected status in the build info
 	}{
 		{
 			name:          "valid metadata file",
@@ -157,10 +156,10 @@ func TestReadBuildInfo(t *testing.T) {
 				FileName:        "blender-4.0.0-valid",
 				FileExtension:   "tar.xz",
 				ReleaseCycle:    "daily",
-				Status:          types.StateLocal,
+				Status:          model.StateLocal,
 			},
 			expectError:    false,
-			expectedStatus: types.StateLocal,
+			expectedStatus: model.StateLocal,
 		},
 		{
 			name:          "invalid JSON in metadata file",
@@ -170,10 +169,10 @@ func TestReadBuildInfo(t *testing.T) {
 			expectedBuild: &model.BlenderBuild{
 				Version:  "4.0.0",
 				FileName: "blender-4.0.0-invalid",
-				Status:   types.StateLocal,
+				Status:   model.StateLocal,
 			},
 			expectError:    false,
-			expectedStatus: types.StateLocal,
+			expectedStatus: model.StateLocal,
 		},
 		{
 			name:          "fallback to directory name parsing",
@@ -182,10 +181,10 @@ func TestReadBuildInfo(t *testing.T) {
 			expectedBuild: &model.BlenderBuild{
 				Version:  "3.6.0",
 				FileName: "blender-3.6.0",
-				Status:   types.StateLocal,
+				Status:   model.StateLocal,
 			},
 			expectError:    false,
-			expectedStatus: types.StateLocal,
+			expectedStatus: model.StateLocal,
 		},
 		{
 			name:           "unrecognized directory name",
@@ -193,7 +192,7 @@ func TestReadBuildInfo(t *testing.T) {
 			setupMetadata:  false,
 			expectedBuild:  nil,
 			expectError:    false,
-			expectedStatus: types.StateNone,
+			expectedStatus: model.StateNone,
 		},
 	}
 
@@ -322,7 +321,7 @@ func TestScanLocalBuilds(t *testing.T) {
 
 	// Verify that all builds have "Local" status
 	for _, build := range builds {
-		if build.Status != types.StateLocal {
+		if build.Status != model.StateLocal {
 			t.Errorf("Build %s has status %s, expected 'Local'", build.Version, build.Status.String())
 		}
 	}

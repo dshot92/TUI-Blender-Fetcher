@@ -6,7 +6,6 @@ import (
 	"TUI-Blender-Launcher/download"
 	"TUI-Blender-Launcher/local"
 	"TUI-Blender-Launcher/model"
-	"TUI-Blender-Launcher/types"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,12 +18,12 @@ import (
 // CommandManager encapsulates all the command generation logic for the TUI
 type CommandManager struct {
 	Config        config.Config
-	DownloadMap   map[string]*DownloadState
+	DownloadMap   map[string]*model.DownloadState
 	DownloadMutex *sync.Mutex
 }
 
 // NewCommandManager creates a new CommandManager
-func NewCommandManager(cfg config.Config, downloadMap map[string]*DownloadState, mutex *sync.Mutex) *CommandManager {
+func NewCommandManager(cfg config.Config, downloadMap map[string]*model.DownloadState, mutex *sync.Mutex) *CommandManager {
 	return &CommandManager{
 		Config:        cfg,
 		DownloadMap:   downloadMap,
@@ -70,12 +69,12 @@ func (cm *CommandManager) UpdateStatusFromLocalScan(onlineBuilds []model.Blender
 		for i := range updatedBuilds {
 			if localBuild, found := localBuildMap[updatedBuilds[i].Version]; found {
 				if local.CheckUpdateAvailable(localBuild, updatedBuilds[i]) {
-					updatedBuilds[i].Status = types.StateUpdate
+					updatedBuilds[i].Status = model.StateUpdate
 				} else {
-					updatedBuilds[i].Status = types.StateLocal
+					updatedBuilds[i].Status = model.StateLocal
 				}
 			} else {
-				updatedBuilds[i].Status = types.StateOnline // Not installed
+				updatedBuilds[i].Status = model.StateOnline // Not installed
 			}
 		}
 		return buildsUpdatedMsg{builds: updatedBuilds}
@@ -121,9 +120,9 @@ func (cm *CommandManager) DoDownload(build model.BlenderBuild) tea.Cmd {
 
 	cm.DownloadMutex.Lock()
 	if _, exists := cm.DownloadMap[buildID]; !exists {
-		cm.DownloadMap[buildID] = &DownloadState{
+		cm.DownloadMap[buildID] = &model.DownloadState{
 			BuildID:       buildID,
-			BuildState:    types.StatePreparing,
+			BuildState:    model.StateDownloading,
 			StartTime:     now,
 			LastUpdated:   now,
 			Progress:      0.0,
@@ -194,7 +193,7 @@ func (cm *CommandManager) DoDownload(build model.BlenderBuild) tea.Cmd {
 
 			if state, ok := cm.DownloadMap[buildID]; ok {
 				// If already cancelled, don't update progress
-				if state.BuildState == types.StateNone {
+				if state.BuildState == model.StateNone {
 					return
 				}
 
@@ -207,11 +206,11 @@ func (cm *CommandManager) DoDownload(build model.BlenderBuild) tea.Cmd {
 				// Determine state based on progress info
 				if total == extractionVirtualSize {
 					// Extraction phase
-					state.BuildState = types.StateExtracting
+					state.BuildState = model.StateExtracting
 					state.Progress = percent
 					state.Speed = 0                           // No download speed during extraction
 					state.StallDuration = extractionStallTime // Longer timeout for extraction
-				} else if state.BuildState == types.StateExtracting {
+				} else if state.BuildState == model.StateExtracting {
 					// Continue extraction progress updates
 					state.Progress = percent
 				} else {
@@ -220,12 +219,12 @@ func (cm *CommandManager) DoDownload(build model.BlenderBuild) tea.Cmd {
 					state.Current = downloaded
 					state.Total = total
 					state.Speed = currentSpeed
-					state.BuildState = types.StateDownloading
+					state.BuildState = model.StateDownloading
 					state.StallDuration = downloadStallTime
 				}
 
 				// Update the download state
-				updated := UpdateDownloadProgress(cm.DownloadMap, buildID, downloaded, total, types.StateDownloading)
+				updated := UpdateDownloadProgress(cm.DownloadMap, buildID, downloaded, total, model.StateDownloading)
 
 				if updated {
 					// Also update speed if we have a new value
@@ -244,7 +243,7 @@ func (cm *CommandManager) DoDownload(build model.BlenderBuild) tea.Cmd {
 			// Download canceled before starting
 			cm.DownloadMutex.Lock()
 			if state, ok := cm.DownloadMap[buildID]; ok {
-				state.BuildState = types.StateNone
+				state.BuildState = model.StateNone
 			}
 			cm.DownloadMutex.Unlock()
 			close(done)
@@ -262,7 +261,7 @@ func (cm *CommandManager) DoDownload(build model.BlenderBuild) tea.Cmd {
 			// Download was cancelled during execution
 			cm.DownloadMutex.Lock()
 			if state, ok := cm.DownloadMap[buildID]; ok {
-				state.BuildState = types.StateNone
+				state.BuildState = model.StateNone
 			}
 			cm.DownloadMutex.Unlock()
 			close(done)
@@ -275,7 +274,7 @@ func (cm *CommandManager) DoDownload(build model.BlenderBuild) tea.Cmd {
 			if state, ok := cm.DownloadMap[buildID]; ok {
 				if err != nil {
 					// Handle download error
-					state.BuildState = types.StateFailed
+					state.BuildState = model.StateFailed
 					// Send completion message with error
 					go func() {
 						time.Sleep(3 * time.Second) // Keep error visible for a moment
@@ -290,7 +289,7 @@ func (cm *CommandManager) DoDownload(build model.BlenderBuild) tea.Cmd {
 					}()
 				} else {
 					// Handle download success
-					state.BuildState = types.StateLocal
+					state.BuildState = model.StateLocal
 					state.Progress = 1.0 // Ensure progress is shown as complete
 					// Send completion message
 					go func() {

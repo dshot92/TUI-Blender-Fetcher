@@ -3,6 +3,7 @@ package tui
 
 import (
 	"TUI-Blender-Launcher/model"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -15,13 +16,15 @@ func (m *Model) scanLocalBuildsCmd() tea.Cmd {
 }
 
 func (m *Model) tickCmd() tea.Cmd {
-	cm := NewCommandManager(m.config, m.downloadStates, &m.downloadMutex)
-	return cm.Tick()
+	return tea.Tick(downloadTickRate, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
 
 func (m *Model) uiRefreshCmd() tea.Cmd {
-	cm := NewCommandManager(m.config, m.downloadStates, &m.downloadMutex)
-	return cm.UIRefresh()
+	return func() tea.Msg {
+		return forceRenderMsg{}
+	}
 }
 
 func (m *Model) fetchBuildsCmd() tea.Cmd {
@@ -30,6 +33,27 @@ func (m *Model) fetchBuildsCmd() tea.Cmd {
 }
 
 func (m *Model) doDownloadCmd(build model.BlenderBuild) tea.Cmd {
-	cm := NewCommandManager(m.config, m.downloadStates, &m.downloadMutex)
-	return cm.DoDownload(build)
+	return func() tea.Msg {
+		return startDownloadMsg{
+			build:   build,
+			buildID: build.Version + "-" + build.Hash[:8],
+		}
+	}
+}
+
+// adaptiveTickCmd creates a tick command with adaptive rate based on download activity
+func (m *Model) adaptiveTickCmd(activeCount int, isExtracting bool) tea.Cmd {
+	rate := downloadTickRate
+
+	if activeCount == 0 {
+		rate = 500 * time.Millisecond // Slower when idle
+	} else if isExtracting {
+		rate = 250 * time.Millisecond // During extraction
+	} else if activeCount > 1 {
+		rate = 80 * time.Millisecond // Multiple downloads
+	}
+
+	return tea.Tick(rate, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }

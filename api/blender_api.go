@@ -4,11 +4,10 @@ import (
 	"TUI-Blender-Launcher/model"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"runtime"
 	"strings"
-
-	"TUI-Blender-Launcher/types"
 
 	version "github.com/hashicorp/go-version" // Import version library
 )
@@ -17,6 +16,18 @@ import (
 // const blenderAPIURL = "https://builder.blender.org/download/experimental/?format=json&v=1"
 // const blenderAPIURL = "https://builder.blender.org/download/patch/?format=json&v=1"
 const blenderAPIURL = "https://builder.blender.org/download/daily/?format=json&v=1"
+
+// API represents the Blender API client
+type API struct {
+	client *http.Client
+}
+
+// NewAPI creates a new API client
+func NewAPI() *API {
+	return &API{
+		client: &http.Client{},
+	}
+}
 
 // FetchBuilds fetches the list of Blender builds from the official API,
 // filtering for the current OS/architecture, file extensions, and minimum version.
@@ -127,11 +138,37 @@ func FetchBuilds(versionFilter string) ([]model.BlenderBuild, error) { // Added 
 		}
 
 		// Passed all filters
-		build.Status = types.StateOnline
+		build.Status = model.StateOnline
 		filteredBuilds = append(filteredBuilds, build)
 	}
 
 	// TODO: Sort builds (e.g., by date or version)
 
 	return filteredBuilds, nil
+}
+
+// GetBuilds fetches available Blender builds from the API
+func (a *API) GetBuilds() ([]model.BlenderBuild, error) {
+	resp, err := a.client.Get("https://builder.blender.org/download/")
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch builds: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	var builds []model.BlenderBuild
+	if err := json.Unmarshal(body, &builds); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Set status for all builds
+	for i := range builds {
+		builds[i].Status = model.StateOnline
+	}
+
+	return builds, nil
 }

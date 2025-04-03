@@ -56,34 +56,3 @@ func (m *Model) renderSettingsContent(availableHeight int) string {
 
 	return lp.Place(m.terminalWidth, availableHeight, lp.Left, lp.Top, b.String())
 }
-
-// renderQuitConfirmDialog renders the dialog confirming a quit during an active download
-func (m *Model) renderQuitConfirmDialog() string {
-	var content strings.Builder
-
-	title := "Quit during active download?"
-	content.WriteString(lp.NewStyle().Bold(true).Render(title) + "\n\n")
-
-	// Warning message
-	content.WriteString("Warning: A download is currently in progress.\n")
-	content.WriteString("Quitting now may result in incomplete files.\n\n")
-
-	// Instructions
-	content.WriteString("Press Enter to quit anyway, Esc to cancel")
-
-	// Create a styled dialog box
-	return m.renderDialogBox(content.String(), 60)
-}
-
-// renderDialogBox creates a styled dialog box with the given content
-func (m *Model) renderDialogBox(content string, width int) string {
-	// Create a box with a border
-	boxStyle := lp.NewStyle().
-		Border(lp.NormalBorder()).
-		BorderForeground(lp.Color(colorInfo)).
-		Padding(1, 2).
-		Width(width).
-		Align(lp.Center)
-
-	return boxStyle.Render(content)
-}

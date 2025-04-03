@@ -11,8 +11,6 @@ import (
 	"sort"
 	"syscall"
 
-	"TUI-Blender-Launcher/types"
-
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -39,7 +37,7 @@ func ReadBuildInfo(dirPath string) (*model.BlenderBuild, error) {
 			// Fall back to directory name parsing instead of returning error
 			return fallbackToDirectoryParsing(dirPath)
 		}
-		build.Status = types.StateLocal
+		build.Status = model.StateLocal
 		build.FileName = filepath.Base(dirPath)
 		return build, nil
 	}
@@ -56,7 +54,7 @@ func fallbackToDirectoryParsing(dirPath string) (*model.BlenderBuild, error) {
 		versionStr := match[1]
 		build := &model.BlenderBuild{}
 		build.Version = versionStr
-		build.Status = types.StateLocal // Indicate it lacks full metadata
+		build.Status = model.StateLocal // Indicate it lacks full metadata
 		build.FileName = dirName
 		return build, nil
 	}

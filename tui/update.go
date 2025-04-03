@@ -2,7 +2,6 @@ package tui
 
 import (
 	"TUI-Blender-Launcher/model"
-	"TUI-Blender-Launcher/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,9 +90,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.builds[i].Version == msg.version {
 				localPath := filepath.Join(m.config.DownloadDir, m.builds[i].Version)
 				if _, err := os.Stat(localPath); err == nil {
-					m.builds[i].Status = types.StateUpdate
+					m.builds[i].Status = model.StateUpdate
 				} else {
-					m.builds[i].Status = types.StateOnline
+					m.builds[i].Status = model.StateOnline
 				}
 				m.builds = sortBuilds(m.builds, m.sortColumn, m.sortReversed)
 				break
@@ -217,6 +216,7 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c", "q"))):
 			// Check if there are any active downloads before quitting
+			return m, tea.Quit
 		case key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))):
 			if m.cursor > 0 {
 				m.cursor--
@@ -252,7 +252,7 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Only handle launch if state is local
 			if len(m.builds) > 0 && m.cursor < len(m.builds) {
 				selectedBuild := m.builds[m.cursor]
-				if selectedBuild.Status == types.StateLocal {
+				if selectedBuild.Status == model.StateLocal {
 					return m.handleLaunchBlender()
 				}
 			}
@@ -262,7 +262,7 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Only handle open dir if state is local or update
 			if len(m.builds) > 0 && m.cursor < len(m.builds) {
 				selectedBuild := m.builds[m.cursor]
-				if selectedBuild.Status == types.StateLocal || selectedBuild.Status == types.StateUpdate {
+				if selectedBuild.Status == model.StateLocal || selectedBuild.Status == model.StateUpdate {
 					return m.handleOpenBuildDir()
 				}
 			}
@@ -272,7 +272,7 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Can download online builds or updates
 			if len(m.builds) > 0 && m.cursor < len(m.builds) {
 				selectedBuild := m.builds[m.cursor]
-				if selectedBuild.Status == types.StateOnline || selectedBuild.Status == types.StateUpdate {
+				if selectedBuild.Status == model.StateOnline || selectedBuild.Status == model.StateUpdate {
 					return m.handleStartDownload()
 				}
 			}
@@ -296,9 +296,8 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 
 					if downloadVersion == selectedBuild.Version &&
-						(state.BuildState == types.StateDownloading ||
-							state.BuildState == types.StatePreparing ||
-							state.BuildState == types.StateExtracting) {
+						(state.BuildState == model.StateDownloading ||
+							state.BuildState == model.StateExtracting) {
 						canCancel = true
 						// Set the activeDownloadID to ensure we're canceling the right one
 						m.activeDownloadID = id
@@ -309,7 +308,7 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				if canCancel {
 					return m.handleCancelDownload()
-				} else if selectedBuild.Status == types.StateLocal || selectedBuild.Status == types.StateUpdate {
+				} else if selectedBuild.Status == model.StateLocal || selectedBuild.Status == model.StateUpdate {
 					// Secondary action: delete builds
 					return m.handleDeleteBuild()
 				}

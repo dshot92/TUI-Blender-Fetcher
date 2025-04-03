@@ -3,9 +3,7 @@ package tui
 import (
 	"TUI-Blender-Launcher/config"
 	"TUI-Blender-Launcher/model"
-	"TUI-Blender-Launcher/types"
 	"sync"
-	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -28,24 +26,10 @@ type Model struct {
 	editMode         bool
 	settingsInputs   []textinput.Model
 	progressBar      progress.Model
-	downloadStates   map[string]*DownloadState // Key is now buildID instead of just version
+	downloadStates   map[string]*model.DownloadState // Key is now buildID instead of just version
 	downloadMutex    sync.Mutex
 	blenderRunning   string
 	activeDownloadID string // Store the active download build ID for tracking
-}
-
-// DownloadState holds progress info for an active download
-type DownloadState struct {
-	BuildID       string           // Unique identifier for build (version + hash)
-	Progress      float64          // Progress from 0.0 to 1.0
-	Current       int64            // Bytes downloaded so far (renamed from CurrentBytes)
-	Total         int64            // Total bytes to download (renamed from TotalBytes)
-	Speed         float64          // Download speed in bytes/sec
-	BuildState    types.BuildState // Changed from Message to BuildState
-	LastUpdated   time.Time        // Timestamp of last progress update
-	StartTime     time.Time        // When the download started
-	StallDuration time.Duration    // How long download can stall before timeout
-	CancelCh      chan struct{}    // Per-download cancel channel
 }
 
 // InitialModel creates the initial state of the TUI model.
@@ -61,7 +45,7 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 	m := &Model{
 		config:         cfg,
 		isLoading:      !needsSetup,
-		downloadStates: make(map[string]*DownloadState),
+		downloadStates: make(map[string]*model.DownloadState),
 		progressBar:    progModel,
 		sortColumn:     0,     // Default sort by Version
 		sortReversed:   true,  // Default descending sort (newest versions first)

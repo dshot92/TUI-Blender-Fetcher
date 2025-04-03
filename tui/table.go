@@ -2,7 +2,6 @@ package tui
 
 import (
 	"TUI-Blender-Launcher/model"
-	"TUI-Blender-Launcher/types"
 	"bytes"
 	"strings"
 	"time"
@@ -14,11 +13,11 @@ import (
 type Row struct {
 	Build      model.BlenderBuild
 	IsSelected bool
-	Status     *DownloadState
+	Status     *model.DownloadState
 }
 
 // NewRow creates a new row instance from a build
-func NewRow(build model.BlenderBuild, isSelected bool, status *DownloadState) Row {
+func NewRow(build model.BlenderBuild, isSelected bool, status *model.DownloadState) Row {
 	return Row{
 		Build:      build,
 		IsSelected: isSelected,
@@ -176,7 +175,7 @@ func RenderRows(m *Model) string {
 		buildID := build.Version + "-" + build.Hash
 
 		// Get download state if exists
-		var downloadState *DownloadState
+		var downloadState *model.DownloadState
 		if state, exists := m.downloadStates[buildID]; exists {
 			downloadState = state
 		}
@@ -192,11 +191,11 @@ func RenderRows(m *Model) string {
 
 // UpdateDownloadProgress updates the progress for a specific build row
 // Returns true if the UI should be refreshed
-func UpdateDownloadProgress(states map[string]*DownloadState, buildID string, current, total int64, buildState types.BuildState) bool {
+func UpdateDownloadProgress(states map[string]*model.DownloadState, buildID string, current, total int64, buildState model.BuildState) bool {
 	state, exists := states[buildID]
 	if !exists {
 		// Create a new download state if one doesn't exist
-		state = &DownloadState{
+		state = &model.DownloadState{
 			BuildID:       buildID,
 			BuildState:    buildState,
 			Current:       current,
@@ -227,7 +226,7 @@ func UpdateDownloadProgress(states map[string]*DownloadState, buildID string, cu
 
 	// Calculate download speed
 	elapsed := time.Since(state.LastUpdated).Seconds()
-	if elapsed > 0 && state.BuildState == types.StateDownloading {
+	if elapsed > 0 && state.BuildState == model.StateDownloading {
 		bytesDownloaded := current - state.Current
 		state.Speed = float64(bytesDownloaded) / elapsed
 	}
@@ -236,7 +235,7 @@ func UpdateDownloadProgress(states map[string]*DownloadState, buildID string, cu
 	state.LastUpdated = time.Now()
 
 	// Update stall duration based on state
-	if buildState == types.StateExtracting {
+	if buildState == model.StateExtracting {
 		state.StallDuration = extractionStallTime
 	} else {
 		state.StallDuration = downloadStallTime
@@ -247,16 +246,15 @@ func UpdateDownloadProgress(states map[string]*DownloadState, buildID string, cu
 
 // CancelDownload signals cancellation for a specific build row
 // Returns true if a download was actually cancelled
-func CancelDownload(states map[string]*DownloadState, buildID string) bool {
+func CancelDownload(states map[string]*model.DownloadState, buildID string) bool {
 	state, exists := states[buildID]
 	if !exists {
 		return false
 	}
 
 	// Only cancel if the build is in a cancellable state
-	if state.BuildState != types.StateDownloading &&
-		state.BuildState != types.StatePreparing &&
-		state.BuildState != types.StateExtracting {
+	if state.BuildState != model.StateDownloading &&
+		state.BuildState != model.StateExtracting {
 		return false
 	}
 
@@ -270,7 +268,7 @@ func CancelDownload(states map[string]*DownloadState, buildID string) bool {
 		close(state.CancelCh)
 
 		// Update the state
-		state.BuildState = types.StateNone
+		state.BuildState = model.StateNone
 		return true
 	}
 }
@@ -292,9 +290,7 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 
 	if len(m.builds) == 0 {
 		// No builds to display
-		var msg string
-
-		msg = "No Blender builds found locally or online."
+		var msg string = "No Blender builds found locally or online."
 
 		return lp.Place(
 			m.terminalWidth,
