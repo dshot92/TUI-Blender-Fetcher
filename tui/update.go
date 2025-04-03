@@ -12,11 +12,13 @@ import (
 func (m *Model) Init() tea.Cmd {
 	var cmds []tea.Cmd
 
+	// Create a Commands instance
+	cmdManager := NewCommands(m.config)
+
 	// Start with local build scan to get builds already on disk
-	cmds = append(cmds, m.scanLocalBuildsCmd())
+	cmds = append(cmds, cmdManager.ScanLocalBuilds())
 
 	// Add a program message listener to receive messages from background goroutines
-	cmdManager := NewCommands(m.config)
 	cmds = append(cmds, cmdManager.ProgramMsgListener())
 
 	return tea.Batch(cmds...)
@@ -210,8 +212,8 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				case CmdFetchBuilds:
 					// Fetch online builds only
-					m.isLoading = true
-					return m, m.fetchBuildsCmd()
+					cmdManager := NewCommands(m.config)
+					return m, cmdManager.FetchBuilds()
 
 				case CmdDownloadBuild:
 					// Download build (only for online builds)
