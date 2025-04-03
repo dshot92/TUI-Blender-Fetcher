@@ -6,11 +6,11 @@ import (
 
 func (m *Model) renderPageForView() string {
 
-	header := headerStyle.Width(m.terminalWidth).AlignHorizontal(lp.Center).Render("TUI Blender Launcher")
-	headerHeight := 6
+	header := renderHeader(m.terminalWidth)
+	headerHeight := getHeaderHeight()
 
 	var footer string
-	var footerHeight int = 2
+	var footerHeight int = 1
 	var content string
 
 	if m.currentView == viewInitialSetup || m.currentView == viewSettings {

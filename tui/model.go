@@ -20,7 +20,6 @@ type Model struct {
 	sortColumn       int
 	sortReversed     bool
 	isLoading        bool
-	visibleColumns   map[string]bool
 	currentView      viewState
 	focusIndex       int
 	editMode         bool
@@ -84,17 +83,6 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 		// Start loading local builds immediately
 		m.isLoading = true
 		// Trigger initial local scan via Init command
-	}
-
-	// Add default visibleColumns before returning m
-	m.visibleColumns = map[string]bool{
-		"Version":    true,
-		"Status":     true,
-		"Branch":     true,
-		"Type":       true,
-		"Hash":       true,
-		"Size":       true,
-		"Build Date": true,
 	}
 
 	return m
