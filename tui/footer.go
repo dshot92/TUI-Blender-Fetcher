@@ -16,10 +16,10 @@ func (m *Model) renderBuildFooter() string {
 
 	// General commands always available
 	generalCommands := []string{
-		fmt.Sprintf("%s Quit", keyStyle.Render("q")),
-		fmt.Sprintf("%s Settings", keyStyle.Render("s")),
-		fmt.Sprintf("%s Reverse Sort", keyStyle.Render("r")),
 		fmt.Sprintf("%s Fetch online builds", keyStyle.Render("f")),
+		fmt.Sprintf("%s Reverse Sort", keyStyle.Render("r")),
+		fmt.Sprintf("%s Settings", keyStyle.Render("s")),
+		fmt.Sprintf("%s Quit", keyStyle.Render("q")),
 	}
 
 	// Contextual commands based on the highlighted build
@@ -73,9 +73,9 @@ func (m *Model) renderSettingsFooter() string {
 	separator := sepStyle.Render(" · ")
 
 	generalCommands := []string{
+		fmt.Sprintf("%s Edit setting", keyStyle.Render("enter")),
 		fmt.Sprintf("%s Save and exit", keyStyle.Render("s")),
 		fmt.Sprintf("%s Quit", keyStyle.Render("q")),
-		fmt.Sprintf("%s Edit setting", keyStyle.Render("enter")),
 	}
 	// First line is empty (no contextual commands), second line holds general commands
 	return footerStyle.Width(m.terminalWidth).Render("\n" + strings.Join(generalCommands, separator))
