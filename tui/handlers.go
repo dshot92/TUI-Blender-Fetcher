@@ -267,9 +267,22 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Merge online builds with existing ones without filtering
+	// Create a map of existing builds by hash for quick lookup
+	existingBuildsMap := make(map[string]bool)
+	for _, build := range m.builds {
+		if build.Hash != "" {
+			existingBuildsMap[build.Hash] = true
+		}
+	}
+
+	// Add only builds that don't already exist (by hash)
 	for _, build := range msg.builds {
-		m.builds = append(m.builds, build)
+		// Only add if the hash is unique
+		if build.Hash != "" && !existingBuildsMap[build.Hash] {
+			m.builds = append(m.builds, build)
+			// Mark hash as seen to prevent future duplicates
+			existingBuildsMap[build.Hash] = true
+		}
 	}
 
 	// Sort the builds after merging

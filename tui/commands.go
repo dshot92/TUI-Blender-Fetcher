@@ -204,10 +204,14 @@ func (c *Commands) UpdateBuildStatus(onlineBuilds []model.BlenderBuild) tea.Cmd 
 			return errMsg{fmt.Errorf("failed local scan during status update: %w", err)}
 		}
 
-		// Create map for quick lookup
+		// Create maps for quick lookup by version and hash
 		localBuildMap := make(map[string]model.BlenderBuild)
+		localBuildHashMap := make(map[string]model.BlenderBuild)
 		for _, build := range localBuilds {
 			localBuildMap[build.Version] = build
+			if build.Hash != "" {
+				localBuildHashMap[build.Hash] = build
+			}
 		}
 
 		// Copy builds to avoid modifying originals, showing all builds
@@ -218,6 +222,20 @@ func (c *Commands) UpdateBuildStatus(onlineBuilds []model.BlenderBuild) tea.Cmd 
 			// Create a copy of the build to update
 			updatedBuild := build
 
+			// First try to match by hash (more precise)
+			if build.Hash != "" {
+				if localBuild, found := localBuildHashMap[build.Hash]; found {
+					if local.CheckUpdateAvailable(localBuild, build) {
+						updatedBuild.Status = model.StateUpdate
+					} else {
+						updatedBuild.Status = model.StateLocal
+					}
+					updatedBuilds = append(updatedBuilds, updatedBuild)
+					continue
+				}
+			}
+
+			// Fall back to version matching if hash is empty or not found
 			if localBuild, found := localBuildMap[build.Version]; found {
 				if local.CheckUpdateAvailable(localBuild, build) {
 					updatedBuild.Status = model.StateUpdate
