@@ -8,6 +8,11 @@ import (
 	lp "github.com/charmbracelet/lipgloss"
 )
 
+// getFooterHeight returns the height of the footer in lines
+func getFooterHeight() int {
+	return 2
+}
+
 // renderBuildFooter renders the footer for the build list view
 func (m *Model) renderBuildFooter() string {
 	keyStyle := lp.NewStyle().Foreground(lp.Color(colorInfo))
@@ -72,11 +77,12 @@ func (m *Model) renderSettingsFooter() string {
 	sepStyle := lp.NewStyle().Foreground(lp.Color("240"))
 	separator := sepStyle.Render(" · ")
 
-	generalCommands := []string{
+	line1 := sepStyle.Render("Settings")
+	line2 := strings.Join([]string{
 		fmt.Sprintf("%s Edit setting", keyStyle.Render("enter")),
 		fmt.Sprintf("%s Save and exit", keyStyle.Render("s")),
 		fmt.Sprintf("%s Quit", keyStyle.Render("q")),
-	}
-	// First line is empty (no contextual commands), second line holds general commands
-	return footerStyle.Width(m.terminalWidth).Render("\n" + strings.Join(generalCommands, separator))
+	}, separator)
+
+	return footerStyle.Width(m.terminalWidth).Render(line1 + "\n" + line2)
 }

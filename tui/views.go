@@ -1,28 +1,55 @@
 package tui
 
 import (
-	lp "github.com/charmbracelet/lipgloss"
+	"strings"
 )
 
 func (m *Model) renderPageForView() string {
+	// Define fixed heights
+	headerHeight := getHeaderHeight() // 1 line
+	footerHeight := getFooterHeight() // 2 lines
 
-	header := renderHeader(m.terminalWidth)
-	headerHeight := getHeaderHeight()
+	// Fixed items: header, footer, 2 separator lines
+	fixedHeightItems := headerHeight + footerHeight + 2
 
-	var footer string
-	var footerHeight int = 1
-	var content string
-
-	if m.currentView == viewInitialSetup || m.currentView == viewSettings {
-		footer = m.renderSettingsFooter()
-		content = m.renderSettingsContent(m.terminalHeight - headerHeight - footerHeight)
-	} else {
-		footer = m.renderBuildFooter()
-		content = m.renderBuildContent(m.terminalHeight - headerHeight - footerHeight)
+	// Calculate content height
+	contentHeight := m.terminalHeight - fixedHeightItems
+	if contentHeight < 1 {
+		contentHeight = 1
 	}
 
-	baseView := lp.JoinVertical(lp.Top, header, content, footer)
-	// Force the base view to span the full terminal width
-	baseView = lp.NewStyle().Width(m.terminalWidth).Render(baseView)
-	return lp.Place(m.terminalWidth, m.terminalHeight, lp.Left, lp.Top, baseView)
+	// Generate app components
+	header := renderHeader(m.terminalWidth)
+
+	// Create slim horizontal separators
+	separator := strings.Repeat(" ", m.terminalWidth)
+
+	// Generate content and footer based on current view
+	var content string
+	var footer string
+
+	if m.currentView == viewInitialSetup || m.currentView == viewSettings {
+		content = m.renderSettingsContent(contentHeight)
+		footer = m.renderSettingsFooter()
+	} else {
+		content = m.renderBuildContent(contentHeight)
+		footer = m.renderBuildFooter()
+	}
+
+	// Calculate padding needed to push footer to bottom
+	renderedContentLines := strings.Count(content, "\n") + 1
+	paddingLines := 0
+	if renderedContentLines < contentHeight {
+		paddingLines = contentHeight - renderedContentLines
+	}
+	padding := strings.Repeat("\n", paddingLines)
+
+	// Create the combined view with proper spacing
+	return strings.Join([]string{
+		header,
+		separator,
+		content + padding,
+		separator,
+		footer,
+	}, "\n")
 }

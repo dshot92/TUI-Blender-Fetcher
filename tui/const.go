@@ -137,50 +137,14 @@ func GetCommandsForView(view viewState) []KeyCommand {
 	return result
 }
 
-// IsCommandAvailable checks if a command is available in the current view
-func IsCommandAvailable(cmdType CommandType, view viewState) bool {
-	for _, cmd := range GetCommandsForView(view) {
-		if cmd.Type == cmdType {
-			return true
-		}
-	}
-	return false
-}
-
-// GenerateHelpText creates a formatted help message showing available keyboard shortcuts
-func GenerateHelpText(view viewState) string {
-	commands := GetCommandsForView(view)
-	helpText := ""
-
-	for i, cmd := range commands {
-		// Format keys as a string (e.g. "up/k")
-		keyText := cmd.Keys[0]
-		for j := 1; j < len(cmd.Keys); j++ {
-			keyText += "/" + cmd.Keys[j]
-		}
-
-		// Add command description
-		helpText += keyText + ": " + cmd.Description
-
-		// Add separator between commands
-		if i < len(commands)-1 {
-			helpText += " • "
-		}
-	}
-
-	return helpText
-}
-
 // Styles using lipgloss
 var (
-	// Updated header style to be more visible
-	headerStyle = lp.NewStyle().Bold(true).Padding(1, 1).Foreground(lp.Color(colorForeground)).Background(lp.Color("236"))
 	// Style for the selected row
-	selectedRowStyle = lp.NewStyle().Background(lp.Color(colorBackground)).Foreground(lp.Color(colorForeground))
+	selectedRowStyle = lp.NewStyle().Background(lp.Color(colorBackground)).Foreground(lp.Color(colorForeground)).Align(lp.Left)
 	// Style for regular rows (use default)
-	regularRowStyle = lp.NewStyle()
-	// Footer style
-	footerStyle = lp.NewStyle().MarginTop(1).Padding(1, 1).Foreground(lp.Color(colorForeground))
+	regularRowStyle = lp.NewStyle().Align(lp.Left)
+	// Footer style - remove margin and use minimal padding
+	footerStyle = lp.NewStyle().Padding(0, 0).Foreground(lp.Color(colorForeground))
 	// Define base styles for columns (can be customized further)
 
 )

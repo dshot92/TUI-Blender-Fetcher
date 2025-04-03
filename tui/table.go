@@ -2,7 +2,6 @@ package tui
 
 import (
 	"TUI-Blender-Launcher/model"
-	"bytes"
 	"strings"
 
 	lp "github.com/charmbracelet/lipgloss"
@@ -47,11 +46,26 @@ func (r Row) Render(columns []ColumnConfig) string {
 		}
 		cells = append(cells, col.Style(cellContent))
 	}
+
+	// Join cells horizontally for the row
 	rowString := lp.JoinHorizontal(lp.Left, cells...)
+
+	// Apply appropriate style consistently across the entire row
 	if r.IsSelected {
-		return selectedRowStyle.Render(rowString)
+		// Use selected style with explicit width to ensure alignment
+		return selectedRowStyle.Width(sumColumnWidths(columns)).Render(rowString)
 	}
-	return regularRowStyle.Render(rowString)
+	// Use regular style with explicit width to ensure alignment
+	return regularRowStyle.Width(sumColumnWidths(columns)).Render(rowString)
+}
+
+// Helper function to calculate the sum of all column widths
+func sumColumnWidths(columns []ColumnConfig) int {
+	sum := 0
+	for _, col := range columns {
+		sum += col.Width
+	}
+	return sum
 }
 
 // renderStatus renders the status cell with appropriate formatting
@@ -102,7 +116,7 @@ func GetBuildColumns(terminalWidth int) []ColumnConfig {
 
 // Update RenderRows to pass terminalWidth
 func RenderRows(m *Model) string {
-	var output bytes.Buffer
+	var output strings.Builder
 
 	// Get column configuration with computed widths
 	columns := GetBuildColumns(m.terminalWidth)
@@ -120,7 +134,10 @@ func RenderRows(m *Model) string {
 
 		// Create and render row; highlight if this is the current row
 		row := NewRow(build, i == m.cursor, downloadState)
-		output.WriteString(row.Render(columns))
+		rowText := row.Render(columns)
+
+		// Ensure each row has proper width
+		output.WriteString(rowText)
 		output.WriteString("\n")
 	}
 
@@ -129,7 +146,7 @@ func RenderRows(m *Model) string {
 
 // Update renderBuildContent to pass terminalWidth
 func (m *Model) renderBuildContent(availableHeight int) string {
-	var output bytes.Buffer
+	var output strings.Builder
 
 	if m.isLoading {
 		// Show loading message in the middle of the screen
@@ -155,8 +172,10 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 		)
 	}
 
-	// Build header row using lipgloss.JoinHorizontal
+	// Get column configuration with computed widths
 	columns := GetBuildColumns(m.terminalWidth)
+
+	// Build table header row first (without styling yet)
 	var headerCells []string
 	for _, col := range columns {
 		headerText := col.Name
@@ -167,23 +186,31 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 				headerText += " ↑"
 			}
 		}
-		headerContent := lp.NewStyle().Bold(true).Render(headerText)
+		// Use base styling first, add bold/underline separately
+		headerContent := headerText
 		headerCells = append(headerCells, col.Style(headerContent))
 	}
+
 	// Join header cells horizontally
 	headerRow := lp.JoinHorizontal(lp.Left, headerCells...)
-	if !strings.HasSuffix(headerRow, "\n") {
-		headerRow += "\n"
+
+	// Now apply bold and underline to the entire row to keep alignment consistent
+	styledHeader := lp.NewStyle().Bold(true).Underline(true).Render(headerRow)
+	if !strings.HasSuffix(styledHeader, "\n") {
+		styledHeader += "\n"
 	}
-	output.WriteString(headerRow)
+
+	// Add the styled header to output
+	output.WriteString(styledHeader)
 
 	// Render all rows without scrolling
 	rowsContent := RenderRows(m)
 	output.WriteString(rowsContent)
 
-	// Force the table content to span the entire terminal width
+	// Create the final styled table with proper width
 	finalOutput := lp.NewStyle().Width(m.terminalWidth).Render(output.String())
-	return lp.Place(m.terminalWidth, availableHeight, lp.Left, lp.Top, finalOutput)
+
+	return finalOutput
 }
 
 // updateSortColumn handles lateral key events for sorting columns.
