@@ -307,7 +307,7 @@ func (m *Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
 
 	// Start the downloads manager to handle any existing downloads
 	// No need for a command manager, use the model's DownloadManager
-	return m, m.commands.Tick()
+	return m, nil
 }
 
 // handleBlenderExec handles launching Blender after selecting it

@@ -18,12 +18,6 @@ func (m *Model) Init() tea.Cmd {
 	// Start with local build scan to get builds already on disk
 	cmds = append(cmds, m.scanLocalBuildsCmd())
 
-	// Start the continuous tick system for UI updates
-	cmds = append(cmds, m.tickCmd())
-
-	// Start a dedicated UI refresh cycle
-	cmds = append(cmds, m.uiRefreshCmd())
-
 	// Add a program message listener to receive messages from background goroutines
 	cmdManager := NewCommands(m.config)
 	cmds = append(cmds, cmdManager.ProgramMsgListener())
@@ -57,9 +51,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.progressBar = progressModel.(progress.Model)
 		return m, cmd
 
-	case forceRenderMsg:
-		return m, m.uiRefreshCmd()
-
 	case errMsg:
 		m.err = msg.err
 		return m, nil
@@ -76,10 +67,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case model.BlenderExecMsg:
 		return m.handleBlenderExec(msg)
 
-	case cleanupCompleteMsg:
-		// Show a success message or update UI after cleanup
-		return m, m.uiRefreshCmd()
-
 	case startDownloadMsg:
 		m.activeDownloadID = msg.buildID
 		var cmds []tea.Cmd
@@ -87,7 +74,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Create a Commands instance and call DoDownload directly
 		cmdManager := NewCommands(m.config)
 		cmds = append(cmds, cmdManager.DoDownload(msg.build))
-		cmds = append(cmds, m.uiRefreshCmd())
 
 		return m, tea.Batch(cmds...)
 

@@ -255,15 +255,6 @@ func (c *Commands) DoDownload(build model.BlenderBuild) tea.Cmd {
 	}
 }
 
-// Tick creates a tick command with adaptive rate based on download activity
-func (c *Commands) Tick() tea.Cmd {
-	defaultRate := 500 * time.Millisecond
-
-	return tea.Tick(defaultRate, func(t time.Time) tea.Msg {
-		return tickMsg(t)
-	})
-}
-
 // Global channel for program messages - kept for compatibility
 var programCh = make(chan tea.Msg)
 
