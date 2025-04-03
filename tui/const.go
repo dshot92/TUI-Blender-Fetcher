@@ -19,13 +19,6 @@ const (
 	colorNeutral    = "15"  // White for neutral text
 	colorBackground = "240" // Gray background
 	colorForeground = "255" // White foreground
-
-	// Performance constants
-	downloadTickRate    = 100 * time.Millisecond
-	downloadStallTime   = 30 * time.Second
-	extractionStallTime = 2 * time.Minute
-	uiRefreshRate       = 33 * time.Millisecond // How often to refresh the UI without user input (30 FPS)
-	footerLineCount     = 2                     // Two line footer: contextual and general commands
 )
 
 // View states

@@ -135,7 +135,6 @@ type DownloadState struct {
 	BuildState    BuildState    // Changed from Message to BuildState
 	LastUpdated   time.Time     // Timestamp of last progress update
 	StartTime     time.Time     // When the download started
-	StallDuration time.Duration // How long download can stall before timeout
 	CancelCh      chan struct{} // Per-download cancel channel
 }
 

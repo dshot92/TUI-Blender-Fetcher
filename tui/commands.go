@@ -59,13 +59,12 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 	now := time.Now()
 	cancelCh := make(chan struct{})
 	dm.states[buildID] = &model.DownloadState{
-		BuildID:       buildID,
-		BuildState:    model.StateDownloading,
-		StartTime:     now,
-		LastUpdated:   now,
-		Progress:      0.0,
-		StallDuration: downloadStallTime,
-		CancelCh:      cancelCh,
+		BuildID:     buildID,
+		BuildState:  model.StateDownloading,
+		StartTime:   now,
+		LastUpdated: now,
+		Progress:    0.0,
+		CancelCh:    cancelCh,
 	}
 
 	// Start the download in a goroutine
@@ -116,7 +115,6 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 			const extractionVirtualSize int64 = 100 * 1024 * 1024
 			if total == extractionVirtualSize {
 				state.BuildState = model.StateExtracting
-				state.StallDuration = extractionStallTime
 			}
 		}
 

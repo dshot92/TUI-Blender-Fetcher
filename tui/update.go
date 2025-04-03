@@ -8,9 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// deleteBuildCompleteMsg is sent when a build is successfully deleted
-type deleteBuildCompleteMsg struct{}
-
 // Init initializes the model
 func (m *Model) Init() tea.Cmd {
 	var cmds []tea.Cmd

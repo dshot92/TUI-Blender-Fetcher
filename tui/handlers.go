@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -327,8 +326,6 @@ func (m *Model) handleBlenderExec(msg model.BlenderExecMsg) (tea.Model, tea.Cmd)
 
 // handleDownloadProgress processes tick messages for download progress updates
 func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
-	now := time.Now()
-
 	m.downloadMutex.Lock() // Lock early
 
 	activeDownloads := 0
@@ -354,26 +351,12 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 		} else if state.BuildState == model.StateDownloading ||
 			state.BuildState == model.StateExtracting {
 			// Active download
-			timeSinceUpdate := now.Sub(state.LastUpdated)
-			if timeSinceUpdate > state.StallDuration {
-				// Download appears stalled
-				log.Printf("WARNING: Download for %s stalled (no updates for %v), marking as failed",
-					id, timeSinceUpdate.Round(time.Second))
+			activeDownloads++
 
-				// Update status in our temporary copy
-				tempStateCopy := *state
-				tempStateCopy.BuildState = model.StateFailed
-				tempStates[id] = tempStateCopy
-				stalledDownloads = append(stalledDownloads, id)
-			} else {
-				// Active download that's not stalled
-				activeDownloads++
-
-				// Only update progress bar for the active download
-				if id == m.activeDownloadID {
-					// Queue progress bar update
-					progressCmds = append(progressCmds, m.progressBar.SetPercent(state.Progress))
-				}
+			// Only update progress bar for the active download
+			if id == m.activeDownloadID {
+				// Queue progress bar update
+				progressCmds = append(progressCmds, m.progressBar.SetPercent(state.Progress))
 			}
 		}
 	}
