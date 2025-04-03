@@ -1,10 +1,6 @@
 package tui
 
 import (
-	"TUI-Blender-Launcher/model"
-	"fmt"
-	"time"
-
 	"github.com/charmbracelet/bubbles/key"
 	lp "github.com/charmbracelet/lipgloss"
 )
@@ -177,31 +173,3 @@ var (
 		"Build Date": {width: 0, priority: 3, flex: 1.0},
 	}
 )
-
-// FormatBuildStatus converts a build state to a human-readable string with proper formatting
-// including download progress information if available
-func FormatBuildStatus(buildState model.BuildState, downloadState *model.DownloadState) string {
-	// If there's an active download, show progress information
-	if downloadState != nil && (downloadState.BuildState == model.StateDownloading || downloadState.BuildState == model.StateExtracting) {
-		if downloadState.BuildState == model.StateDownloading {
-			// Show download progress with percentage and speed
-			if downloadState.Total > 0 {
-				percent := (float64(downloadState.Current) / float64(downloadState.Total)) * 100
-				speed := downloadState.Speed
-				if speed == 0 && !downloadState.StartTime.IsZero() {
-					elapsedSecs := time.Since(downloadState.StartTime).Seconds()
-					if elapsedSecs > 0 {
-						speed = float64(downloadState.Current) / elapsedSecs
-					}
-				}
-				return fmt.Sprintf("%.1f%% (%.1f MB/s)", percent, speed/1024/1024)
-			}
-			return "Downloading..."
-		} else if downloadState.BuildState == model.StateExtracting {
-			return "Extracting..."
-		}
-	}
-
-	// For non-downloading builds, show the regular state
-	return buildState.String()
-}

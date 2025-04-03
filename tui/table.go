@@ -2,7 +2,9 @@ package tui
 
 import (
 	"TUI-Blender-Launcher/model"
+	"fmt"
 	"strings"
+	"time"
 
 	lp "github.com/charmbracelet/lipgloss"
 )
@@ -32,7 +34,7 @@ func (r Row) Render(columns []ColumnConfig) string {
 		case "Version":
 			cellContent = r.Build.Version
 		case "Status":
-			cellContent = r.renderStatus()
+			cellContent = r.Build.Status.String()
 		case "Branch":
 			cellContent = r.Build.Branch
 		case "Type":
@@ -68,10 +70,32 @@ func sumColumnWidths(columns []ColumnConfig) int {
 	return sum
 }
 
-// renderStatus renders the status cell with appropriate formatting
-// This is where download and extraction progress is displayed
-func (r Row) renderStatus() string {
-	return FormatBuildStatus(r.Build.Status, r.Status)
+// FormatBuildStatus converts a build state to a human-readable string with proper formatting
+// including download progress information if available
+func renderStatus(buildState model.BuildState, downloadState *model.DownloadState) string {
+	// If there's an active download, show progress information
+	if downloadState != nil && (downloadState.BuildState == model.StateDownloading || downloadState.BuildState == model.StateExtracting) {
+		if downloadState.BuildState == model.StateDownloading {
+			// Show download progress with percentage and speed
+			if downloadState.Total > 0 {
+				percent := (float64(downloadState.Current) / float64(downloadState.Total)) * 100
+				speed := downloadState.Speed
+				if speed == 0 && !downloadState.StartTime.IsZero() {
+					elapsedSecs := time.Since(downloadState.StartTime).Seconds()
+					if elapsedSecs > 0 {
+						speed = float64(downloadState.Current) / elapsedSecs
+					}
+				}
+				return fmt.Sprintf("%.1f%% (%.1f MB/s)", percent, speed/1024/1024)
+			}
+			return model.StateDownloading.String()
+		} else if downloadState.BuildState == model.StateExtracting {
+			return model.StateExtracting.String()
+		}
+	}
+
+	// For non-downloading builds, show the regular state
+	return buildState.String()
 }
 
 // ColumnConfig represents the configuration for a table column
