@@ -110,13 +110,8 @@ func (m *Model) handleStartDownload() (tea.Model, tea.Cmd) {
 			// Store the active download ID for UI rendering
 			m.activeDownloadID = buildID
 
-			// Send message to start download
-			return m, func() tea.Msg {
-				return startDownloadMsg{
-					build:   selectedBuild,
-					buildID: buildID,
-				}
-			}
+			// Start the download using the download manager command
+			return m, m.commands.DoDownload(selectedBuild)
 		}
 	}
 	return m, nil
@@ -128,41 +123,25 @@ func (m *Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Use the activeDownloadID that was set when detecting the cancellable download
+	// Use activeDownloadID if set; otherwise, recreate using the selected build
 	buildID := m.activeDownloadID
 	if buildID == "" {
-		// Fallback to build version if activeDownloadID isn't set
 		selectedBuild := m.builds[m.cursor]
 		buildID = selectedBuild.Version
-		// Try to recreate the buildID format
 		if selectedBuild.Hash != "" {
 			buildID = selectedBuild.Version + "-" + selectedBuild.Hash[:8]
 		}
 	}
 
-	// Lock to safely read the map
-	m.downloadMutex.Lock()
-	downloadState, isDownloading := m.downloadStates[buildID]
-	canCancel := isDownloading &&
-		(downloadState.BuildState == model.StateDownloading ||
-			downloadState.BuildState == model.StateExtracting)
-	m.downloadMutex.Unlock()
+	// Cancel the download using the download manager
+	m.commands.downloads.CancelDownload(buildID)
 
-	// If not downloading or not in a cancellable state, do nothing
-	if !canCancel {
-		return m, nil
+	// Optionally update the build status to online after cancellation
+	if m.builds[m.cursor].Status == model.StateDownloading || m.builds[m.cursor].Status == model.StateExtracting {
+		m.builds[m.cursor].Status = model.StateOnline
 	}
 
-	// Signal cancellation by closing the channel (thread-safe)
-	select {
-	case <-downloadState.CancelCh:
-		// Already closed, do nothing
-	default:
-		// Close the channel to signal cancellation
-		close(downloadState.CancelCh)
-	}
-
-	// We've already used activeDownloadID, now clear it
+	// Clear the active download ID
 	m.activeDownloadID = ""
 
 	return m, nil
@@ -218,29 +197,37 @@ func (m *Model) handleShowSettings() (tea.Model, tea.Cmd) {
 func (m *Model) handleDeleteBuild() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
+		if selectedBuild.Status == model.StateDownloading || selectedBuild.Status == model.StateExtracting {
+			return m.handleCancelDownload()
+		}
 		// Only allow deleting local builds or builds that can be updated
 		if selectedBuild.Status == model.StateLocal || selectedBuild.Status == model.StateUpdate {
-			// Directly delete the build without confirmation
 			return m, func() tea.Msg {
 				success, err := local.DeleteBuild(m.config.DownloadDir, selectedBuild.Version)
 				if err != nil {
 					return errMsg{err}
 				}
-
 				if !success {
 					return errMsg{fmt.Errorf("failed to delete build %s", selectedBuild.Version)}
 				}
-
-				// Update build statuses after deletion
-				for i := range m.builds {
-					if m.builds[i].Version == selectedBuild.Version {
-						m.builds[i].Status = model.StateOnline
+				// Remove the deleted build from the list
+				indexToRemove := -1
+				for i, b := range m.builds {
+					if b.Version == selectedBuild.Version {
+						indexToRemove = i
 						break
 					}
 				}
+				if indexToRemove != -1 {
+					m.builds = append(m.builds[:indexToRemove], m.builds[indexToRemove+1:]...)
+					if len(m.builds) == 0 {
+						m.cursor = 0
+					} else if m.cursor >= len(m.builds) {
+						m.cursor = len(m.builds) - 1
+					}
+				}
 				m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
-				// Return a proper message instead of setting view directly
-				return deleteBuildCompleteMsg{}
+				return nil
 			}
 		}
 	}

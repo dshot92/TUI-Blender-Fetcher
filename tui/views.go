@@ -10,7 +10,7 @@ func (m *Model) renderPageForView() string {
 	headerHeight := 6
 
 	var footer string
-	var footerHeight int = 1
+	var footerHeight int = 2
 	var content string
 
 	if m.currentView == viewInitialSetup || m.currentView == viewSettings {

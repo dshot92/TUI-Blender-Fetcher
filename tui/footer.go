@@ -10,66 +10,73 @@ import (
 
 // renderBuildFooter renders the footer for the build list view
 func (m *Model) renderBuildFooter() string {
-	// Define key command display styles
 	keyStyle := lp.NewStyle().Foreground(lp.Color(colorInfo))
 	sepStyle := lp.NewStyle().Foreground(lp.Color("240"))
 	separator := sepStyle.Render(" · ")
 
-	// Add command keys info
-	var commands []string
+	// General commands always available
+	generalCommands := []string{
+		fmt.Sprintf("%s Quit", keyStyle.Render("q")),
+		fmt.Sprintf("%s Settings", keyStyle.Render("s")),
+		fmt.Sprintf("%s Reverse Sort", keyStyle.Render("r")),
+		fmt.Sprintf("%s Fetch online builds", keyStyle.Render("f")),
+	}
 
-	// Basic commands always available
-	commands = append(commands, fmt.Sprintf("%s Quit", keyStyle.Render("q")))
-	commands = append(commands, fmt.Sprintf("%s Settings", keyStyle.Render("s")))
-	commands = append(commands, fmt.Sprintf("%s Reverse Sort", keyStyle.Render("r")))
-	commands = append(commands, fmt.Sprintf("%s Fetch online builds", keyStyle.Render("f")))
-
-	// Add build-specific commands
+	// Contextual commands based on the highlighted build
+	contextualCommands := []string{}
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		build := m.builds[m.cursor]
-
-		// Launch and Open build directory
-		commands = append(commands, fmt.Sprintf("%s Launch Build", keyStyle.Render("enter")))
-		commands = append(commands, fmt.Sprintf("%s Open build Dir", keyStyle.Render("o")))
-
-		// Status-dependent commands
 		if build.Status == model.StateLocal {
-			// For local builds, show delete option
-			commands = append(commands, fmt.Sprintf("%s Delete build", keyStyle.Render("x")))
+			contextualCommands = append(contextualCommands,
+				fmt.Sprintf("%s Launch Build", keyStyle.Render("enter")),
+				fmt.Sprintf("%s Open build Dir", keyStyle.Render("o")),
+			)
+			contextualCommands = append(contextualCommands,
+				fmt.Sprintf("%s Delete build", keyStyle.Render("x")),
+			)
 		} else if build.Status == model.StateOnline || build.Status == model.StateUpdate {
-			// For online builds, show download option
-			commands = append(commands, fmt.Sprintf("%s Download build", keyStyle.Render("d")))
+			contextualCommands = append(contextualCommands,
+				fmt.Sprintf("%s Download build", keyStyle.Render("d")),
+			)
 		}
 
-		// If downloading or extracting, show cancel option
+		// Check for active download state
 		buildID := build.Version
 		if build.Hash != "" {
 			buildID = build.Version + "-" + build.Hash[:8]
 		}
-
 		state := m.commands.downloads.GetState(buildID)
 		if state != nil && (state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting) {
-			// Replace any previous command with cancel
-			commands = append(commands, fmt.Sprintf("%s Cancel download", keyStyle.Render("x")))
+			// Remove any existing download command
+			filtered := []string{}
+			for _, cmd := range contextualCommands {
+				if !strings.Contains(cmd, "Download build") {
+					filtered = append(filtered, cmd)
+				}
+			}
+			contextualCommands = filtered
+			contextualCommands = append(contextualCommands,
+				fmt.Sprintf("%s Cancel download", keyStyle.Render("x")),
+			)
 		}
 	}
 
-	return footerStyle.Width(m.terminalWidth).Render(strings.Join(commands, separator))
+	line1 := strings.Join(contextualCommands, separator)
+	line2 := strings.Join(generalCommands, separator)
+	return footerStyle.Width(m.terminalWidth).Render(line1 + "\n" + line2)
 }
 
 // renderSettingsFooter renders the footer for the settings view
 func (m *Model) renderSettingsFooter() string {
-	// Define key command display styles
 	keyStyle := lp.NewStyle().Foreground(lp.Color(colorInfo))
 	sepStyle := lp.NewStyle().Foreground(lp.Color("240"))
 	separator := sepStyle.Render(" · ")
 
-	var commands []string
-
-	// Always show these commands
-	commands = append(commands, fmt.Sprintf("%s Save and exit", keyStyle.Render("s")))
-	commands = append(commands, fmt.Sprintf("%s Quit", keyStyle.Render("q")))
-	commands = append(commands, fmt.Sprintf("%s Edit setting", keyStyle.Render("enter")))
-
-	return footerStyle.Width(m.terminalWidth).Render(strings.Join(commands, separator))
+	generalCommands := []string{
+		fmt.Sprintf("%s Save and exit", keyStyle.Render("s")),
+		fmt.Sprintf("%s Quit", keyStyle.Render("q")),
+		fmt.Sprintf("%s Edit setting", keyStyle.Render("enter")),
+	}
+	// First line is empty (no contextual commands), second line holds general commands
+	return footerStyle.Width(m.terminalWidth).Render("\n" + strings.Join(generalCommands, separator))
 }

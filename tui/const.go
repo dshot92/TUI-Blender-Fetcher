@@ -25,6 +25,7 @@ const (
 	downloadStallTime   = 30 * time.Second
 	extractionStallTime = 2 * time.Minute
 	uiRefreshRate       = 33 * time.Millisecond // How often to refresh the UI without user input (30 FPS)
+	footerLineCount     = 2                     // Two line footer: contextual and general commands
 )
 
 // View states
@@ -194,7 +195,7 @@ var (
 // Column configuration
 type columnConfig struct {
 	width    int
-	priority int // Lower number = higher priority (will be shown first)
+	priority int     // Lower number = higher priority (will be shown first)
 	flex     float64 // Flex ratio for dynamic width calculation
 }
 
@@ -202,7 +203,7 @@ type columnConfig struct {
 var (
 	// Column configurations with priorities and flex values
 	columnConfigs = map[string]columnConfig{
-		"Version":    {width: 0, priority: 1, flex: 1.0},  // Version gets more space
+		"Version":    {width: 0, priority: 1, flex: 1.0}, // Version gets more space
 		"Status":     {width: 0, priority: 2, flex: 1.0}, // Status needs room for different states
 		"Branch":     {width: 0, priority: 5, flex: 1.0},
 		"Type":       {width: 0, priority: 4, flex: 1.0},
