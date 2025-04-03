@@ -3,6 +3,7 @@ package download
 import (
 	"TUI-Blender-Launcher/model"
 	"archive/tar"
+	"archive/zip"
 	"bufio"
 	"context" // Import context package
 	"encoding/json"
@@ -340,10 +341,10 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 						break
 					}
 
-					bufferedWriter := bufio.NewWriterSize(outFile, bufferSize)
 					// Wrap tarReader with cancellation check
 					cancelReader := &CancelableReader{Reader: tarReader, CancelCh: cancelCh}
 
+					bufferedWriter := bufio.NewWriterSize(outFile, bufferSize)
 					if _, err := io.CopyBuffer(bufferedWriter, cancelReader, copyBuffer); err != nil {
 						outFile.Close()
 						if errors.Is(err, ErrCancelled) {
@@ -450,6 +451,247 @@ func saveVersionMetadata(build model.BlenderBuild, extractedDir string) error {
 	return nil
 }
 
+// extractZip extracts a .zip archive with progress updates.
+func extractZip(archivePath, destDir string, progressCb ExtractionProgressCallback, cancelCh <-chan struct{}) error {
+	zipReader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to open zip archive: %w", err)
+	}
+	defer zipReader.Close()
+
+	// Get total uncompressed size for progress tracking
+	var totalSize uint64
+	for _, file := range zipReader.File {
+		totalSize += file.UncompressedSize64
+	}
+
+	// Create a buffer for copying file contents
+	const bufferSize = 4 * 1024 * 1024 // 4MB buffer
+	copyBuffer := make([]byte, bufferSize)
+
+	if progressCb != nil {
+		progressCb(0.0)
+	}
+
+	var processedSize uint64
+	var processedSizeLock sync.Mutex
+
+	const maxWorkers = 4
+	sem := make(chan struct{}, maxWorkers)
+	var wg sync.WaitGroup
+	errChan := make(chan error, maxWorkers)
+	var firstErr error
+	var errLock sync.Mutex
+
+	// Function to set the first error encountered
+	setFirstError := func(err error) {
+		errLock.Lock()
+		if firstErr == nil && err != nil {
+			firstErr = err
+		}
+		errLock.Unlock()
+	}
+
+	for i, file := range zipReader.File {
+		// Check for cancellation before processing next file
+		select {
+		case <-cancelCh:
+			setFirstError(ErrCancelled)
+			goto cleanup
+		default:
+		}
+
+		// Check if an error occurred in workers
+		errLock.Lock()
+		errOccurred := firstErr
+		errLock.Unlock()
+		if errOccurred != nil {
+			break
+		}
+
+		// Get proper file path ensuring no path traversal
+		targetPath := filepath.Join(destDir, file.Name)
+
+		// Make sure we follow zip entry slashes on Windows
+		targetPath = filepath.FromSlash(targetPath)
+
+		if file.FileInfo().IsDir() {
+			// Create directory
+			if err := os.MkdirAll(targetPath, 0750); err != nil {
+				setFirstError(fmt.Errorf("failed to create directory %s: %w", targetPath, err))
+				break
+			}
+			continue
+		}
+
+		// Make sure parent directory exists
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
+			setFirstError(fmt.Errorf("failed to create parent directory for %s: %w", targetPath, err))
+			break
+		}
+
+		// Small files can be read entirely into memory
+		if file.UncompressedSize64 <= uint64(bufferSize) {
+			wg.Add(1)
+			go func(file *zip.File, targetPath string) {
+				defer wg.Done()
+				select {
+				case sem <- struct{}{}: // Acquire semaphore
+					defer func() { <-sem }() // Release semaphore
+				case <-cancelCh:
+					errChan <- ErrCancelled
+					return
+				}
+
+				rc, err := file.Open()
+				if err != nil {
+					errChan <- fmt.Errorf("failed to open zip file entry %s: %w", file.Name, err)
+					return
+				}
+				defer rc.Close()
+
+				fileContents := make([]byte, file.UncompressedSize64)
+				if _, err := io.ReadFull(rc, fileContents); err != nil {
+					errChan <- fmt.Errorf("failed to read zip file entry %s: %w", file.Name, err)
+					return
+				}
+
+				if err := os.WriteFile(targetPath, fileContents, file.Mode()); err != nil {
+					errChan <- fmt.Errorf("failed to write file %s: %w", targetPath, err)
+					return
+				}
+
+				// Update processed size for progress reporting
+				processedSizeLock.Lock()
+				processedSize += file.UncompressedSize64
+				currentSize := processedSize
+				processedSizeLock.Unlock()
+
+				if progressCb != nil && totalSize > 0 {
+					progressCb(float64(currentSize) / float64(totalSize))
+				}
+			}(file, targetPath)
+		} else {
+			// Larger files are processed in the main goroutine
+			rc, err := file.Open()
+			if err != nil {
+				setFirstError(fmt.Errorf("failed to open zip file entry %s: %w", file.Name, err))
+				break
+			}
+
+			outFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY, file.Mode())
+			if err != nil {
+				rc.Close()
+				setFirstError(fmt.Errorf("failed to create file %s: %w", targetPath, err))
+				break
+			}
+
+			// Wrap reader with cancellation check
+			cancelReader := &CancelableReader{Reader: rc, CancelCh: cancelCh}
+
+			written, err := io.CopyBuffer(outFile, cancelReader, copyBuffer)
+			outFile.Close()
+			rc.Close()
+
+			if err != nil {
+				if errors.Is(err, ErrCancelled) {
+					setFirstError(ErrCancelled)
+				} else {
+					setFirstError(fmt.Errorf("failed to extract file %s: %w", targetPath, err))
+				}
+				break
+			}
+
+			// Update processed size for progress reporting
+			processedSizeLock.Lock()
+			processedSize += uint64(written)
+			currentSize := processedSize
+			processedSizeLock.Unlock()
+
+			if progressCb != nil && totalSize > 0 {
+				progressCb(float64(currentSize) / float64(totalSize))
+			}
+		}
+
+		// Report progress periodically
+		if i%10 == 0 && progressCb != nil && totalSize > 0 {
+			processedSizeLock.Lock()
+			currentSize := processedSize
+			processedSizeLock.Unlock()
+			progressCb(float64(currentSize) / float64(totalSize))
+		}
+	}
+
+cleanup:
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		setFirstError(err)
+	}
+
+	if progressCb != nil {
+		progressCb(1.0)
+	}
+
+	return firstErr
+}
+
+// findRootDirInZip peeks into the ZIP archive to find the root directory name
+func findRootDirInZip(archivePath string) (string, error) {
+	zipReader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open zip archive: %w", err)
+	}
+	defer zipReader.Close()
+
+	if len(zipReader.File) == 0 {
+		return "", fmt.Errorf("empty archive")
+	}
+
+	// Get the first entry and extract the root directory
+	firstEntry := zipReader.File[0].Name
+	parts := strings.Split(firstEntry, "/")
+	if len(parts) > 0 {
+		return parts[0], nil
+	}
+
+	return "", fmt.Errorf("no root directory found in archive")
+}
+
+// findRootDirInTarXz peeks into the archive to find the root directory name
+func findRootDirInTarXz(archivePath string) (string, error) {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open archive: %w", err)
+	}
+	defer file.Close()
+
+	xzReader, err := xz.NewReader(file)
+	if err != nil {
+		return "", fmt.Errorf("failed to create xz reader: %w", err)
+	}
+
+	tarReader := tar.NewReader(xzReader)
+
+	// Read the first header
+	header, err := tarReader.Next()
+	if err != nil {
+		if err == io.EOF {
+			return "", fmt.Errorf("empty archive")
+		}
+		return "", fmt.Errorf("error reading tar header: %w", err)
+	}
+
+	// Extract the root directory from the path
+	rootPath := header.Name
+	parts := strings.Split(rootPath, "/")
+	if len(parts) > 0 {
+		return parts[0], nil
+	}
+
+	return "", fmt.Errorf("no root directory found in archive")
+}
+
 // DownloadAndExtractBuild downloads and extracts a build, handling cancellation.
 func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, progressCb ProgressCallback, cancelCh <-chan struct{}) (string, error) {
 	// 1. Download
@@ -518,7 +760,7 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		}
 	}
 
-	// 3. Extract directly to download directory
+	// 3. Extract based on archive type
 	extractionCb := func(progress float64) {
 		if progressCb != nil {
 			// Use a large virtual size to indicate extraction phase to the UI
@@ -529,6 +771,9 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 	}
 
 	var extractedRootDir string
+	var extractErr error
+
+	// Handle different archive formats
 	if strings.HasSuffix(downloadFileName, ".tar.xz") {
 		// Peek into the archive to find the root directory
 		rootDir, err := findRootDirInTarXz(downloadPath)
@@ -538,20 +783,33 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		extractedRootDir = filepath.Join(downloadBaseDir, rootDir)
 
 		// Extract the archive
-		if err := extractTarXz(downloadPath, downloadBaseDir, extractionCb, cancelCh); err != nil {
-			// Attempt to clean up partially extracted directory
-			if extractedRootDir != "" {
-				if remErr := os.RemoveAll(extractedRootDir); remErr != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to cleanup partial extraction dir %s: %v\n", extractedRootDir, remErr)
-				}
-			}
-			if errors.Is(err, ErrCancelled) {
-				return "", ErrCancelled // Propagate cancellation
-			}
-			return "", fmt.Errorf("extraction failed: %w", err)
+		extractErr = extractTarXz(downloadPath, downloadBaseDir, extractionCb, cancelCh)
+	} else if strings.HasSuffix(downloadFileName, ".zip") {
+		// Peek into the archive to find the root directory
+		rootDir, err := findRootDirInZip(downloadPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to find root directory in zip archive: %w", err)
 		}
+		extractedRootDir = filepath.Join(downloadBaseDir, rootDir)
+
+		// Extract the zip archive
+		extractErr = extractZip(downloadPath, downloadBaseDir, extractionCb, cancelCh)
 	} else {
 		return "", fmt.Errorf("unsupported archive format: %s", downloadFileName)
+	}
+
+	// Handle extraction error
+	if extractErr != nil {
+		// Attempt to clean up partially extracted directory
+		if extractedRootDir != "" {
+			if remErr := os.RemoveAll(extractedRootDir); remErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup partial extraction dir %s: %v\n", extractedRootDir, remErr)
+			}
+		}
+		if errors.Is(extractErr, ErrCancelled) {
+			return "", ErrCancelled // Propagate cancellation
+		}
+		return "", fmt.Errorf("extraction failed: %w", extractErr)
 	}
 
 	// 4. Save Metadata
@@ -560,38 +818,4 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 	}
 
 	return extractedRootDir, nil
-}
-
-// findRootDirInTarXz peeks into the archive to find the root directory name
-func findRootDirInTarXz(archivePath string) (string, error) {
-	file, err := os.Open(archivePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to open archive: %w", err)
-	}
-	defer file.Close()
-
-	xzReader, err := xz.NewReader(file)
-	if err != nil {
-		return "", fmt.Errorf("failed to create xz reader: %w", err)
-	}
-
-	tarReader := tar.NewReader(xzReader)
-
-	// Read the first header
-	header, err := tarReader.Next()
-	if err != nil {
-		if err == io.EOF {
-			return "", fmt.Errorf("empty archive")
-		}
-		return "", fmt.Errorf("error reading tar header: %w", err)
-	}
-
-	// Extract the root directory from the path
-	rootPath := header.Name
-	parts := strings.Split(rootPath, "/")
-	if len(parts) > 0 {
-		return parts[0], nil
-	}
-
-	return "", fmt.Errorf("no root directory found in archive")
 }

@@ -95,7 +95,7 @@ func FetchBuilds(versionFilter string) ([]model.BlenderBuild, error) { // Added 
 
 	allowedExtensions := map[string]bool{
 		"zip": true, "tar.gz": true, "tar.xz": true, "tar.bz2": true,
-		"xz": true, "dmg": true, "pkg": true, "msi": true, "msix": true,
+		"xz": true, "dmg": true, "pkg": true,
 	}
 
 	// Parse the version filter if provided

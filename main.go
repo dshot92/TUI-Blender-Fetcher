@@ -5,6 +5,8 @@ import (
 	"TUI-Blender-Launcher/tui"    // Import the tui package
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -62,11 +64,23 @@ func main() {
 			// Sleep briefly to allow terminal to reset after TUI exit
 			time.Sleep(100 * time.Millisecond)
 
-			// Use syscall.Exec to replace current process with Blender
-			err = syscall.Exec(blenderExe, []string{blenderExe}, os.Environ())
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error launching Blender: %v\n", err)
-				os.Exit(1)
+			if runtime.GOOS == "windows" {
+				// On Windows, use cmd.Start instead of syscall.Exec
+				cmd := exec.Command(blenderExe, "-con")
+				err = cmd.Start()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error launching Blender: %v\n", err)
+					os.Exit(1)
+				}
+				// Exit after starting Blender
+				os.Exit(0)
+			} else {
+				// On Unix systems, use syscall.Exec to replace current process with Blender
+				err = syscall.Exec(blenderExe, []string{blenderExe}, os.Environ())
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error launching Blender: %v\n", err)
+					os.Exit(1)
+				}
 			}
 		}
 	}

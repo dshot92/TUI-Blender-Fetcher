@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
-	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -239,37 +239,30 @@ func OpenDirCmd(dir string) tea.Cmd {
 
 // findBlenderExecutable locates the Blender executable in the installation directory
 func findBlenderExecutable(installDir string) string {
-	// First, check for common locations based on platform
-	// Linux: blender or blender.sh
-	linuxCandidates := []string{
-		filepath.Join(installDir, "blender"),
-		filepath.Join(installDir, "blender.sh"),
-	}
+	// Check for common locations based on platform
 
-	for _, candidate := range linuxCandidates {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-
-	// If not found in common locations, search recursively
-	var result string
-	filepath.Walk(installDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil // Skip and continue
+	if runtime.GOOS == "windows" {
+		// Windows: blender.exe is typically in the root directory
+		windowsCandidates := []string{
+			filepath.Join(installDir, "blender-launcher.exe"),
 		}
 
-		if !info.IsDir() && (info.Name() == "blender" || info.Name() == "blender.sh") {
-			// Check if it's executable
-			if info.Mode()&0111 != 0 {
-				result = path
-				return filepath.SkipDir // Stop walking once found
+		for _, candidate := range windowsCandidates {
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate
 			}
 		}
-		return nil
-	})
+	} else {
+		// Linux: blender or blender.sh
+		linuxCandidates := []string{filepath.Join(installDir, "blender")}
 
-	return result
+		for _, candidate := range linuxCandidates {
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate
+			}
+		}
+	}
+	return ""
 }
 
 // OpenFileExplorer opens the default file explorer to the specified directory
@@ -291,10 +284,8 @@ func OpenFileExplorer(dir string) error {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 
-	// Detach process from terminal
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
-	}
+	// Detach process from terminal (platform-specific)
+	detachProcess(cmd)
 
 	return cmd.Start()
 }
