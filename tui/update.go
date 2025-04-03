@@ -126,56 +126,58 @@ func (m *Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return newModel, cmd
 
 	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, key.NewBinding(key.WithKeys("q"))):
-			// Quit application
-			return m, tea.Quit
+		// Use centralized command handling
+		for _, cmd := range GetCommandsForView(m.currentView) {
+			if key.Matches(msg, GetKeyBinding(cmd.Type)) {
+				switch cmd.Type {
+				case CmdQuit:
+					// Quit application
+					return m, tea.Quit
 
-		case key.Matches(msg, key.NewBinding(key.WithKeys("s"))):
-			// Save settings and return to main view
-			m.currentView = viewList
-			return saveSettings(m)
+				case CmdSaveSettings:
+					// Save settings and return to main view
+					m.currentView = viewList
+					return saveSettings(m)
 
-		case key.Matches(msg, key.NewBinding(key.WithKeys("enter"))):
-			// Toggle edit mode for the focused setting
-			if m.editMode {
-				// Exit edit mode and save settings
-				m.editMode = false
-				updateFocusStyles(m, m.focusIndex)
-			} else {
-				// Enter edit mode for the focused field
-				m.editMode = true
-				m.settingsInputs[m.focusIndex].Focus()
-				updateFocusStyles(m, -1)
+				case CmdToggleEditMode:
+					// Toggle edit mode for the focused setting
+					if m.editMode {
+						// Exit edit mode and save settings
+						m.editMode = false
+						updateFocusStyles(m, m.focusIndex)
+					} else {
+						// Enter edit mode for the focused field
+						m.editMode = true
+						m.settingsInputs[m.focusIndex].Focus()
+						updateFocusStyles(m, -1)
+					}
+					return m, nil
+
+				case CmdMoveUp:
+					if !m.editMode {
+						oldFocus := m.focusIndex
+						m.focusIndex = (m.focusIndex - 1 + len(m.settingsInputs)) % len(m.settingsInputs)
+						updateFocusStyles(m, oldFocus)
+					}
+					return m, nil
+
+				case CmdMoveDown:
+					if !m.editMode {
+						oldFocus := m.focusIndex
+						m.focusIndex = (m.focusIndex + 1) % len(m.settingsInputs)
+						updateFocusStyles(m, oldFocus)
+					}
+					return m, nil
+				}
 			}
-			return m, nil
+		}
 
-
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))):
-			if !m.editMode {
-				oldFocus := m.focusIndex
-				m.focusIndex = (m.focusIndex - 1 + len(m.settingsInputs)) % len(m.settingsInputs)
-				updateFocusStyles(m, oldFocus)
-			}
-			return m, nil
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("down", "j"))):
-			if !m.editMode {
-				oldFocus := m.focusIndex
-				m.focusIndex = (m.focusIndex + 1) % len(m.settingsInputs)
-				updateFocusStyles(m, oldFocus)
-			}
-			return m, nil
-
-		default:
-			// Pass other keys to the input field if in edit mode
-			if m.editMode {
-				// Create a copy of the model to avoid pointer issues
-				updatedModel := m
-				cmd := updatedModel.updateInputs(msg)
-				return updatedModel, cmd
-			}
+		// Pass other keys to the input field if in edit mode
+		if m.editMode {
+			// Create a copy of the model to avoid pointer issues
+			updatedModel := m
+			cmd := updatedModel.updateInputs(msg)
+			return updatedModel, cmd
 		}
 	}
 
@@ -191,112 +193,119 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleDownloadProgress(msg)
 
 	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, key.NewBinding(key.WithKeys("q"))):
-			// Quit application
-			return m, tea.Quit
+		// Use centralized command handling
+		for _, cmd := range GetCommandsForView(viewList) {
+			if key.Matches(msg, GetKeyBinding(cmd.Type)) {
+				switch cmd.Type {
+				case CmdQuit:
+					// Quit application
+					return m, tea.Quit
 
-		case key.Matches(msg, key.NewBinding(key.WithKeys("s"))):
-			// Show settings
-			return m.handleShowSettings()
+				case CmdShowSettings:
+					// Show settings
+					return m.handleShowSettings()
 
-		case key.Matches(msg, key.NewBinding(key.WithKeys("r"))):
-			// Toggle sort order (reverse)
-			m.sortReversed = !m.sortReversed
-			m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
+				case CmdToggleSortOrder:
+					// Toggle sort order (reverse)
+					m.sortReversed = !m.sortReversed
+					m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
+					return m, nil
 
-		case key.Matches(msg, key.NewBinding(key.WithKeys("f"))):
-			// Fetch online builds only
-			m.isLoading = true
-			return m, m.fetchBuildsCmd()
+				case CmdFetchBuilds:
+					// Fetch online builds only
+					m.isLoading = true
+					return m, m.fetchBuildsCmd()
 
-		case key.Matches(msg, key.NewBinding(key.WithKeys("d"))):
-			// Download build (only for online builds)
-			if len(m.builds) > 0 && m.cursor < len(m.builds) {
-				selectedBuild := m.builds[m.cursor]
-				if selectedBuild.Status == model.StateOnline || selectedBuild.Status == model.StateUpdate {
-					return m.handleStartDownload()
+				case CmdDownloadBuild:
+					// Download build (only for online builds)
+					if len(m.builds) > 0 && m.cursor < len(m.builds) {
+						selectedBuild := m.builds[m.cursor]
+						if selectedBuild.Status == model.StateOnline || selectedBuild.Status == model.StateUpdate {
+							return m.handleStartDownload()
+						}
+					}
+					return m, nil
+
+				case CmdLaunchBuild:
+					// Launch build
+					if len(m.builds) > 0 && m.cursor < len(m.builds) {
+						selectedBuild := m.builds[m.cursor]
+						if selectedBuild.Status == model.StateLocal {
+							return m.handleLaunchBlender()
+						}
+					}
+					return m, nil
+
+				case CmdOpenBuildDir:
+					// Open build directory
+					if len(m.builds) > 0 && m.cursor < len(m.builds) {
+						selectedBuild := m.builds[m.cursor]
+						if selectedBuild.Status == model.StateLocal || selectedBuild.Status == model.StateUpdate {
+							return m.handleOpenBuildDir()
+						}
+					}
+					return m, nil
+
+				case CmdDeleteBuild:
+					// Delete build (local) or cancel download (downloading/extracting)
+					if len(m.builds) > 0 && m.cursor < len(m.builds) {
+						selectedBuild := m.builds[m.cursor]
+
+						// Check if the build is currently downloading or extracting
+						canCancel := false
+						buildID := selectedBuild.Version
+						if selectedBuild.Hash != "" {
+							buildID = selectedBuild.Version + "-" + selectedBuild.Hash[:8]
+						}
+
+						// Check if this build has an active download
+						state := m.commands.downloads.GetState(buildID)
+						if state != nil && (state.BuildState == model.StateDownloading ||
+							state.BuildState == model.StateExtracting) {
+							canCancel = true
+							m.activeDownloadID = buildID
+						}
+
+						if canCancel {
+							return m.handleCancelDownload()
+						} else if selectedBuild.Status == model.StateLocal {
+							// Delete local build
+							return m.handleDeleteBuild()
+						}
+					}
+					return m, nil
+
+				case CmdMoveUp:
+					if m.cursor > 0 {
+						m.cursor--
+					} else if len(m.builds) > 0 {
+						m.cursor = len(m.builds) - 1
+					}
+					return m, nil
+
+				case CmdMoveDown:
+					if len(m.builds) > 0 && m.cursor < len(m.builds)-1 {
+						m.cursor++
+					} else {
+						m.cursor = 0
+					}
+					return m, nil
+
+				case CmdMoveLeft:
+					// Change sort column to the left
+					m.updateSortColumn("left")
+					m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
+					return m, nil
+
+				case CmdMoveRight:
+					// Change sort column to the right
+					m.updateSortColumn("right")
+					m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
+					return m, nil
 				}
 			}
-			return m, nil
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("enter"))):
-			// Launch build
-			if len(m.builds) > 0 && m.cursor < len(m.builds) {
-				selectedBuild := m.builds[m.cursor]
-				if selectedBuild.Status == model.StateLocal {
-					return m.handleLaunchBlender()
-				}
-			}
-			return m, nil
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("o"))):
-			// Open build directory
-			if len(m.builds) > 0 && m.cursor < len(m.builds) {
-				selectedBuild := m.builds[m.cursor]
-				if selectedBuild.Status == model.StateLocal || selectedBuild.Status == model.StateUpdate {
-					return m.handleOpenBuildDir()
-				}
-			}
-			return m, nil
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("x"))):
-			// Delete build (local) or cancel download (downloading/extracting)
-			if len(m.builds) > 0 && m.cursor < len(m.builds) {
-				selectedBuild := m.builds[m.cursor]
-
-				// Check if the build is currently downloading or extracting
-				canCancel := false
-				buildID := selectedBuild.Version
-				if selectedBuild.Hash != "" {
-					buildID = selectedBuild.Version + "-" + selectedBuild.Hash[:8]
-				}
-
-				// Check if this build has an active download
-				state := m.commands.downloads.GetState(buildID)
-				if state != nil && (state.BuildState == model.StateDownloading ||
-					state.BuildState == model.StateExtracting) {
-					canCancel = true
-					m.activeDownloadID = buildID
-				}
-
-				if canCancel {
-					return m.handleCancelDownload()
-				} else if selectedBuild.Status == model.StateLocal {
-					// Delete local build
-					return m.handleDeleteBuild()
-				}
-			}
-			return m, nil
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))):
-			if m.cursor > 0 {
-				m.cursor--
-			} else if len(m.builds) > 0 {
-				m.cursor = len(m.builds) - 1
-			}
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("down", "j"))):
-			if len(m.builds) > 0 && m.cursor < len(m.builds)-1 {
-				m.cursor++
-			} else {
-				m.cursor = 0
-			}
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("left", "h"))):
-			// Change sort column to the left
-			m.updateSortColumn("left")
-			m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("right", "l"))):
-			// Change sort column to the right
-			m.updateSortColumn("right")
-			m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
 		}
 	}
 
 	return m, nil
 }
-
-// Define a message for cleanup completion
-type cleanupCompleteMsg struct{}
