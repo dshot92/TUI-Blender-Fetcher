@@ -86,6 +86,17 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 		// Trigger initial local scan via Init command
 	}
 
+	// Add default visibleColumns before returning m
+	m.visibleColumns = map[string]bool{
+		"Version":    true,
+		"Status":     true,
+		"Branch":     true,
+		"Type":       true,
+		"Hash":       true,
+		"Size":       true,
+		"Build Date": true,
+	}
+
 	return m
 }
 
@@ -93,55 +104,6 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 func (m *Model) UpdateWindowSize(width, height int) {
 	m.terminalWidth = width
 	m.terminalHeight = height
-
-	// Calculate and set column widths based on the terminal width
-	calculateColumnWidths(width)
-}
-
-// calculateColumnWidths sets the width for each column based on the available terminal width
-func calculateColumnWidths(terminalWidth int) {
-	// Account for 1 space between each column
-	availableWidth := terminalWidth - (len(columnConfigs) - 1)
-
-	// First ensure all columns have at least their minimum width
-	totalMinWidth := 0
-	for _, config := range columnConfigs {
-		totalMinWidth += config.minWidth
-	}
-
-	// If we have enough space for all columns at their minimum width
-	if availableWidth >= totalMinWidth {
-		// Distribute remaining space based on flex values
-		remainingWidth := availableWidth - totalMinWidth
-		totalFlex := 0.0
-
-		for _, config := range columnConfigs {
-			totalFlex += config.flex
-		}
-
-		// Set widths based on flex ratios
-		for col, config := range columnConfigs {
-			extraWidth := int((config.flex / totalFlex) * float64(remainingWidth))
-			columnConfigs[col] = columnConfig{
-				width:    config.minWidth + extraWidth,
-				priority: config.priority,
-				visible:  true,
-				minWidth: config.minWidth,
-				flex:     config.flex,
-			}
-		}
-	} else {
-		// Not enough space - just use minimum widths
-		for col, config := range columnConfigs {
-			columnConfigs[col] = columnConfig{
-				width:    config.minWidth,
-				priority: config.priority,
-				visible:  true,
-				minWidth: config.minWidth,
-				flex:     config.flex,
-			}
-		}
-	}
 }
 
 func (m *Model) View() string {

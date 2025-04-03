@@ -22,5 +22,7 @@ func (m *Model) renderPageForView() string {
 	}
 
 	baseView := lp.JoinVertical(lp.Top, header, content, footer)
+	// Force the base view to span the full terminal width
+	baseView = lp.NewStyle().Width(m.terminalWidth).Render(baseView)
 	return lp.Place(m.terminalWidth, m.terminalHeight, lp.Left, lp.Top, baseView)
 }

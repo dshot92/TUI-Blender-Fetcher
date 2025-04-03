@@ -26,14 +26,10 @@ func NewRow(build model.BlenderBuild, isSelected bool, status *model.DownloadSta
 
 // Render renders a single row with the given column configuration
 func (r Row) Render(columns []ColumnConfig) string {
-	var rowBuffer bytes.Buffer
-
-	// Render each cell in the row
-	for colIdx, col := range columns {
+	var cells []string
+	for _, col := range columns {
 		if col.Visible {
 			var cellContent string
-
-			// Determine cell content based on column key
 			switch col.Key {
 			case "Version":
 				cellContent = r.Build.Version
@@ -50,22 +46,14 @@ func (r Row) Render(columns []ColumnConfig) string {
 			case "Build Date":
 				cellContent = model.FormatBuildDate(r.Build.BuildDate)
 			}
-
-			// Apply column-specific style to cell content
-			rowBuffer.WriteString(col.Style(cellContent))
-
-			// Add space between columns
-			if colIdx < len(columns)-1 {
-				rowBuffer.WriteString(" ")
-			}
+			cells = append(cells, col.Style(cellContent))
 		}
 	}
-
-	// Apply row styling (selected or regular)
+	rowString := lp.JoinHorizontal(lp.Left, cells...)
 	if r.IsSelected {
-		return selectedRowStyle.Render(rowBuffer.String())
+		return selectedRowStyle.Render(rowString)
 	}
-	return regularRowStyle.Render(rowBuffer.String())
+	return regularRowStyle.Render(rowString)
 }
 
 // renderStatus renders the status cell with appropriate formatting
@@ -84,93 +72,47 @@ type ColumnConfig struct {
 	Style   func(string) string
 }
 
-// GetBuildColumns returns the column configuration for the build table
-func GetBuildColumns(visibleColumns map[string]bool) []ColumnConfig {
+// Updated GetBuildColumns to accept terminalWidth and compute widths
+func GetBuildColumns(visibleColumns map[string]bool, terminalWidth int) []ColumnConfig {
 	var cellStyleCenter = lp.NewStyle().Align(lp.Center)
-	return []ColumnConfig{
-		{
-			Name:    "Version",
-			Key:     "Version",
-			Visible: true,
-			Width:   columnConfigs["Version"].width,
-			Index:   0,
-			Style: func(s string) string {
-				return cellStyleCenter.Width(columnConfigs["Version"].width).Render(s)
-			},
-		},
-		{
-			Name:    "Status",
-			Key:     "Status",
-			Visible: true,
-			Width:   columnConfigs["Status"].width,
-			Index:   1,
-			Style: func(s string) string {
-				return cellStyleCenter.Width(columnConfigs["Status"].width).Render(s)
-			},
-		},
-		{
-			Name:    "Branch",
-			Key:     "Branch",
-			Visible: true, // Always visible
-			Width:   columnConfigs["Branch"].width,
-			Index:   2,
-			Style: func(s string) string {
-				return cellStyleCenter.Width(columnConfigs["Branch"].width).Render(s)
-			},
-		},
-		{
-			Name:    "Type",
-			Key:     "Type",
-			Visible: true, // Always visible
-			Width:   columnConfigs["Type"].width,
-			Index:   3,
-			Style: func(s string) string {
-				return cellStyleCenter.Width(columnConfigs["Type"].width).Render(s)
-			},
-		},
-		{
-			Name:    "Hash",
-			Key:     "Hash",
-			Visible: true, // Always visible
-			Width:   columnConfigs["Hash"].width,
-			Index:   4,
-			Style: func(s string) string {
-				return cellStyleCenter.Width(columnConfigs["Hash"].width).Render(s)
-			},
-		},
-		{
-			Name:    "Size",
-			Key:     "Size",
-			Visible: true, // Always visible
-			Width:   columnConfigs["Size"].width,
-			Index:   5,
-			Style: func(s string) string {
-				return cellStyleCenter.Width(columnConfigs["Size"].width).Render(s)
-			},
-		},
-		{
-			Name:    "Build Date",
-			Key:     "Build Date",
-			Visible: true, // Always visible
-			Width:   columnConfigs["Build Date"].width,
-			Index:   6,
-			Style: func(s string) string {
-				return cellStyleCenter.Width(columnConfigs["Build Date"].width).Render(s)
-			},
-		},
+	columns := []ColumnConfig{
+		{Name: "Version", Key: "Version", Visible: true, Index: 0},
+		{Name: "Status", Key: "Status", Visible: true, Index: 1},
+		{Name: "Branch", Key: "Branch", Visible: true, Index: 2},
+		{Name: "Type", Key: "Type", Visible: true, Index: 3},
+		{Name: "Hash", Key: "Hash", Visible: true, Index: 4},
+		{Name: "Size", Key: "Size", Visible: true, Index: 5},
+		{Name: "Build Date", Key: "Build Date", Visible: true, Index: 6},
 	}
+	// Compute total flex for all columns
+	totalFlex := 0.0
+	for i := range columns {
+		totalFlex += columnConfigs[columns[i].Key].flex
+	}
+	// Assign each column a width proportional to its flex value
+	for i := range columns {
+		flex := columnConfigs[columns[i].Key].flex
+		colWidth := int((float64(terminalWidth) * flex) / totalFlex)
+		columns[i].Width = colWidth
+		columns[i].Style = func(width int) func(string) string {
+			return func(s string) string {
+				return cellStyleCenter.Width(width).Render(s)
+			}
+		}(colWidth)
+	}
+	return columns
 }
 
-// RenderRows renders all rows without scrolling
+// Update RenderRows to pass terminalWidth
 func RenderRows(m *Model) string {
 	var output bytes.Buffer
 
-	// Get column configuration
-	columns := GetBuildColumns(m.visibleColumns)
+	// Get column configuration with computed widths
+	columns := GetBuildColumns(m.visibleColumns, m.terminalWidth)
 
 	// Render each row
 	for i, build := range m.builds {
-		// Create buildID to check for download state
+		// Create a buildID to check for download state
 		buildID := build.Version
 		if build.Hash != "" {
 			buildID = build.Version + "-" + build.Hash[:8]
@@ -188,7 +130,7 @@ func RenderRows(m *Model) string {
 	return output.String()
 }
 
-// renderBuildContent renders the table content
+// Update renderBuildContent to pass terminalWidth
 func (m *Model) renderBuildContent(availableHeight int) string {
 	var output bytes.Buffer
 
@@ -216,10 +158,10 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 		)
 	}
 
-	// Build header row
-	var headerBuffer bytes.Buffer
-	columns := GetBuildColumns(m.visibleColumns)
-	for colIdx, col := range columns {
+	// Build header row using lipgloss.JoinHorizontal
+	columns := GetBuildColumns(m.visibleColumns, m.terminalWidth)
+	var headerCells []string
+	for _, col := range columns {
 		if col.Visible {
 			headerText := col.Name
 
@@ -231,27 +173,24 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 					headerText += " ↑"
 				}
 			}
-
 			headerContent := lp.NewStyle().Bold(true).Render(headerText)
-			headerBuffer.WriteString(col.Style(headerContent))
-
-			// Add space between columns
-			if colIdx < len(columns)-1 {
-				headerBuffer.WriteString(" ")
-			}
+			headerCells = append(headerCells, col.Style(headerContent))
 		}
 	}
-	headerStr := headerBuffer.String()
-	if !strings.HasSuffix(headerStr, "\n") {
-		headerStr += "\n"
+	// Join header cells horizontally
+	headerRow := lp.JoinHorizontal(lp.Left, headerCells...)
+	if !strings.HasSuffix(headerRow, "\n") {
+		headerRow += "\n"
 	}
-	output.WriteString(headerStr)
+	output.WriteString(headerRow)
 
-	// Render all rows without scrolling (simple navigation)
+	// Render all rows without scrolling
 	rowsContent := RenderRows(m)
 	output.WriteString(rowsContent)
 
-	return lp.Place(m.terminalWidth, availableHeight, lp.Left, lp.Top, output.String())
+	// Force the table content to span the entire terminal width
+	finalOutput := lp.NewStyle().Width(m.terminalWidth).Render(output.String())
+	return lp.Place(m.terminalWidth, availableHeight, lp.Left, lp.Top, finalOutput)
 }
 
 // updateSortColumn handles lateral key events for sorting columns.

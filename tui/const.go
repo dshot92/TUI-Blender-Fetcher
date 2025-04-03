@@ -195,8 +195,6 @@ var (
 type columnConfig struct {
 	width    int
 	priority int // Lower number = higher priority (will be shown first)
-	visible  bool
-	minWidth int     // Minimum width for the column
 	flex     float64 // Flex ratio for dynamic width calculation
 }
 
@@ -204,13 +202,13 @@ type columnConfig struct {
 var (
 	// Column configurations with priorities and flex values
 	columnConfigs = map[string]columnConfig{
-		"Version":    {width: 0, priority: 1, minWidth: 7, flex: 1.0},  // Version gets more space
-		"Status":     {width: 0, priority: 2, minWidth: 12, flex: 1.0}, // Status needs room for different states
-		"Branch":     {width: 0, priority: 5, minWidth: 6, flex: 1.0},
-		"Type":       {width: 0, priority: 4, minWidth: 10, flex: 1.0},
-		"Hash":       {width: 0, priority: 6, minWidth: 9, flex: 1.0},
-		"Size":       {width: 0, priority: 7, minWidth: 8, flex: 1.0},
-		"Build Date": {width: 0, priority: 3, minWidth: 10, flex: 1.0},
+		"Version":    {width: 0, priority: 1, flex: 1.0},  // Version gets more space
+		"Status":     {width: 0, priority: 2, flex: 1.0}, // Status needs room for different states
+		"Branch":     {width: 0, priority: 5, flex: 1.0},
+		"Type":       {width: 0, priority: 4, flex: 1.0},
+		"Hash":       {width: 0, priority: 6, flex: 1.0},
+		"Size":       {width: 0, priority: 7, flex: 1.0},
+		"Build Date": {width: 0, priority: 3, flex: 1.0},
 	}
 )
 
