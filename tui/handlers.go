@@ -267,32 +267,21 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Create a map to track versions we've already seen
-	existingVersions := make(map[string]bool)
-
-	// Mark existing build versions
-	for _, build := range m.builds {
-		existingVersions[build.Version] = true
-	}
-
-	// Only add online builds that don't already exist locally
+	// Merge online builds with existing ones without filtering
 	for _, build := range msg.builds {
-		if _, exists := existingVersions[build.Version]; !exists {
-			m.builds = append(m.builds, build)
-			existingVersions[build.Version] = true
-		}
+		m.builds = append(m.builds, build)
 	}
 
-	// Only sort after updating local builds' status
+	// Sort the builds after merging
 	m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
 
-	// Reset cursor and startIndex for consistent view
+	// Reset cursor and startIndex for a consistent view
 	if len(m.builds) > 0 {
 		m.cursor = 0
 		m.startIndex = 0
 	}
 
-	// Update the status based on what's available locally
+	// Update the status based on what's available locally - this will check if builds exist locally
 	return m, m.commands.UpdateBuildStatus(m.builds)
 }
 

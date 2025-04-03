@@ -210,22 +210,11 @@ func (c *Commands) UpdateBuildStatus(onlineBuilds []model.BlenderBuild) tea.Cmd 
 			localBuildMap[build.Version] = build
 		}
 
-		// Create a map to track versions we've seen
-		seenVersions := make(map[string]bool)
-
-		// Copy builds to avoid modifying originals, ensuring no duplicates
+		// Copy builds to avoid modifying originals, showing all builds
 		updatedBuilds := make([]model.BlenderBuild, 0, len(onlineBuilds))
 
 		// Update status for each build
 		for _, build := range onlineBuilds {
-			// Skip if we've already processed this version
-			if _, seen := seenVersions[build.Version]; seen {
-				continue
-			}
-
-			// Mark this version as seen
-			seenVersions[build.Version] = true
-
 			// Create a copy of the build to update
 			updatedBuild := build
 
