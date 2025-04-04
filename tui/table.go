@@ -52,6 +52,8 @@ func (r Row) Render(columns []ColumnConfig) string {
 	// Special handling for downloads and extractions
 	isDownloading := r.Build.Status == model.StateDownloading && r.Status != nil
 	isExtracting := r.Build.Status == model.StateExtracting && r.Status != nil
+	isLocal := r.Build.Status == model.StateLocal
+	isUpdate := r.Build.Status == model.StateUpdate
 
 	// Handle special case for download/extract - we'll render empty cells for Type, Hash, Size, Build Date
 	// and only display content in Version, Status, and Branch columns
@@ -181,6 +183,23 @@ func (r Row) Render(columns []ColumnConfig) string {
 		// Use selected style with explicit width to ensure alignment
 		return selectedRowStyle.Width(sumColumnWidths(columns)).Render(rowString)
 	}
+
+	// Apply orange text style for local builds
+	if isLocal {
+		return lp.NewStyle().
+			Foreground(lp.Color(orangeColor)).
+			Width(sumColumnWidths(columns)).
+			Render(rowString)
+	}
+
+	// Apply green text style for updated builds
+	if isUpdate {
+		return lp.NewStyle().
+			Foreground(lp.Color(greenColor)).
+			Width(sumColumnWidths(columns)).
+			Render(rowString)
+	}
+
 	// Use regular style with explicit width to ensure alignment
 	return regularRowStyle.Width(sumColumnWidths(columns)).Render(rowString)
 }

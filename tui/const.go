@@ -11,6 +11,8 @@ const (
 	textColor       = "255" // White for text
 	backgroundColor = "24"  // Gray background
 	highlightColor  = "12"  // Blue for highlights
+	orangeColor     = "208" // Orange for local builds
+	greenColor      = "46"  // Green for updated builds
 )
 
 // View states
