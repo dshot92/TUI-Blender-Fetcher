@@ -14,9 +14,9 @@ import (
 // API endpoint
 // const blenderAPIURL = "https://builder.blender.org/download/experimental/?format=json&v=1"
 
-const blenderAPIURL = "https://builder.blender.org/download/patch/?format=json&v=1"
+// const blenderAPIURL = "https://builder.blender.org/download/patch/?format=json&v=1"
 
-// const blenderAPIURL = "https://builder.blender.org/download/daily/?format=json&v=1"
+const blenderAPIURL = "https://builder.blender.org/download/daily/?format=json&v=1"
 
 // API represents the Blender API client
 type API struct {
