@@ -2,10 +2,10 @@ package tui
 
 import (
 	"TUI-Blender-Launcher/config"
+	"TUI-Blender-Launcher/launch"
 	"TUI-Blender-Launcher/local"
 	"TUI-Blender-Launcher/model"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +41,6 @@ func (m *Model) handleLaunchBlender() (tea.Model, tea.Cmd) {
 		// Only attempt to launch if it's a local build
 		if selectedBuild.Status == model.StateLocal {
 			// Add launch logic here
-			log.Printf("Launching Blender %s", selectedBuild.Version)
 			cmd := local.LaunchBlenderCmd(m.config.DownloadDir, selectedBuild.Version)
 			return m, cmd
 		}
@@ -336,27 +335,19 @@ func (m *Model) handleBlenderExec(msg model.BlenderExecMsg) (tea.Model, tea.Cmd)
 	// Store Blender info
 	execInfo := msg
 
-	// Write a command file that the main.go program will execute after the TUI exits
-	// This ensures Blender runs in the same terminal session after the TUI is fully terminated
-	launcherPath := filepath.Join(os.TempDir(), "blender_launch_command.txt")
+	// Launch Blender directly using the launch package
+	return m, func() tea.Msg {
+		blenderExe := execInfo.Executable
 
-	// First try to save the command
-	err := os.WriteFile(launcherPath, []byte(execInfo.Executable), 0644)
-	if err != nil {
-		return m, func() tea.Msg {
-			return errMsg{fmt.Errorf("failed to save launch info: %w", err)}
+		// Import the launch package at the top of the file if needed
+		err := launch.BlenderInNewTerminal(blenderExe)
+		if err != nil {
+			return errMsg{fmt.Errorf("failed to launch Blender: %w", err)}
 		}
+
+		// Return a message indicating Blender was launched successfully
+		return nil
 	}
-
-	// Set an environment variable to tell the main program to run Blender on exit
-	os.Setenv("TUI_BLENDER_LAUNCH", launcherPath)
-
-	// Display exit message with info about Blender launch
-	m.err = nil
-	m.blenderRunning = execInfo.Version
-
-	// Simply quit - the main program will handle launching Blender
-	return m, tea.Quit
 }
 
 // handleDownloadProgress processes tick messages for download progress updates
