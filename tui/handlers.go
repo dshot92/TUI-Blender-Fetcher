@@ -263,22 +263,50 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Create a map of existing builds by hash for quick lookup
-	existingBuildsMap := make(map[string]bool)
+	// Create maps for tracking existing builds both by hash and version
+	existingHashMap := make(map[string]bool)
+	existingVersionMap := make(map[string]bool)
+
+	// Populate maps from existing builds
 	for _, build := range m.builds {
 		if build.Hash != "" {
-			existingBuildsMap[build.Hash] = true
+			existingHashMap[build.Hash] = true
+		}
+		existingVersionMap[build.Version] = true
+
+		// Mark local builds specifically
+		if build.Status == model.StateLocal {
+			existingVersionMap[build.Version+"_local"] = true
+			if build.Hash != "" {
+				existingHashMap[build.Hash+"_local"] = true
+			}
 		}
 	}
 
-	// Add only builds that don't already exist (by hash)
+	// Add only builds that don't already exist or would provide new information
 	for _, build := range msg.builds {
-		// Only add if the hash is unique
-		if build.Hash != "" && !existingBuildsMap[build.Hash] {
-			m.builds = append(m.builds, build)
-			// Mark hash as seen to prevent future duplicates
-			existingBuildsMap[build.Hash] = true
+		// Skip if hash already exists (more precise duplicate detection)
+		if build.Hash != "" && existingHashMap[build.Hash] {
+			continue
 		}
+
+		// Also skip if this version is already installed locally
+		if existingVersionMap[build.Version+"_local"] {
+			// Skip builds with same version as a local build unless they have different hash
+			// (might be an update)
+			if build.Hash == "" || existingHashMap[build.Hash+"_local"] {
+				continue
+			}
+		}
+
+		// Add the build to our list
+		m.builds = append(m.builds, build)
+
+		// Mark hash as seen to prevent future duplicates
+		if build.Hash != "" {
+			existingHashMap[build.Hash] = true
+		}
+		existingVersionMap[build.Version] = true
 	}
 
 	// Sort the builds after merging
@@ -290,7 +318,7 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 		m.startIndex = 0
 	}
 
-	// Update the status based on what's available locally - this will check if builds exist locally
+	// Update the status based on what's available locally
 	return m, m.commands.UpdateBuildStatus(m.builds)
 }
 

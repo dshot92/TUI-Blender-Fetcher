@@ -235,14 +235,19 @@ func (c *Commands) UpdateBuildStatus(onlineBuilds []model.BlenderBuild) tea.Cmd 
 				}
 			}
 
-			// Fall back to version matching if hash is empty or not found
-			if localBuild, found := localBuildMap[build.Version]; found {
-				if local.CheckUpdateAvailable(localBuild, build) {
-					updatedBuild.Status = model.StateUpdate
+			// Fall back to version matching ONLY for builds without hash
+			if build.Hash == "" {
+				if localBuild, found := localBuildMap[build.Version]; found {
+					if local.CheckUpdateAvailable(localBuild, build) {
+						updatedBuild.Status = model.StateUpdate
+					} else {
+						updatedBuild.Status = model.StateLocal
+					}
 				} else {
-					updatedBuild.Status = model.StateLocal
+					updatedBuild.Status = model.StateOnline
 				}
 			} else {
+				// If hash is present but doesn't match any local build, it's an online build
 				updatedBuild.Status = model.StateOnline
 			}
 
