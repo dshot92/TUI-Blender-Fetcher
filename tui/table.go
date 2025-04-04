@@ -266,6 +266,9 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 		endIndex = len(m.builds)
 	}
 
+	// Map to track which build IDs we've processed in this render pass
+	processedBuilds := make(map[string]bool)
+
 	// Only render rows in the visible range
 	for i := m.startIndex; i < endIndex; i++ {
 		build := m.builds[i]
@@ -276,17 +279,30 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 			buildID = build.Version + "-" + build.Hash[:8]
 		}
 
+		// Track that we're processing this build
+		processedBuilds[buildID] = true
+
 		// Get download state if exists
 		var downloadState *model.DownloadState = nil
 
-		// Check in current model's download states
-		if state, exists := m.downloadStates[buildID]; exists {
-			downloadState = state
+		// Check if this is a downloading or extracting build
+		if build.Status == model.StateDownloading || build.Status == model.StateExtracting {
+			// Check in current model's download states
+			if state, exists := m.downloadStates[buildID]; exists {
+				downloadState = state
+
+				// Always update last render state for downloads - but don't check for changes
+				// to avoid skipping download renderings
+				m.lastRenderState[buildID] = state.Progress
+			}
 		} else {
 			// Fallback to checking in commands downloads manager
-			downloadState = m.commands.downloads.GetState(buildID)
+			if m.commands != nil && m.commands.downloads != nil {
+				downloadState = m.commands.downloads.GetState(buildID)
+			}
 		}
 
+		// Always render downloading/extracting rows, never skip them
 		// Create and render row; highlight if this is the current row
 		row := NewRow(build, i == m.cursor, downloadState)
 		rowText := row.Render(columns)
@@ -295,6 +311,13 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 		output.WriteString(rowText)
 		if i < endIndex-1 {
 			output.WriteString(newlineStyle)
+		}
+	}
+
+	// Clean up lastRenderState for builds that are no longer visible/processing
+	for buildID := range m.lastRenderState {
+		if !processedBuilds[buildID] {
+			delete(m.lastRenderState, buildID)
 		}
 	}
 

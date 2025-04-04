@@ -26,7 +26,7 @@ func (m *Model) Init() tea.Cmd {
 	cmds = append(cmds, cmdManager.StartTicker())
 
 	// Also start a regular UI refresh ticker using built-in tea.Tick
-	cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+	cmds = append(cmds, tea.Tick(time.Millisecond*500, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	}))
 
@@ -79,11 +79,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeDownloadID = msg.buildID
 		var cmds []tea.Cmd
 
+		// Update the build status immediately to show downloading
+		for i := range m.builds {
+			if m.builds[i].Version == msg.build.Version {
+				m.builds[i].Status = model.StateDownloading
+				break
+			}
+		}
+
 		// Create a Commands instance and call DoDownload directly
 		cmdManager := NewCommands(m.config)
 		cmds = append(cmds, cmdManager.DoDownload(msg.build))
 
-		// Make sure the ticker is running
+		// Make sure the ticker is running with a faster initial tick for responsiveness
 		cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
 			return tickMsg(t)
 		}))
@@ -122,8 +130,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Sync download states before handling the tick
 		m.SyncDownloadStates()
 
-		// Create a command for the next tick
-		cmd := tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+		// Create a command for the next tick - use 500ms default but faster if downloading
+		var nextTickTime time.Duration = time.Millisecond * 500
+
+		// Check if we have active downloads and use faster refresh if needed
+		m.downloadMutex.Lock()
+		activeDownloads := 0
+		for _, state := range m.downloadStates {
+			if state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting {
+				activeDownloads++
+			}
+		}
+		m.downloadMutex.Unlock()
+
+		// Use faster refresh rate during downloads/extractions
+		if activeDownloads > 0 {
+			nextTickTime = time.Millisecond * 250
+		}
+
+		cmd := tea.Tick(nextTickTime, func(t time.Time) tea.Msg {
 			return tickMsg(t)
 		})
 

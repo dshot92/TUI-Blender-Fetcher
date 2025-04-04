@@ -263,7 +263,7 @@ func (c *Commands) DoDownload(build model.BlenderBuild) tea.Cmd {
 // StartTicker starts a ticker to regularly update the UI during downloads
 func (c *Commands) StartTicker() tea.Cmd {
 	return func() tea.Msg {
-		ticker := time.NewTicker(100 * time.Millisecond)
+		ticker := time.NewTicker(500 * time.Millisecond)
 		done := make(chan bool)
 
 		go func() {

@@ -30,6 +30,7 @@ type Model struct {
 	activeDownloadID string // Store the active download build ID for tracking
 	downloadMutex    sync.Mutex
 	downloadStates   map[string]*model.DownloadState
+	lastRenderState  map[string]float64 // Track last rendered progress for each download
 }
 
 // InitialModel creates the initial state of the TUI model.
@@ -43,14 +44,15 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 	)
 
 	m := &Model{
-		config:         cfg,
-		commands:       NewCommands(cfg),
-		progressBar:    progModel,
-		sortColumn:     0,     // Default sort by Version
-		sortReversed:   true,  // Default descending sort (newest versions first)
-		blenderRunning: "",    // No Blender running initially
-		editMode:       false, // Start in navigation mode, not edit mode
-		downloadStates: make(map[string]*model.DownloadState),
+		config:          cfg,
+		commands:        NewCommands(cfg),
+		progressBar:     progModel,
+		sortColumn:      0,     // Default sort by Version
+		sortReversed:    true,  // Default descending sort (newest versions first)
+		blenderRunning:  "",    // No Blender running initially
+		editMode:        false, // Start in navigation mode, not edit mode
+		downloadStates:  make(map[string]*model.DownloadState),
+		lastRenderState: make(map[string]float64),
 	}
 
 	if needsSetup {

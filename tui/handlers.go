@@ -6,6 +6,7 @@ import (
 	"TUI-Blender-Launcher/local"
 	"TUI-Blender-Launcher/model"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -361,9 +362,20 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 		// Get states from download manager
 		states := m.commands.downloads.GetAllStates()
 
-		// Update our local copy
+		// Update our local copy - always update for downloads
 		for id, state := range states {
-			m.downloadStates[id] = state
+			// For downloads and extractions, always update state to ensure UI reflects latest
+			if state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting {
+				m.downloadStates[id] = state
+			} else {
+				// For other states, only update when changed significantly
+				existingState, exists := m.downloadStates[id]
+				if !exists ||
+					existingState.BuildState != state.BuildState ||
+					math.Abs(existingState.Progress-state.Progress) >= 0.01 {
+					m.downloadStates[id] = state
+				}
+			}
 		}
 	}
 
@@ -387,8 +399,9 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 
 			// Only update progress bar for the active download
 			if id == m.activeDownloadID {
-				// Queue progress bar update
+				// Always update progress bar for active downloads
 				progressCmds = append(progressCmds, m.progressBar.SetPercent(state.Progress))
+				m.lastRenderState[id+"_progressbar"] = state.Progress
 			}
 		}
 	}
@@ -399,6 +412,7 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 			if state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting {
 				m.activeDownloadID = id
 				progressCmds = append(progressCmds, m.progressBar.SetPercent(state.Progress))
+				m.lastRenderState[id+"_progressbar"] = state.Progress
 				break
 			}
 		}
@@ -407,6 +421,8 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	// Clean up completed/stalled/cancelled downloads
 	for _, id := range completedDownloads {
 		delete(m.downloadStates, id)
+		delete(m.lastRenderState, id)
+		delete(m.lastRenderState, id+"_progressbar")
 		// Clear activeDownloadID if this was the active download
 		if id == m.activeDownloadID {
 			m.activeDownloadID = ""
@@ -414,6 +430,8 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	}
 	for _, id := range stalledDownloads {
 		delete(m.downloadStates, id)
+		delete(m.lastRenderState, id)
+		delete(m.lastRenderState, id+"_progressbar")
 		// Clear activeDownloadID if this was the active download
 		if id == m.activeDownloadID {
 			m.activeDownloadID = ""
@@ -421,6 +439,8 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	}
 	for _, id := range cancelledDownloads {
 		delete(m.downloadStates, id)
+		delete(m.lastRenderState, id)
+		delete(m.lastRenderState, id+"_progressbar")
 		// Clear activeDownloadID if this was the active download
 		if id == m.activeDownloadID {
 			m.activeDownloadID = ""
@@ -429,25 +449,38 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 
 	m.downloadMutex.Unlock() // Unlock after map modifications
 
-	// Update build statuses based on download states
+	// Update build statuses for downloads/extractions to ensure they display correctly
 	needsSort := false
-	// Update all builds with their corresponding download states
 	for i := range m.builds {
 		buildID := m.builds[i].Version
 		if m.builds[i].Hash != "" {
 			buildID = m.builds[i].Version + "-" + m.builds[i].Hash[:8]
 		}
 
-		// Update status for active downloads
+		// Update status for active downloads - force update for any active download
 		if state, ok := tempStates[buildID]; ok {
-			// Update build status from download state
 			if state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting {
+				// Always update build status for downloads/extractions
+				oldStatus := m.builds[i].Status
 				m.builds[i].Status = state.BuildState
-				needsSort = true
+				if oldStatus != state.BuildState {
+					needsSort = true
+				}
 			}
 		}
 	}
 
+	// Process other state changes (completed/etc.)
+	var buildsChanged bool = len(completedDownloads) > 0 ||
+		len(stalledDownloads) > 0 ||
+		len(cancelledDownloads) > 0
+
+	if !buildsChanged && !needsSort {
+		// If only progress changed but not statuses, no need for additional updates
+		return m, tea.Batch(progressCmds...)
+	}
+
+	// Process completed, stalled, and cancelled downloads
 	// For each completed download, find the matching build and update its status
 	for _, id := range completedDownloads {
 		if state, ok := tempStates[id]; ok {
