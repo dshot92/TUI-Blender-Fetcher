@@ -268,17 +268,22 @@ func findBlenderExecutable(installDir string) string {
 // OpenFileExplorer opens the default file explorer to the specified directory
 // Exported version of openFileExplorer to be used from other packages.
 func OpenFileExplorer(dir string) error {
-	// For Linux, try xdg-open first
 	var cmd *exec.Cmd
-	if _, err := exec.LookPath("xdg-open"); err == nil {
-		cmd = exec.Command("xdg-open", dir)
-	} else if _, err := exec.LookPath("gnome-open"); err == nil {
-		cmd = exec.Command("gnome-open", dir)
-	} else if _, err := exec.LookPath("kde-open"); err == nil {
-		cmd = exec.Command("kde-open", dir)
+	
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("explorer", dir)
 	} else {
-		// Fallback: Just try xdg-open anyway
-		cmd = exec.Command("xdg-open", dir)
+		// For Linux, try xdg-open first
+		if _, err := exec.LookPath("xdg-open"); err == nil {
+			cmd = exec.Command("xdg-open", dir)
+		} else if _, err := exec.LookPath("gnome-open"); err == nil {
+			cmd = exec.Command("gnome-open", dir)
+		} else if _, err := exec.LookPath("kde-open"); err == nil {
+			cmd = exec.Command("kde-open", dir)
+		} else {
+			// Fallback: Just try xdg-open anyway
+			cmd = exec.Command("xdg-open", dir)
+		}
 	}
 
 	cmd.Stdout = nil
