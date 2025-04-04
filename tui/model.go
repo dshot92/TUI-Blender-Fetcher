@@ -20,7 +20,6 @@ type Model struct {
 	terminalHeight   int // Added: stores the terminal height for better layout control
 	sortColumn       int
 	sortReversed     bool
-	isLoading        bool
 	currentView      viewState
 	focusIndex       int
 	editMode         bool
@@ -45,7 +44,6 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 
 	m := &Model{
 		config:         cfg,
-		isLoading:      !needsSetup,
 		commands:       NewCommands(cfg),
 		progressBar:    progModel,
 		sortColumn:     0,     // Default sort by Version
@@ -81,9 +79,6 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 		m.focusIndex = 0 // Start focus on the first input
 	} else {
 		m.currentView = viewList
-		// Start loading local builds immediately
-		m.isLoading = true
-		// Trigger initial local scan via Init command
 	}
 
 	return m

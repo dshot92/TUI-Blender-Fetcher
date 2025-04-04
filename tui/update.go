@@ -256,16 +256,7 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 
 				case CmdFetchBuilds:
-					// Fetch online builds only
-					if !m.isLoading {
-						m.isLoading = true
-						// Start with a clean slate for messages
-						m.err = nil
-
-						// Update the builds using the existing command manager
-						return m, m.commands.FetchBuilds()
-					}
-					return m, nil
+					return m, m.commands.FetchBuilds()
 
 				case CmdDownloadBuild:
 					// Start download for selected build

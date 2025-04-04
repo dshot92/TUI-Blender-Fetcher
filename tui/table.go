@@ -201,17 +201,6 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 func (m *Model) renderBuildContent(availableHeight int) string {
 	var output strings.Builder
 
-	if m.isLoading {
-		// Show loading message in the middle of the screen
-		return lp.Place(
-			m.terminalWidth,
-			availableHeight,
-			lp.Center,
-			lp.Top,
-			lp.NewStyle().Foreground(lp.Color(colorInfo)).Render("Loading Blender builds..."),
-		)
-	}
-
 	if len(m.builds) == 0 {
 		// No builds to display
 		var msg string = "No Blender builds found locally or online."

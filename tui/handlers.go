@@ -238,7 +238,6 @@ func (m *Model) handleLocalBuildsScanned(msg localBuildsScannedMsg) (tea.Model, 
 	if msg.err != nil {
 		m.err = msg.err
 		m.builds = []model.BlenderBuild{}
-		m.isLoading = false
 		return m, nil
 	}
 
@@ -246,8 +245,6 @@ func (m *Model) handleLocalBuildsScanned(msg localBuildsScannedMsg) (tea.Model, 
 	m.builds = msg.builds
 	// Sort builds immediately for better visual feedback
 	m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
-	// Mark loading as complete
-	m.isLoading = false
 
 	// Reset cursor and startIndex when loading new builds
 	if len(m.builds) > 0 {
@@ -262,7 +259,6 @@ func (m *Model) handleLocalBuildsScanned(msg localBuildsScannedMsg) (tea.Model, 
 func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		m.err = msg.err
-		m.isLoading = false
 		return m, nil
 	}
 
@@ -302,7 +298,6 @@ func (m *Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
 	// Replace builds with updated ones that have correct status
 	m.builds = msg.builds
 	m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
-	m.isLoading = false
 
 	// Ensure cursor is within bounds and visible
 	visibleRowsCount := m.terminalHeight - 7
@@ -541,7 +536,6 @@ func saveSettings(m *Model) (tea.Model, tea.Cmd) {
 	// If returning to list view, only trigger a scan if no builds are present
 	if m.currentView == viewList {
 		if len(m.builds) == 0 {
-			m.isLoading = true
 			return m, m.commands.ScanLocalBuilds()
 		}
 		return m, nil
