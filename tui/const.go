@@ -86,6 +86,8 @@ var (
 		{Type: CmdToggleEditMode, Keys: []string{"enter"}, Description: "Toggle edit mode"},
 		{Type: CmdMoveUp, Keys: []string{"up", "k"}, Description: "Move cursor up"},
 		{Type: CmdMoveDown, Keys: []string{"down", "j"}, Description: "Move cursor down"},
+		{Type: CmdMoveLeft, Keys: []string{"left", "h"}, Description: "Select previous option"},
+		{Type: CmdMoveRight, Keys: []string{"right", "l"}, Description: "Select next option"},
 	}
 )
 

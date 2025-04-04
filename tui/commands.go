@@ -177,14 +177,11 @@ func NewCommands(cfg config.Config) *Commands {
 	}
 }
 
-// FetchBuilds creates a command to fetch builds from the API
+// FetchBuilds fetches the list of builds from the API.
 func (c *Commands) FetchBuilds() tea.Cmd {
 	return func() tea.Msg {
-		builds, err := api.FetchBuilds(c.cfg.VersionFilter)
-		if err != nil {
-			return errMsg{err}
-		}
-		return buildsFetchedMsg{builds: builds, err: nil}
+		builds, err := api.FetchBuilds(c.cfg.VersionFilter, c.cfg.BuildType)
+		return buildsFetchedMsg{builds, err}
 	}
 }
 

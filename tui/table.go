@@ -194,24 +194,6 @@ func sumColumnWidths(columns []ColumnConfig) int {
 	return sum
 }
 
-// FormatBuildStatus converts a build state to a human-readable string with proper formatting
-// including download progress information if available
-func renderStatus(buildState model.BuildState, downloadState *model.DownloadState) string {
-	// If there's an active download, show simple status
-	if downloadState != nil && (downloadState.BuildState == model.StateDownloading || downloadState.BuildState == model.StateExtracting) {
-		if downloadState.BuildState == model.StateDownloading {
-			// Show simple "Downloading" status since details are in other columns
-			return model.StateDownloading.String()
-		} else if downloadState.BuildState == model.StateExtracting {
-			// Show simple "Extracting" status since details are in other columns
-			return model.StateExtracting.String()
-		}
-	}
-
-	// For non-downloading builds, show the regular state
-	return buildState.String()
-}
-
 // ColumnConfig represents the configuration for a table column
 type ColumnConfig struct {
 	Name  string

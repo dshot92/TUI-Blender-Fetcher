@@ -170,6 +170,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateSettingsView handles key events in the settings view
 func (m *Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Calculate total number of settable items (text inputs + dropdown)
+	totalItems := len(m.settingsInputs) + 1 // +1 for dropdown
+
 	// Handle different message types
 	switch msg := msg.(type) {
 	case tickMsg:
@@ -194,31 +197,65 @@ func (m *Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				case CmdToggleEditMode:
 					// Toggle edit mode for the focused setting
-					if m.editMode {
-						// Exit edit mode and save settings
-						m.editMode = false
-						updateFocusStyles(m, m.focusIndex)
-					} else {
-						// Enter edit mode for the focused field
-						m.editMode = true
-						m.settingsInputs[m.focusIndex].Focus()
-						updateFocusStyles(m, -1)
+					m.editMode = !m.editMode
+
+					// If we're focusing on a text input
+					if m.focusIndex < len(m.settingsInputs) {
+						if m.editMode {
+							// Enter edit mode for the focused field
+							m.settingsInputs[m.focusIndex].Focus()
+						} else {
+							// Exit edit mode
+							m.settingsInputs[m.focusIndex].Blur()
+						}
+					} else if m.focusIndex == len(m.settingsInputs) {
+						// Navigate vertical without changing build type selection
 					}
+
+					updateFocusStyles(m, m.focusIndex)
 					return m, nil
 
 				case CmdMoveUp:
 					if !m.editMode {
+						// Normal navigation between items
 						oldFocus := m.focusIndex
-						m.focusIndex = (m.focusIndex - 1 + len(m.settingsInputs)) % len(m.settingsInputs)
+						m.focusIndex = (m.focusIndex - 1 + totalItems) % totalItems
 						updateFocusStyles(m, oldFocus)
+					} else if m.focusIndex == len(m.settingsInputs) {
+						// We're on the build type selector
+						// Do nothing as up/down is handled by navigation
 					}
 					return m, nil
 
 				case CmdMoveDown:
 					if !m.editMode {
+						// Normal navigation between items
 						oldFocus := m.focusIndex
-						m.focusIndex = (m.focusIndex + 1) % len(m.settingsInputs)
+						m.focusIndex = (m.focusIndex + 1) % totalItems
 						updateFocusStyles(m, oldFocus)
+					} else if m.focusIndex == len(m.settingsInputs) {
+						// We're on the build type selector
+						// Do nothing as up/down is handled by navigation
+					}
+					return m, nil
+
+				case CmdMoveLeft:
+					// Add left navigation for build type horizontal selector
+					if m.focusIndex == len(m.settingsInputs) {
+						// Navigate horizontal build type options whether in edit mode or not
+						newIndex := (m.buildTypeIndex - 1 + len(m.buildTypeOptions)) % len(m.buildTypeOptions)
+						m.buildTypeIndex = newIndex
+						m.buildType = m.buildTypeOptions[newIndex]
+					}
+					return m, nil
+
+				case CmdMoveRight:
+					// Add right navigation for build type horizontal selector
+					if m.focusIndex == len(m.settingsInputs) {
+						// Navigate horizontal build type options whether in edit mode or not
+						newIndex := (m.buildTypeIndex + 1) % len(m.buildTypeOptions)
+						m.buildTypeIndex = newIndex
+						m.buildType = m.buildTypeOptions[newIndex]
 					}
 					return m, nil
 				}
@@ -227,10 +264,13 @@ func (m *Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Pass other keys to the input field if in edit mode
 		if m.editMode {
-			// Create a copy of the model to avoid pointer issues
-			updatedModel := m
-			cmd := updatedModel.updateInputs(msg)
-			return updatedModel, cmd
+			// If we're editing a text input, pass the key to it
+			if m.focusIndex < len(m.settingsInputs) {
+				// Create a copy of the model to avoid pointer issues
+				updatedModel := m
+				cmd := updatedModel.updateInputs(msg)
+				return updatedModel, cmd
+			}
 		}
 	}
 

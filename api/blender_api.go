@@ -11,12 +11,12 @@ import (
 	version "github.com/hashicorp/go-version" // Import version library
 )
 
-// API endpoint
-// const blenderAPIURL = "https://builder.blender.org/download/experimental/?format=json&v=1"
-
-const blenderAPIURL = "https://builder.blender.org/download/patch/?format=json&v=1"
-
-// const blenderAPIURL = "https://builder.blender.org/download/daily/?format=json&v=1"
+// API endpoint URLs for different build types
+const (
+	dailyBlenderAPIURL        = "https://builder.blender.org/download/daily/?format=json&v=1"
+	patchBlenderAPIURL        = "https://builder.blender.org/download/patch/?format=json&v=1"
+	experimentalBlenderAPIURL = "https://builder.blender.org/download/experimental/?format=json&v=1"
+)
 
 // API represents the Blender API client
 type API struct {
@@ -32,8 +32,22 @@ func NewAPI() *API {
 
 // FetchBuilds fetches the list of Blender builds from the official API,
 // filtering for the current OS/architecture, file extensions, and minimum version.
-func FetchBuilds(versionFilter string) ([]model.BlenderBuild, error) { // Added versionFilter param
-	resp, err := http.Get(blenderAPIURL)
+func FetchBuilds(versionFilter string, buildType string) ([]model.BlenderBuild, error) {
+	// Determine which API URL to use based on buildType
+	var apiURL string
+	switch buildType {
+	case "daily":
+		apiURL = dailyBlenderAPIURL
+	case "patch":
+		apiURL = patchBlenderAPIURL
+	case "experimental":
+		apiURL = experimentalBlenderAPIURL
+	default:
+		// Default to patch builds if not specified or invalid
+		apiURL = patchBlenderAPIURL
+	}
+
+	resp, err := http.Get(apiURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch data: %w", err)
 	}

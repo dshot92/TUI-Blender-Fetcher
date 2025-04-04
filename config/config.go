@@ -15,6 +15,7 @@ const AppName = "tui-blender-launcher" // Use lowercase app name
 type Config struct {
 	DownloadDir   string `toml:"download_dir"`
 	VersionFilter string `toml:"version_filter"` // e.g., "4.0", "3.6", or empty for no filter
+	BuildType     string `toml:"build_type"`     // "daily", "patch", or "experimental"
 }
 
 // DefaultConfig returns a Config struct with default values.
@@ -26,7 +27,8 @@ func DefaultConfig() Config {
 
 	return Config{
 		DownloadDir:   defaultDownloadPath,
-		VersionFilter: "",   // No filter by default
+		VersionFilter: "",      // No filter by default
+		BuildType:     "daily", // Default to patch builds
 	}
 }
 

@@ -24,6 +24,9 @@ type Model struct {
 	focusIndex       int
 	editMode         bool
 	settingsInputs   []textinput.Model
+	buildType        string   // Current build type selection
+	buildTypeIndex   int      // Index of selected build type
+	buildTypeOptions []string // Available build type options
 	progressBar      progress.Model
 	commands         *Commands
 	blenderRunning   string
@@ -43,22 +46,35 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 		progress.WithSolidFill(highlightColor),       // Use accent color for fill
 	)
 
+	// Setup build type options
+	buildTypeOptions := []string{"daily", "experimental", "patch"}
+	buildTypeIndex := 0
+	for i, opt := range buildTypeOptions {
+		if opt == cfg.BuildType {
+			buildTypeIndex = i
+			break
+		}
+	}
+
 	m := &Model{
-		config:          cfg,
-		commands:        NewCommands(cfg),
-		progressBar:     progModel,
-		sortColumn:      0,     // Default sort by Version
-		sortReversed:    true,  // Default descending sort (newest versions first)
-		blenderRunning:  "",    // No Blender running initially
-		editMode:        false, // Start in navigation mode, not edit mode
-		downloadStates:  make(map[string]*model.DownloadState),
-		lastRenderState: make(map[string]float64),
+		config:           cfg,
+		commands:         NewCommands(cfg),
+		progressBar:      progModel,
+		sortColumn:       0,     // Default sort by Version
+		sortReversed:     true,  // Default descending sort (newest versions first)
+		blenderRunning:   "",    // No Blender running initially
+		editMode:         false, // Start in navigation mode, not edit mode
+		downloadStates:   make(map[string]*model.DownloadState),
+		lastRenderState:  make(map[string]float64),
+		buildTypeOptions: buildTypeOptions,
+		buildTypeIndex:   buildTypeIndex,
+		buildType:        cfg.BuildType,
 	}
 
 	if needsSetup {
 		m.currentView = viewInitialSetup
-		m.settingsInputs = make([]textinput.Model, 2)
-		m.editMode = true // Enable edit mode immediately for initial setup
+		m.settingsInputs = make([]textinput.Model, 2) // Only need 2 inputs now (download dir and version filter)
+		m.editMode = true                             // Enable edit mode immediately for initial setup
 
 		var t textinput.Model
 		// Download Dir input

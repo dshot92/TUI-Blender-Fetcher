@@ -153,7 +153,7 @@ func (m *Model) handleShowSettings() (tea.Model, tea.Cmd) {
 
 	// Initialize settings inputs if not already done
 	if len(m.settingsInputs) == 0 {
-		m.settingsInputs = make([]textinput.Model, 3)
+		m.settingsInputs = make([]textinput.Model, 2)
 
 		// Download Dir input
 		var t textinput.Model
@@ -174,6 +174,15 @@ func (m *Model) handleShowSettings() (tea.Model, tea.Cmd) {
 	// Copy current config values
 	m.settingsInputs[0].SetValue(m.config.DownloadDir)
 	m.settingsInputs[1].SetValue(m.config.VersionFilter)
+
+	// Update build type selection with current build type
+	for i, opt := range m.buildTypeOptions {
+		if opt == m.config.BuildType {
+			m.buildTypeIndex = i
+			m.buildType = opt
+			break
+		}
+	}
 
 	// Focus first input (but don't focus for editing yet)
 	m.focusIndex = 0
@@ -269,11 +278,22 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Create maps for tracking existing builds both by hash and version
+	// Clear previous builds and only keep local ones
+	var localBuilds []model.BlenderBuild
+	for _, build := range m.builds {
+		if build.Status == model.StateLocal {
+			localBuilds = append(localBuilds, build)
+		}
+	}
+
+	// Start with only local builds
+	m.builds = localBuilds
+
+	// Create maps for tracking existing builds by hash and version
 	existingHashMap := make(map[string]bool)
 	existingVersionMap := make(map[string]bool)
 
-	// Populate maps from existing builds
+	// Populate maps from existing builds (local only)
 	for _, build := range m.builds {
 		if build.Hash != "" {
 			existingHashMap[build.Hash] = true
@@ -281,11 +301,9 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 		existingVersionMap[build.Version] = true
 
 		// Mark local builds specifically
-		if build.Status == model.StateLocal {
-			existingVersionMap[build.Version+"_local"] = true
-			if build.Hash != "" {
-				existingHashMap[build.Hash+"_local"] = true
-			}
+		existingVersionMap[build.Version+"_local"] = true
+		if build.Hash != "" {
+			existingHashMap[build.Hash+"_local"] = true
 		}
 	}
 
@@ -616,7 +634,7 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 
 // Helper function to update focus styling for settings inputs
 func updateFocusStyles(m *Model, oldFocus int) {
-	// Update the prompt style of all inputs
+	// Update the prompt style of text inputs
 	for i := 0; i < len(m.settingsInputs); i++ {
 		if i == m.focusIndex {
 			// For the selected item, use a highlighted prompt style
@@ -638,6 +656,8 @@ func updateFocusStyles(m *Model, oldFocus int) {
 		}
 	}
 
+	// No need to handle build type focus specifically - it's handled by the render function
+
 	// Special case when entering edit mode
 	if m.editMode && m.focusIndex >= 0 && m.focusIndex < len(m.settingsInputs) {
 		// Make sure the focused input is actually focused
@@ -650,6 +670,7 @@ func saveSettings(m *Model) (tea.Model, tea.Cmd) {
 	// Ensure we get the current values from the inputs
 	downloadDir := m.settingsInputs[0].Value()
 	versionFilter := m.settingsInputs[1].Value()
+	buildType := m.buildType
 
 	// Validate and sanitize inputs
 	if downloadDir == "" {
@@ -658,12 +679,16 @@ func saveSettings(m *Model) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Build type validation is not needed as dropdown guarantees valid values
+
 	// Check if version filter changed
 	versionFilterChanged := m.config.VersionFilter != versionFilter
+	buildTypeChanged := m.config.BuildType != buildType
 
 	// Update config values
 	m.config.DownloadDir = downloadDir
 	m.config.VersionFilter = versionFilter
+	m.config.BuildType = buildType
 
 	// Save the config
 	err := config.SaveConfig(m.config)
@@ -672,12 +697,15 @@ func saveSettings(m *Model) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Recreate commands with updated config
+	m.commands = NewCommands(m.config)
+
 	// Clear any errors and trigger rescans if needed
 	m.err = nil
 
 	// If returning to list view, apply version filter if it changed
 	if m.currentView == viewList {
-		if versionFilterChanged && len(m.builds) > 0 {
+		if (versionFilterChanged || buildTypeChanged) && len(m.builds) > 0 {
 			// Re-apply version filter and sort
 			if m.config.VersionFilter != "" {
 				m.builds = m.applyVersionFilter(m.builds)
