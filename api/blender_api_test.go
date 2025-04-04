@@ -83,7 +83,7 @@ func TestFetchBuilds(t *testing.T) {
 	// Create a custom client that redirects requests to our test server
 	http.DefaultClient = &http.Client{
 		Transport: &mockTransport{
-			apiURL: blenderAPIURL,
+			apiURL: dailyBlenderAPIURL,
 			server: server,
 		},
 	}
@@ -92,6 +92,7 @@ func TestFetchBuilds(t *testing.T) {
 	testCases := []struct {
 		name            string
 		versionFilter   string
+		buildType       string
 		expectError     bool
 		expectedCount   int
 		checkFirstBuild func(*testing.T, model.BlenderBuild)
@@ -99,6 +100,7 @@ func TestFetchBuilds(t *testing.T) {
 		{
 			name:          "no filter",
 			versionFilter: "",
+			buildType:     "daily",
 			expectError:   false,
 			expectedCount: 2, // Only the two Linux x86_64 with allowed extensions
 			checkFirstBuild: func(t *testing.T, build model.BlenderBuild) {
@@ -123,6 +125,7 @@ func TestFetchBuilds(t *testing.T) {
 		{
 			name:          "filter to 4.0",
 			versionFilter: "4.0",
+			buildType:     "daily",
 			expectError:   false,
 			expectedCount: 1, // Only the 4.0.0 Linux build
 			checkFirstBuild: func(t *testing.T, build model.BlenderBuild) {
@@ -134,6 +137,7 @@ func TestFetchBuilds(t *testing.T) {
 		{
 			name:            "filter to 5.0",
 			versionFilter:   "5.0",
+			buildType:       "daily",
 			expectError:     false,
 			expectedCount:   0, // No builds match
 			checkFirstBuild: nil,
@@ -141,6 +145,7 @@ func TestFetchBuilds(t *testing.T) {
 		{
 			name:            "invalid filter",
 			versionFilter:   "invalid",
+			buildType:       "daily",
 			expectError:     true,
 			expectedCount:   0,
 			checkFirstBuild: nil,
@@ -150,7 +155,7 @@ func TestFetchBuilds(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Call the function
-			builds, err := FetchBuilds(tc.versionFilter)
+			builds, err := FetchBuilds(tc.versionFilter, tc.buildType)
 
 			// Check error result
 			if tc.expectError && err == nil {
@@ -189,13 +194,13 @@ func TestFetchBuildsServerError(t *testing.T) {
 	// Create a custom client that redirects requests to our test server
 	http.DefaultClient = &http.Client{
 		Transport: &mockTransport{
-			apiURL: blenderAPIURL,
+			apiURL: dailyBlenderAPIURL,
 			server: server,
 		},
 	}
 
 	// Call the function
-	builds, err := FetchBuilds("")
+	builds, err := FetchBuilds("", "daily")
 
 	// Should return an error
 	if err == nil {
@@ -203,7 +208,7 @@ func TestFetchBuildsServerError(t *testing.T) {
 	}
 
 	// Builds should be nil or empty
-	if builds != nil && len(builds) > 0 {
+	if len(builds) > 0 {
 		t.Errorf("Expected no builds for server error, got %d", len(builds))
 	}
 }
@@ -224,13 +229,13 @@ func TestFetchBuildsInvalidJSON(t *testing.T) {
 	// Create a custom client that redirects requests to our test server
 	http.DefaultClient = &http.Client{
 		Transport: &mockTransport{
-			apiURL: blenderAPIURL,
+			apiURL: dailyBlenderAPIURL,
 			server: server,
 		},
 	}
 
 	// Call the function
-	builds, err := FetchBuilds("")
+	builds, err := FetchBuilds("", "daily")
 
 	// Should return an error
 	if err == nil {
@@ -238,7 +243,7 @@ func TestFetchBuildsInvalidJSON(t *testing.T) {
 	}
 
 	// Builds should be nil or empty
-	if builds != nil && len(builds) > 0 {
+	if len(builds) > 0 {
 		t.Errorf("Expected no builds for invalid JSON, got %d", len(builds))
 	}
 }
