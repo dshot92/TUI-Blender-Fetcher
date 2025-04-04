@@ -10,10 +10,15 @@ import (
 func (m *Model) renderSettingsContent(availableHeight int) string {
 	var b strings.Builder
 
+	// Create basic text styles
+	normalTextStyle := lp.NewStyle()
+
 	if m.currentView == viewInitialSetup {
-		welcome := lp.NewStyle().Bold(true).Foreground(lp.Color(colorSuccess)).Render("Welcome to TUI Blender Launcher")
-		b.WriteString(welcome + "\n\n")
-		b.WriteString("Please configure the following settings to get started:\n\n")
+		welcome := lp.NewStyle().Bold(true).Foreground(lp.Color(accentColor)).Render("Welcome to TUI Blender Launcher")
+		b.WriteString(welcome)
+		b.WriteString("\n\n")
+		b.WriteString(normalTextStyle.Render("Please configure the following settings to get started:"))
+		b.WriteString("\n\n")
 	}
 
 	settingsCount := len(m.settingsInputs)
@@ -44,14 +49,17 @@ func (m *Model) renderSettingsContent(availableHeight int) string {
 		labelStyle := lp.NewStyle().Bold(isFocused)
 
 		// Render setting label
-		b.WriteString(labelStyle.Render(settingLabels[i]) + "\n")
+		b.WriteString(labelStyle.Render(settingLabels[i]))
+		b.WriteString("\n")
 
 		// Render input field (will show as active if focused)
-		b.WriteString(m.settingsInputs[i].View() + "\n")
+		b.WriteString(m.settingsInputs[i].View())
+		b.WriteString("\n")
 
 		// Add description in smaller, dimmed text
 		descStyle := lp.NewStyle().Faint(true).Italic(true)
-		b.WriteString(descStyle.Render(settingDescriptions[i]) + "\n\n")
+		b.WriteString(descStyle.Render(settingDescriptions[i]))
+		b.WriteString("\n\n")
 	}
 
 	return lp.Place(m.terminalWidth, availableHeight, lp.Left, lp.Top, b.String())

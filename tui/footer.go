@@ -10,9 +10,10 @@ import (
 
 // renderBuildFooter renders the footer for the build list view
 func (m *Model) renderBuildFooter() string {
-	keyStyle := lp.NewStyle().Foreground(lp.Color(colorInfo))
-	sepStyle := lp.NewStyle().Foreground(lp.Color("240"))
+	keyStyle := lp.NewStyle().Foreground(lp.Color(highlightColor))
+	sepStyle := lp.NewStyle()
 	separator := sepStyle.Render(" · ")
+	newlineStyle := lp.NewStyle().Render("\n")
 
 	// General commands always available
 	generalCommands := []string{
@@ -63,14 +64,18 @@ func (m *Model) renderBuildFooter() string {
 
 	line1 := strings.Join(contextualCommands, separator)
 	line2 := strings.Join(generalCommands, separator)
-	return footerStyle.Width(m.terminalWidth).Render(line1 + "\n" + line2)
+
+	// Combine lines with styled newline
+	footerContent := line1 + newlineStyle + line2
+	return footerStyle.Width(m.terminalWidth).Render(footerContent)
 }
 
 // renderSettingsFooter renders the footer for the settings view
 func (m *Model) renderSettingsFooter() string {
-	keyStyle := lp.NewStyle().Foreground(lp.Color(colorInfo))
-	sepStyle := lp.NewStyle().Foreground(lp.Color("240"))
+	keyStyle := lp.NewStyle().Foreground(lp.Color(highlightColor))
+	sepStyle := lp.NewStyle()
 	separator := sepStyle.Render(" · ")
+	newlineStyle := lp.NewStyle().Render("\n")
 
 	line1 := sepStyle.Render("Settings")
 	line2 := strings.Join([]string{
@@ -79,5 +84,7 @@ func (m *Model) renderSettingsFooter() string {
 		fmt.Sprintf("%s Quit", keyStyle.Render("q")),
 	}, separator)
 
-	return footerStyle.Width(m.terminalWidth).Render(line1 + "\n" + line2)
+	// Combine lines with styled newline
+	footerContent := line1 + newlineStyle + line2
+	return footerStyle.Width(m.terminalWidth).Render(footerContent)
 }

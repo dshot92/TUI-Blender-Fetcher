@@ -8,13 +8,10 @@ import (
 // Constants for UI styling and configuration
 const (
 	// Color constants
-	colorSuccess    = "10"  // Green for success states
-	colorWarning    = "11"  // Yellow for warnings
-	colorInfo       = "12"  // Blue for info
-	colorError      = "9"   // Red for errors
-	colorNeutral    = "15"  // White for neutral text
-	colorBackground = "240" // Gray background
-	colorForeground = "255" // White foreground
+	textColor       = "255" // White for text
+	backgroundColor = "240" // Gray background
+	highlightColor  = "12"  // Blue for highlights
+	accentColor     = "10"  // Green for accents
 )
 
 // View states
@@ -144,11 +141,11 @@ func GetCommandsForView(view viewState) []KeyCommand {
 // Styles using lipgloss
 var (
 	// Style for the selected row
-	selectedRowStyle = lp.NewStyle().Background(lp.Color(colorBackground)).Foreground(lp.Color(colorForeground)).Align(lp.Left)
+	selectedRowStyle = lp.NewStyle().Background(lp.Color(backgroundColor)).Foreground(lp.Color(textColor)).Align(lp.Left)
 	// Style for regular rows (use default)
 	regularRowStyle = lp.NewStyle().Align(lp.Left)
 	// Footer style - remove margin and use minimal padding
-	footerStyle = lp.NewStyle().Padding(0, 0).Foreground(lp.Color(colorForeground))
+	footerStyle = lp.NewStyle().Padding(0, 0).Foreground(lp.Color(textColor))
 	// Define base styles for columns (can be customized further)
 
 )

@@ -2,6 +2,8 @@ package tui
 
 import (
 	"strings"
+
+	lp "github.com/charmbracelet/lipgloss"
 )
 
 func (m *Model) renderPageForView() string {
@@ -22,7 +24,8 @@ func (m *Model) renderPageForView() string {
 	header := renderHeader(m.terminalWidth)
 
 	// Create slim horizontal separators
-	separator := strings.Repeat(" ", m.terminalWidth)
+	separatorStyle := lp.NewStyle()
+	separator := separatorStyle.Render(strings.Repeat(" ", m.terminalWidth))
 
 	// Generate content and footer based on current view
 	var content string
@@ -42,14 +45,26 @@ func (m *Model) renderPageForView() string {
 	if renderedContentLines < contentHeight {
 		paddingLines = contentHeight - renderedContentLines
 	}
-	padding := strings.Repeat("\n", paddingLines)
 
-	// Create the combined view with proper spacing
-	return strings.Join([]string{
-		header,
-		separator,
-		content + padding,
-		separator,
-		footer,
-	}, "\n")
+	// Use lipgloss to create styled newlines for padding
+	paddingStyle := lp.NewStyle()
+	padding := paddingStyle.Render(strings.Repeat("\n", paddingLines))
+
+	// Create newline style for joining sections
+	newlineStyle := lp.NewStyle().Render("\n")
+
+	// Build the final view with all components properly styled
+	var view strings.Builder
+	view.WriteString(header)
+	view.WriteString(newlineStyle)
+	view.WriteString(separator)
+	view.WriteString(newlineStyle)
+	view.WriteString(content)
+	view.WriteString(padding)
+	view.WriteString(newlineStyle)
+	view.WriteString(separator)
+	view.WriteString(newlineStyle)
+	view.WriteString(footer)
+
+	return view.String()
 }

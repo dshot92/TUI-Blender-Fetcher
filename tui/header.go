@@ -9,7 +9,7 @@ func renderHeader(width int) string {
 	// Create a bold, centered title
 	return lp.NewStyle().
 		Bold(true).
-		Foreground(lp.Color("15")). // White text
+		Foreground(lp.Color(textColor)). // Use our textColor constant
 		Width(width).
 		Align(lp.Center).
 		Render("TUI Blender Launcher")

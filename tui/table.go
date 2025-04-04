@@ -162,6 +162,7 @@ func GetBuildColumns(terminalWidth int) []ColumnConfig {
 // Update RenderRows to pass terminalWidth and respect visibleRowsCount
 func RenderRows(m *Model, visibleRowsCount int) string {
 	var output strings.Builder
+	newlineStyle := lp.NewStyle().Render("\n")
 
 	// Get column configuration with computed widths
 	columns := GetBuildColumns(m.terminalWidth)
@@ -191,7 +192,9 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 
 		// Ensure each row has proper width
 		output.WriteString(rowText)
-		output.WriteString("\n")
+		if i < endIndex-1 {
+			output.WriteString(newlineStyle)
+		}
 	}
 
 	return output.String()
@@ -200,6 +203,7 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 // Update renderBuildContent to pass terminalWidth and handle scrolling
 func (m *Model) renderBuildContent(availableHeight int) string {
 	var output strings.Builder
+	newlineStyle := lp.NewStyle().Render("\n")
 
 	if len(m.builds) == 0 {
 		// No builds to display
@@ -210,7 +214,7 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 			availableHeight,
 			lp.Center,
 			lp.Top,
-			lp.NewStyle().Foreground(lp.Color(colorInfo)).Render(msg),
+			lp.NewStyle().Foreground(lp.Color(highlightColor)).Render(msg),
 		)
 	}
 
@@ -239,7 +243,7 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 	// Now apply bold and underline to the entire row to keep alignment consistent
 	styledHeader := lp.NewStyle().Bold(true).Underline(true).Render(headerRow)
 	if !strings.HasSuffix(styledHeader, "\n") {
-		styledHeader += "\n"
+		styledHeader += newlineStyle
 	}
 
 	// Add the styled header to output
