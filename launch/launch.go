@@ -43,8 +43,9 @@ func BlenderInNewTerminal(blenderExe string) error {
 		cmd = exec.Command("open", "-a", "Terminal", blenderExe)
 
 	case "windows":
-		// On Windows, use start command which uses the default terminal
-		cmd = exec.Command("cmd", "/C", "start", "cmd", "/K", blenderExe, "-con")
+		// On Windows, launch Blender directly with console mode
+		// This runs Blender with its console window visible without opening multiple terminals
+		cmd = exec.Command(blenderExe, "-con")
 
 	default:
 		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
