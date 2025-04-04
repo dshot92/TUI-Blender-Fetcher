@@ -356,6 +356,17 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 	stalledDownloads := make([]string, 0)
 	cancelledDownloads := make([]string, 0)
 
+	// If commands exists, sync download states from it
+	if m.commands != nil && m.commands.downloads != nil {
+		// Get states from download manager
+		states := m.commands.downloads.GetAllStates()
+
+		// Update our local copy
+		for id, state := range states {
+			m.downloadStates[id] = state
+		}
+	}
+
 	// Temporary copy of download states for use after unlock
 	tempStates := make(map[string]model.DownloadState)
 
@@ -378,6 +389,17 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 			if id == m.activeDownloadID {
 				// Queue progress bar update
 				progressCmds = append(progressCmds, m.progressBar.SetPercent(state.Progress))
+			}
+		}
+	}
+
+	// If we have no active download ID but there are active downloads, pick the first one
+	if m.activeDownloadID == "" && activeDownloads > 0 {
+		for id, state := range m.downloadStates {
+			if state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting {
+				m.activeDownloadID = id
+				progressCmds = append(progressCmds, m.progressBar.SetPercent(state.Progress))
+				break
 			}
 		}
 	}
@@ -409,6 +431,23 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 
 	// Update build statuses based on download states
 	needsSort := false
+	// Update all builds with their corresponding download states
+	for i := range m.builds {
+		buildID := m.builds[i].Version
+		if m.builds[i].Hash != "" {
+			buildID = m.builds[i].Version + "-" + m.builds[i].Hash[:8]
+		}
+
+		// Update status for active downloads
+		if state, ok := tempStates[buildID]; ok {
+			// Update build status from download state
+			if state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting {
+				m.builds[i].Status = state.BuildState
+				needsSort = true
+			}
+		}
+	}
+
 	// For each completed download, find the matching build and update its status
 	for _, id := range completedDownloads {
 		if state, ok := tempStates[id]; ok {

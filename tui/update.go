@@ -2,6 +2,7 @@ package tui
 
 import (
 	"TUI-Blender-Launcher/model"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/progress"
@@ -20,6 +21,14 @@ func (m *Model) Init() tea.Cmd {
 
 	// Add a program message listener to receive messages from background goroutines
 	cmds = append(cmds, cmdManager.ProgramMsgListener())
+
+	// Start a ticker for continuous UI updates to show download progress
+	cmds = append(cmds, cmdManager.StartTicker())
+
+	// Also start a regular UI refresh ticker using built-in tea.Tick
+	cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	}))
 
 	return tea.Batch(cmds...)
 }
@@ -74,6 +83,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmdManager := NewCommands(m.config)
 		cmds = append(cmds, cmdManager.DoDownload(msg.build))
 
+		// Make sure the ticker is running
+		cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+			return tickMsg(t)
+		}))
+
 		return m, tea.Batch(cmds...)
 
 	case downloadCompleteMsg:
@@ -105,10 +119,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		// Process tick messages for both views
+		// Sync download states before handling the tick
+		m.SyncDownloadStates()
+
+		// Create a command for the next tick
+		cmd := tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+			return tickMsg(t)
+		})
+
+		// Process the current tick based on view
+		var modelCmd tea.Cmd
+		var newModel tea.Model
 		if m.currentView == viewSettings || m.currentView == viewInitialSetup {
-			return m.updateSettingsView(msg)
+			newModel, modelCmd = m.updateSettingsView(msg)
+		} else {
+			newModel, modelCmd = m.updateListView(msg)
 		}
-		return m.updateListView(msg)
+
+		// Return both the new tick command and any model commands
+		return newModel, tea.Batch(cmd, modelCmd)
 	}
 
 	return m, nil

@@ -14,7 +14,7 @@ func (m *Model) renderSettingsContent(availableHeight int) string {
 	normalTextStyle := lp.NewStyle()
 
 	if m.currentView == viewInitialSetup {
-		welcome := lp.NewStyle().Bold(true).Foreground(lp.Color(accentColor)).Render("Welcome to TUI Blender Launcher")
+		welcome := lp.NewStyle().Bold(true).Foreground(lp.Color(highlightColor)).Render("Welcome to TUI Blender Launcher")
 		b.WriteString(welcome)
 		b.WriteString("\n\n")
 		b.WriteString(normalTextStyle.Render("Please configure the following settings to get started:"))

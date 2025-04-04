@@ -9,9 +9,8 @@ import (
 const (
 	// Color constants
 	textColor       = "255" // White for text
-	backgroundColor = "240" // Gray background
+	backgroundColor = "24"  // Gray background
 	highlightColor  = "12"  // Blue for highlights
-	accentColor     = "10"  // Green for accents
 )
 
 // View states

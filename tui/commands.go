@@ -260,6 +260,27 @@ func (c *Commands) DoDownload(build model.BlenderBuild) tea.Cmd {
 	}
 }
 
+// StartTicker starts a ticker to regularly update the UI during downloads
+func (c *Commands) StartTicker() tea.Cmd {
+	return func() tea.Msg {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		done := make(chan bool)
+
+		go func() {
+			for {
+				select {
+				case <-done:
+					return
+				case t := <-ticker.C:
+					programCh <- tickMsg(t)
+				}
+			}
+		}()
+
+		return nil
+	}
+}
+
 // Global channel for program messages - kept for compatibility
 var programCh = make(chan tea.Msg)
 

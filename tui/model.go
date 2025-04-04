@@ -36,10 +36,10 @@ type Model struct {
 func InitialModel(cfg config.Config, needsSetup bool) *Model {
 	// Configure the progress bar with fixed settings for consistent column display
 	progModel := progress.New(
-		progress.WithGradient("#FFAA00", "#FFD700"), // Orange gradient (was blue)
-		progress.WithoutPercentage(),                // No percentage display
-		progress.WithWidth(30),                      // Even wider progress bar
-		progress.WithSolidFill("#FFAA00"),           // Orange fill for visibility (was blue)
+		progress.WithGradient(highlightColor, "255"), // Use accent color with white gradient
+		progress.WithoutPercentage(),                 // No percentage display
+		progress.WithWidth(30),                       // Even wider progress bar
+		progress.WithSolidFill(highlightColor),       // Use accent color for fill
 	)
 
 	m := &Model{
@@ -90,7 +90,32 @@ func (m *Model) UpdateWindowSize(width, height int) {
 	m.terminalHeight = height
 }
 
+// SyncDownloadStates ensures the model has the latest download states from the commands manager
+func (m *Model) SyncDownloadStates() {
+	if m.commands == nil || m.commands.downloads == nil {
+		return
+	}
+
+	// Get all states from the download manager
+	states := m.commands.downloads.GetAllStates()
+	if states == nil {
+		return
+	}
+
+	// Lock to prevent concurrent map access
+	m.downloadMutex.Lock()
+	defer m.downloadMutex.Unlock()
+
+	// Update our local copy of states
+	for id, state := range states {
+		m.downloadStates[id] = state
+	}
+}
+
 func (m *Model) View() string {
+	// Sync download states before rendering
+	m.SyncDownloadStates()
+
 	// Render the page using the custom render function.
 	return m.renderPageForView()
 }

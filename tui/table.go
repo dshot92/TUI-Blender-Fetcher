@@ -4,7 +4,6 @@ import (
 	"TUI-Blender-Launcher/model"
 	"fmt"
 	"strings"
-	"time"
 
 	lp "github.com/charmbracelet/lipgloss"
 )
@@ -49,29 +48,133 @@ var (
 // Render renders a single row with the given column configuration
 func (r Row) Render(columns []ColumnConfig) string {
 	var cells []string
-	for _, col := range columns {
-		var cellContent string
-		switch col.Key {
-		case "Version":
-			cellContent = r.Build.Version
-		case "Status":
-			cellContent = r.Build.Status.String()
-		case "Branch":
-			cellContent = r.Build.Branch
-		case "Type":
-			cellContent = r.Build.ReleaseCycle
-		case "Hash":
-			cellContent = r.Build.Hash
-		case "Size":
-			cellContent = model.FormatByteSize(r.Build.Size)
-		case "Build Date":
-			cellContent = model.FormatBuildDate(r.Build.BuildDate)
+
+	// Special handling for downloads and extractions
+	isDownloading := r.Build.Status == model.StateDownloading && r.Status != nil
+	isExtracting := r.Build.Status == model.StateExtracting && r.Status != nil
+
+	// Handle special case for download/extract - we'll render empty cells for Type, Hash, Size, Build Date
+	// and only display content in Version, Status, and Branch columns
+	if isDownloading || isExtracting {
+		for _, col := range columns {
+			var cellContent string
+
+			switch col.Key {
+			case "Version":
+				cellContent = r.Build.Version
+			case "Status":
+				if isDownloading {
+					cellContent = model.StateDownloading.String()
+				} else if isExtracting {
+					cellContent = model.StateExtracting.String()
+				}
+			case "Branch":
+				// Show download speed in Branch column when downloading
+				if isDownloading && r.Status.Speed > 0 {
+					cellContent = fmt.Sprintf("%.1f MB/s", r.Status.Speed/1024/1024)
+				} else if isExtracting {
+					// Show percentage in Branch column for extraction
+					cellContent = fmt.Sprintf("%.1f%%", r.Status.Progress*100)
+				}
+			case "Type", "Hash", "Size", "Build Date":
+				// These columns will be replaced by progress bar
+				cellContent = ""
+			}
+
+			cells = append(cells, col.Style(cellContent))
 		}
-		cells = append(cells, col.Style(cellContent))
+	} else {
+		// Normal rendering for non-downloading builds
+		for _, col := range columns {
+			var cellContent string
+			switch col.Key {
+			case "Version":
+				cellContent = r.Build.Version
+			case "Status":
+				cellContent = r.Build.Status.String()
+			case "Branch":
+				cellContent = r.Build.Branch
+			case "Type":
+				cellContent = r.Build.ReleaseCycle
+			case "Hash":
+				cellContent = r.Build.Hash
+			case "Size":
+				cellContent = model.FormatByteSize(r.Build.Size)
+			case "Build Date":
+				cellContent = model.FormatBuildDate(r.Build.BuildDate)
+			}
+			cells = append(cells, col.Style(cellContent))
+		}
 	}
 
 	// Join cells horizontally for the row
 	rowString := lp.JoinHorizontal(lp.Left, cells...)
+
+	// Apply a progress bar for downloading/extracting across Type to Build Date columns
+	if (isDownloading || isExtracting) && r.Status != nil {
+		// Find the beginning of the Type column
+		typeColIndex := -1
+		typePosition := 0
+
+		// Calculate the position of where to insert the progress bar
+		for i, col := range columns {
+			if i < 3 { // Version, Status, Branch columns
+				typePosition += col.Width
+			}
+			if col.Key == "Type" {
+				typeColIndex = i
+				break
+			}
+		}
+
+		if typeColIndex >= 0 {
+			// Calculate progress bar width - rest of the columns
+			progressBarWidth := 0
+			for i := typeColIndex; i < len(columns); i++ {
+				progressBarWidth += columns[i].Width
+			}
+
+			// Create a progress bar
+			progress := r.Status.Progress
+			if progress < 0 {
+				progress = 0
+			}
+			if progress > 1 {
+				progress = 1
+			}
+
+			// Create progress bar visual
+			completedWidth := int(float64(progressBarWidth) * progress)
+			if completedWidth > progressBarWidth {
+				completedWidth = progressBarWidth
+			}
+
+			remainingWidth := progressBarWidth - completedWidth
+
+			// Create the progress bar with orange color for the completed portion
+			progressBar := ""
+			if completedWidth > 0 {
+				progressBar += lp.NewStyle().
+					Background(lp.Color(highlightColor)).
+					Foreground(lp.Color(textColor)).
+					Width(completedWidth).
+					Render("")
+			}
+
+			if remainingWidth > 0 {
+				progressBar += lp.NewStyle().
+					Background(lp.Color(backgroundColor)).
+					Width(remainingWidth).
+					Render("")
+			}
+
+			// Create a new row string with the progress bar inserted at the Type column
+			if typePosition < len(rowString) {
+				// Replace from Type column onward with progress bar
+				rowString = rowString[:typePosition] + progressBar
+			}
+		}
+	}
 
 	// Apply appropriate style consistently across the entire row
 	if r.IsSelected {
@@ -94,23 +197,13 @@ func sumColumnWidths(columns []ColumnConfig) int {
 // FormatBuildStatus converts a build state to a human-readable string with proper formatting
 // including download progress information if available
 func renderStatus(buildState model.BuildState, downloadState *model.DownloadState) string {
-	// If there's an active download, show progress information
+	// If there's an active download, show simple status
 	if downloadState != nil && (downloadState.BuildState == model.StateDownloading || downloadState.BuildState == model.StateExtracting) {
 		if downloadState.BuildState == model.StateDownloading {
-			// Show download progress with percentage and speed
-			if downloadState.Total > 0 {
-				percent := (float64(downloadState.Current) / float64(downloadState.Total)) * 100
-				speed := downloadState.Speed
-				if speed == 0 && !downloadState.StartTime.IsZero() {
-					elapsedSecs := time.Since(downloadState.StartTime).Seconds()
-					if elapsedSecs > 0 {
-						speed = float64(downloadState.Current) / elapsedSecs
-					}
-				}
-				return fmt.Sprintf("%.1f%% (%.1f MB/s)", percent, speed/1024/1024)
-			}
+			// Show simple "Downloading" status since details are in other columns
 			return model.StateDownloading.String()
 		} else if downloadState.BuildState == model.StateExtracting {
+			// Show simple "Extracting" status since details are in other columns
 			return model.StateExtracting.String()
 		}
 	}
@@ -184,7 +277,15 @@ func RenderRows(m *Model, visibleRowsCount int) string {
 		}
 
 		// Get download state if exists
-		var downloadState *model.DownloadState = m.commands.downloads.GetState(buildID)
+		var downloadState *model.DownloadState = nil
+
+		// Check in current model's download states
+		if state, exists := m.downloadStates[buildID]; exists {
+			downloadState = state
+		} else {
+			// Fallback to checking in commands downloads manager
+			downloadState = m.commands.downloads.GetState(buildID)
+		}
 
 		// Create and render row; highlight if this is the current row
 		row := NewRow(build, i == m.cursor, downloadState)
