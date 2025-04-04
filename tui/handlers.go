@@ -244,6 +244,12 @@ func (m *Model) handleLocalBuildsScanned(msg localBuildsScannedMsg) (tea.Model, 
 
 	// Set builds to local builds only, don't fetch online builds automatically
 	m.builds = msg.builds
+
+	// Apply version filter if set
+	if m.config.VersionFilter != "" {
+		m.builds = m.applyVersionFilter(m.builds)
+	}
+
 	// Sort builds immediately for better visual feedback
 	m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
 
@@ -309,6 +315,11 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 		existingVersionMap[build.Version] = true
 	}
 
+	// Apply version filter if set
+	if m.config.VersionFilter != "" {
+		m.builds = m.applyVersionFilter(m.builds)
+	}
+
 	// Sort the builds after merging
 	m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
 
@@ -322,10 +333,38 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 	return m, m.commands.UpdateBuildStatus(m.builds)
 }
 
+// applyVersionFilter filters builds by version, keeping only builds with version >= filter value
+func (m *Model) applyVersionFilter(builds []model.BlenderBuild) []model.BlenderBuild {
+	if m.config.VersionFilter == "" {
+		return builds
+	}
+
+	filtered := make([]model.BlenderBuild, 0)
+	for _, build := range builds {
+		// Always keep local builds regardless of version filter
+		if build.Status == model.StateLocal {
+			filtered = append(filtered, build)
+			continue
+		}
+
+		// Compare versions (simple string comparison works for Blender's versioning scheme)
+		if build.Version >= m.config.VersionFilter {
+			filtered = append(filtered, build)
+		}
+	}
+	return filtered
+}
+
 // handleBuildsUpdated finalizes the build list after determining local/online status
 func (m *Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
 	// Replace builds with updated ones that have correct status
 	m.builds = msg.builds
+
+	// Apply version filter if set
+	if m.config.VersionFilter != "" {
+		m.builds = m.applyVersionFilter(m.builds)
+	}
+
 	m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
 
 	// Ensure cursor is within bounds and visible
@@ -619,6 +658,9 @@ func saveSettings(m *Model) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Check if version filter changed
+	versionFilterChanged := m.config.VersionFilter != versionFilter
+
 	// Update config values
 	m.config.DownloadDir = downloadDir
 	m.config.VersionFilter = versionFilter
@@ -633,9 +675,21 @@ func saveSettings(m *Model) (tea.Model, tea.Cmd) {
 	// Clear any errors and trigger rescans if needed
 	m.err = nil
 
-	// If returning to list view, only trigger a scan if no builds are present
+	// If returning to list view, apply version filter if it changed
 	if m.currentView == viewList {
-		if len(m.builds) == 0 {
+		if versionFilterChanged && len(m.builds) > 0 {
+			// Re-apply version filter and sort
+			if m.config.VersionFilter != "" {
+				m.builds = m.applyVersionFilter(m.builds)
+			}
+			m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
+
+			// Reset cursor if needed
+			if len(m.builds) > 0 && m.cursor >= len(m.builds) {
+				m.cursor = len(m.builds) - 1
+				m.startIndex = 0
+			}
+		} else if len(m.builds) == 0 {
 			return m, m.commands.ScanLocalBuilds()
 		}
 		return m, nil
