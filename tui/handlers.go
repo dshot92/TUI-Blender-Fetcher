@@ -300,11 +300,6 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 		}
 		existingVersionMap[build.Version] = true
 
-		// Mark local builds specifically
-		existingVersionMap[build.Version+"_local"] = true
-		if build.Hash != "" {
-			existingHashMap[build.Hash+"_local"] = true
-		}
 	}
 
 	// Add only builds that don't already exist or would provide new information
@@ -312,15 +307,6 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 		// Skip if hash already exists (more precise duplicate detection)
 		if build.Hash != "" && existingHashMap[build.Hash] {
 			continue
-		}
-
-		// Also skip if this version is already installed locally
-		if existingVersionMap[build.Version+"_local"] {
-			// Skip builds with same version as a local build unless they have different hash
-			// (might be an update)
-			if build.Hash == "" || existingHashMap[build.Hash+"_local"] {
-				continue
-			}
 		}
 
 		// Add the build to our list
