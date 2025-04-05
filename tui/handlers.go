@@ -433,7 +433,6 @@ func (m *Model) handleBlenderExec(msg model.BlenderExecMsg) (tea.Model, tea.Cmd)
 
 // handleDownloadProgress processes tick messages for download progress updates
 func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
-	m.downloadMutex.Lock() // Lock early
 
 	activeDownloads := 0
 	var progressCmds []tea.Cmd
@@ -502,37 +501,6 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-
-	// Clean up completed/stalled/cancelled downloads
-	for _, id := range completedDownloads {
-		delete(m.downloadStates, id)
-		delete(m.lastRenderState, id)
-		delete(m.lastRenderState, id+"_progressbar")
-		// Clear activeDownloadID if this was the active download
-		if id == m.activeDownloadID {
-			m.activeDownloadID = ""
-		}
-	}
-	for _, id := range stalledDownloads {
-		delete(m.downloadStates, id)
-		delete(m.lastRenderState, id)
-		delete(m.lastRenderState, id+"_progressbar")
-		// Clear activeDownloadID if this was the active download
-		if id == m.activeDownloadID {
-			m.activeDownloadID = ""
-		}
-	}
-	for _, id := range cancelledDownloads {
-		delete(m.downloadStates, id)
-		delete(m.lastRenderState, id)
-		delete(m.lastRenderState, id+"_progressbar")
-		// Clear activeDownloadID if this was the active download
-		if id == m.activeDownloadID {
-			m.activeDownloadID = ""
-		}
-	}
-
-	m.downloadMutex.Unlock() // Unlock after map modifications
 
 	// Update build statuses for downloads/extractions to ensure they display correctly
 	needsSort := false

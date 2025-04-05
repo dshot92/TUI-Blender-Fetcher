@@ -3,7 +3,6 @@ package tui
 import (
 	"TUI-Blender-Launcher/config"
 	"TUI-Blender-Launcher/model"
-	"sync"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -29,9 +28,7 @@ type Model struct {
 	buildTypeOptions []string // Available build type options
 	progressBar      progress.Model
 	commands         *Commands
-	blenderRunning   string
 	activeDownloadID string // Store the active download build ID for tracking
-	downloadMutex    sync.Mutex
 	downloadStates   map[string]*model.DownloadState
 	lastRenderState  map[string]float64 // Track last rendered progress for each download
 }
@@ -62,7 +59,6 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 		progressBar:      progModel,
 		sortColumn:       0,     // Default sort by Version
 		sortReversed:     true,  // Default descending sort (newest versions first)
-		blenderRunning:   "",    // No Blender running initially
 		editMode:         false, // Start in navigation mode, not edit mode
 		downloadStates:   make(map[string]*model.DownloadState),
 		lastRenderState:  make(map[string]float64),
@@ -119,10 +115,6 @@ func (m *Model) SyncDownloadStates() {
 	if states == nil {
 		return
 	}
-
-	// Lock to prevent concurrent map access
-	m.downloadMutex.Lock()
-	defer m.downloadMutex.Unlock()
 
 	// Update our local copy of states
 	for id, state := range states {

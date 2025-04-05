@@ -134,14 +134,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var nextTickTime time.Duration = time.Millisecond * 500
 
 		// Check if we have active downloads and use faster refresh if needed
-		m.downloadMutex.Lock()
 		activeDownloads := 0
 		for _, state := range m.downloadStates {
 			if state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting {
 				activeDownloads++
 			}
 		}
-		m.downloadMutex.Unlock()
 
 		// Use faster refresh rate during downloads/extractions
 		if activeDownloads > 0 {
