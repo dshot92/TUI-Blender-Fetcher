@@ -6,57 +6,37 @@ import (
 	lp "github.com/charmbracelet/lipgloss"
 )
 
-// renderSettingsContent renders the settings page content
+// renderSettingsContent renders the settings page content with a cleaner structure.
 func (m *Model) renderSettingsContent(availableHeight int) string {
 	var b strings.Builder
 
-	// Define all styles once at the beginning
+	// Define global styles for the settings rendering
 	normalTextStyle := lp.NewStyle()
 	welcomeStyle := lp.NewStyle().Bold(true).Foreground(lp.Color(highlightColor))
 
-	// Enhanced unified styling - use color constants from const.go
-	primaryColor := lp.Color(highlightColor) // Use the highlight color (blue) from constants
-	subtleColor := lp.Color("240")           // Slightly lighter gray for better readability
-	highlightBg := lp.Color("236")           // Slightly darker background for highlights
+	primaryColor := lp.Color(highlightColor) // Use highlight color (blue) from constants
+	subtleColor := lp.Color(highlightColor)  // Use text color (white) from constants
+	highlightBg := lp.Color(backgroundColor) // Use background color (gray) from constants
 
-	// Label styling (consistent for all settings)
-	labelStyle := lp.NewStyle().
-		Foreground(primaryColor).
-		Bold(true)
-
+	labelStyle := lp.NewStyle().Foreground(primaryColor).Bold(true)
 	labelStyleFocused := labelStyle.
 		Foreground(lp.Color(highlightColor)).
-		Background(highlightBg).
-		Padding(0, 1).
+		Background(lp.Color(highlightBg)).
 		Bold(true)
 
-	// Input field styling - removed border, reduced padding
-	inputStyle := lp.NewStyle().
-		MarginLeft(2)
+	inputStyle := lp.NewStyle().MarginLeft(2)
+	inputStyleFocused := inputStyle.Foreground(lp.Color(textColor))
 
-	inputStyleFocused := inputStyle.
-		Foreground(lp.Color(textColor))
-
-	// Description styling
-	descStyle := lp.NewStyle().
-		Foreground(subtleColor).
-		Italic(true).
-		MarginLeft(2)
-
-	// Section styling for each setting group - reduced padding
+	descStyle := lp.NewStyle().Foreground(subtleColor).Italic(true)
 	sectionStyle := lp.NewStyle()
 
-	// Horizontal option styling for build type
-	optionStyle := lp.NewStyle().
-		Padding(0, 1).
-		MarginRight(1)
-
+	optionStyle := lp.NewStyle().MarginRight(1)
 	selectedOptionStyle := lp.NewStyle().
 		Background(lp.Color(highlightColor)).
 		Foreground(lp.Color(textColor)).
-		Padding(0, 1).
 		MarginRight(1)
 
+	// Display welcome messages if in the initial setup view
 	if m.currentView == viewInitialSetup {
 		b.WriteString(welcomeStyle.Render("Welcome to TUI Blender Launcher"))
 		b.WriteString("\n\n")
@@ -64,82 +44,78 @@ func (m *Model) renderSettingsContent(availableHeight int) string {
 		b.WriteString("\n\n")
 	}
 
-	// Count of text input settings
-	settingsCount := len(m.settingsInputs)
-
-	// Setting labels, matching the order in initialization
-	settingLabels := []string{
-		"Download Directory:",
-		"Version Filter:",
-		"Build Type:",
-	}
-
-	// Descriptions for each setting to help users understand
-	settingDescriptions := []string{
-		"Where Blender builds will be downloaded and installed",
-		"Only show versions matching this filter (e.g., '4.0' or '3.6')",
-		"Select which build type to fetch (daily, patch, experimental)",
-	}
-
-	// Render all settings (including text inputs and horizontal build type selector)
-	for i := 0; i <= settingsCount; i++ {
-		// Skip if we don't have a corresponding label/description
-		if i >= len(settingLabels) || i >= len(settingDescriptions) {
-			continue
-		}
-
-		sectionContent := strings.Builder{}
-
-		// Determine if this item is focused (even without edit mode)
-		isFocused := i == m.focusIndex
-
-		// Render setting label with appropriate style
+	// Helper to render a text input setting
+	renderTextSetting := func(index int, label, description string) string {
+		var sb strings.Builder
+		isFocused := (m.focusIndex == index)
 		if isFocused {
-			sectionContent.WriteString(labelStyleFocused.Render(settingLabels[i]))
+			sb.WriteString(labelStyleFocused.Render(label))
 		} else {
-			sectionContent.WriteString(labelStyle.Render(settingLabels[i]))
+			sb.WriteString(labelStyle.Render(label))
 		}
-		sectionContent.WriteString("\n")
+		sb.WriteString(" ")
 
-		// Render input field or horizontal build type selector
-		if i < settingsCount {
-			// This is for Download Directory and Version Filter text inputs
-			inputView := m.settingsInputs[i].View()
-
-			// Add special styling for focused input
-			if isFocused {
-				sectionContent.WriteString(inputStyleFocused.Render(inputView))
-			} else {
-				sectionContent.WriteString(inputStyle.Render(inputView))
-			}
+		inputView := m.settingsInputs[index].View()
+		if isFocused {
+			sb.WriteString(inputStyleFocused.Render(inputView))
 		} else {
-			// This is only for the Build Type horizontal selector
-			var horizontalOptions strings.Builder
-
-			// Get the currently selected build type
-			selectedBuildType := m.buildType
-
-			for _, option := range m.buildTypeOptions {
-				if option == selectedBuildType {
-					horizontalOptions.WriteString(selectedOptionStyle.Render(option))
-				} else {
-					horizontalOptions.WriteString(optionStyle.Render(option))
-				}
-			}
-
-			horizontalOptions.WriteString("  (← → to select)")
-
-			sectionContent.WriteString(inputStyle.Render(horizontalOptions.String()))
+			sb.WriteString(inputStyle.Render(inputView))
 		}
-		sectionContent.WriteString("\n")
-
-		// Add description
-		sectionContent.WriteString(descStyle.Render(settingDescriptions[i]))
-
-		// Add the complete section to the builder
-		b.WriteString(sectionStyle.Render(sectionContent.String()))
-		b.WriteString("\n")
+		sb.WriteString("\n")
+		sb.WriteString(descStyle.Render(description))
+		sb.WriteString("\n")
+		// Add a divider line
+		sb.WriteString("\n")
+		return sectionStyle.Render(sb.String())
 	}
+
+	// Helper to render the build type (horizontal selector) setting
+	renderBuildTypeSetting := func(label, description string) string {
+		var sb strings.Builder
+		// Focused when the build type setting is active (last setting)
+		isFocused := (m.focusIndex == len(m.settingsInputs))
+		if isFocused {
+			sb.WriteString(labelStyleFocused.Render(label))
+		} else {
+			sb.WriteString(labelStyle.Render(label))
+		}
+		sb.WriteString(" ")
+
+		var horizontalOptions strings.Builder
+		selectedBuildType := m.buildType
+		for _, option := range m.buildTypeOptions {
+			if option == selectedBuildType {
+				horizontalOptions.WriteString(selectedOptionStyle.Render(option))
+			} else {
+				horizontalOptions.WriteString(optionStyle.Render(option))
+			}
+		}
+		sb.WriteString(inputStyle.Render(horizontalOptions.String()))
+		sb.WriteString("\n")
+		sb.WriteString(descStyle.Render(description))
+		sb.WriteString("\n")
+		// No divider for the last setting
+		return sectionStyle.Render(sb.String())
+	}
+
+	// Render each individual setting in a clear and separate block
+
+	// Download Directory setting (text input)
+	b.WriteString(renderTextSetting(0,
+		"Download Directory:",
+		"Where Blender builds will be downloaded and installed"))
+	b.WriteString("\n")
+
+	// Version Filter setting (text input)
+	b.WriteString(renderTextSetting(1,
+		"Version Filter:",
+		"Only show versions matching this filter (e.g., '4.0' or '3.6')"))
+	b.WriteString("\n")
+
+	// Build Type setting (horizontal selector)
+	b.WriteString(renderBuildTypeSetting(
+		"Build Type:",
+		"Select which build type to fetch (daily, patch, experimental) <- to select ->"))
 
 	return lp.Place(m.terminalWidth, availableHeight, lp.Left, lp.Top, b.String())
 }
