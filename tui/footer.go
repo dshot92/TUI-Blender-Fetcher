@@ -17,7 +17,7 @@ func (m *Model) renderBuildFooter() string {
 
 	// General commands always available
 	generalCommands := []string{
-		fmt.Sprintf("%s Fetch online builds", keyStyle.Render("f")),
+		fmt.Sprintf("%s Fetch", keyStyle.Render("f")),
 		fmt.Sprintf("%s Reverse Sort", keyStyle.Render("r")),
 		fmt.Sprintf("%s Settings", keyStyle.Render("s")),
 		fmt.Sprintf("%s Quit", keyStyle.Render("q")),
@@ -29,15 +29,15 @@ func (m *Model) renderBuildFooter() string {
 		build := m.builds[m.cursor]
 		if build.Status == model.StateLocal {
 			contextualCommands = append(contextualCommands,
-				fmt.Sprintf("%s Launch Build", keyStyle.Render("enter")),
-				fmt.Sprintf("%s Open build Dir", keyStyle.Render("o")),
+				fmt.Sprintf("%s Launch", keyStyle.Render("enter")),
+				fmt.Sprintf("%s Open Dir", keyStyle.Render("o")),
 			)
 			contextualCommands = append(contextualCommands,
-				fmt.Sprintf("%s Delete build", keyStyle.Render("x")),
+				fmt.Sprintf("%s Delete", keyStyle.Render("x")),
 			)
 		} else if build.Status == model.StateOnline || build.Status == model.StateUpdate {
 			contextualCommands = append(contextualCommands,
-				fmt.Sprintf("%s Download build", keyStyle.Render("d")),
+				fmt.Sprintf("%s Download", keyStyle.Render("d")),
 			)
 		}
 
@@ -51,13 +51,13 @@ func (m *Model) renderBuildFooter() string {
 			// Remove any existing download command
 			filtered := []string{}
 			for _, cmd := range contextualCommands {
-				if !strings.Contains(cmd, "Download build") {
+				if !strings.Contains(cmd, "Download") {
 					filtered = append(filtered, cmd)
 				}
 			}
 			contextualCommands = filtered
 			contextualCommands = append(contextualCommands,
-				fmt.Sprintf("%s Cancel download", keyStyle.Render("x")),
+				fmt.Sprintf("%s Cancel", keyStyle.Render("x")),
 			)
 		}
 	}
@@ -77,7 +77,6 @@ func (m *Model) renderSettingsFooter() string {
 	separator := sepStyle.Render(" · ")
 	newlineStyle := lp.NewStyle().Render("\n")
 
-	line1 := sepStyle.Render("Settings")
 	line2 := strings.Join([]string{
 		fmt.Sprintf("%s Edit setting", keyStyle.Render("enter")),
 		fmt.Sprintf("%s Save and exit", keyStyle.Render("s")),
@@ -85,6 +84,6 @@ func (m *Model) renderSettingsFooter() string {
 	}, separator)
 
 	// Combine lines with styled newline
-	footerContent := line1 + newlineStyle + line2
+	footerContent := newlineStyle + line2
 	return footerStyle.Width(m.terminalWidth).Render(footerContent)
 }
