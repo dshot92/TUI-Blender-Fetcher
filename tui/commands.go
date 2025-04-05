@@ -193,6 +193,32 @@ func (c *Commands) ScanLocalBuilds() tea.Cmd {
 	}
 }
 
+// CheckUpdateAvailable determines if an update is available for a local build by comparing build dates, branch, and release_cycle.
+func CheckUpdateAvailable(localBuild, onlineBuild model.BlenderBuild) model.BuildState {
+	// If online build hash is present and matches local build hash, treat as identical (no update)
+	if onlineBuild.Hash != "" && onlineBuild.Hash == localBuild.Hash {
+		return model.StateLocal
+	}
+
+	// Ensure version, branch, and release_cycle all match; if not, treat as no local match
+	if localBuild.Version != onlineBuild.Version || localBuild.Branch != onlineBuild.Branch || localBuild.ReleaseCycle != onlineBuild.ReleaseCycle {
+		return model.StateOnline
+	}
+
+	// If local build date is not set, assume update is available
+	if localBuild.BuildDate.Time().IsZero() {
+		return model.StateUpdate
+	}
+	if onlineBuild.BuildDate.Time().IsZero() {
+		return model.StateOnline
+	}
+
+	if onlineBuild.BuildDate.Time().After(localBuild.BuildDate.Time()) {
+		return model.StateUpdate
+	}
+	return model.StateLocal
+}
+
 // UpdateBuildStatus creates a command to update status of builds based on local scan
 func (c *Commands) UpdateBuildStatus(onlineBuilds []model.BlenderBuild) tea.Cmd {
 	return func() tea.Msg {
@@ -211,47 +237,60 @@ func (c *Commands) UpdateBuildStatus(onlineBuilds []model.BlenderBuild) tea.Cmd 
 			}
 		}
 
-		// Copy builds to avoid modifying originals, showing all builds
-		updatedBuilds := make([]model.BlenderBuild, 0, len(onlineBuilds))
-
-		// Update status for each build
-		for _, build := range onlineBuilds {
-			// Create a copy of the build to update
-			updatedBuild := build
-
-			// First try to match by hash (more precise)
-			if build.Hash != "" {
-				if localBuild, found := localBuildHashMap[build.Hash]; found {
-					if local.CheckUpdateAvailable(localBuild, build) {
-						updatedBuild.Status = model.StateUpdate
-					} else {
-						updatedBuild.Status = model.StateLocal
-					}
-					updatedBuilds = append(updatedBuilds, updatedBuild)
-					continue
+		// Group online builds by composite key: version|branch|releaseCycle
+		grouped := make(map[string]model.BlenderBuild)
+		for _, onlineBuild := range onlineBuilds {
+			var localBuild *model.BlenderBuild
+			// Try to find a matching local build by hash
+			if onlineBuild.Hash != "" {
+				if lb, found := localBuildHashMap[onlineBuild.Hash]; found {
+					localBuild = &lb
+				}
+			}
+			// Fallback to matching by version
+			if localBuild == nil {
+				if lb, found := localBuildMap[onlineBuild.Version]; found {
+					localBuild = &lb
 				}
 			}
 
-			// Fall back to version matching ONLY for builds without hash
-			if build.Hash == "" {
-				if localBuild, found := localBuildMap[build.Version]; found {
-					if local.CheckUpdateAvailable(localBuild, build) {
-						updatedBuild.Status = model.StateUpdate
-					} else {
-						updatedBuild.Status = model.StateLocal
-					}
-				} else {
-					updatedBuild.Status = model.StateOnline
+			var status model.BuildState
+			if localBuild == nil {
+				status = model.StateOnline
+			} else {
+				switch CheckUpdateAvailable(*localBuild, onlineBuild) {
+				case model.StateUpdate:
+					status = model.StateUpdate
+				case model.StateLocal:
+					status = model.StateLocal
+				default:
+					status = model.StateOnline
+				}
+			}
+
+			updated := onlineBuild
+			updated.Status = status
+
+			// Composite key: version|branch|releaseCycle
+			key := onlineBuild.Version + "|" + onlineBuild.Branch + "|" + onlineBuild.ReleaseCycle
+
+			// If an entry already exists, prefer the one with StateUpdate over StateLocal
+			if existing, exists := grouped[key]; exists {
+				if existing.Status == model.StateLocal && updated.Status == model.StateUpdate {
+					grouped[key] = updated
 				}
 			} else {
-				// If hash is present but doesn't match any local build, it's an online build
-				updatedBuild.Status = model.StateOnline
+				grouped[key] = updated
 			}
-
-			updatedBuilds = append(updatedBuilds, updatedBuild)
 		}
 
-		return buildsUpdatedMsg{builds: updatedBuilds}
+		// Build final list
+		finalBuilds := make([]model.BlenderBuild, 0, len(grouped))
+		for _, b := range grouped {
+			finalBuilds = append(finalBuilds, b)
+		}
+
+		return buildsUpdatedMsg{builds: finalBuilds}
 	}
 }
 

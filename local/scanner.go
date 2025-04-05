@@ -236,20 +236,3 @@ func OpenFileExplorer(dir string) error {
 func openFileExplorer(dir string) error {
 	return OpenFileExplorer(dir)
 }
-
-// CheckUpdateAvailable determines if an update is available for a local build by comparing build dates.
-func CheckUpdateAvailable(localBuild, onlineBuild model.BlenderBuild) bool {
-	if localBuild.Version != onlineBuild.Version {
-		return false
-	}
-
-	if localBuild.BuildDate.Time().IsZero() {
-		return true
-	}
-
-	if onlineBuild.BuildDate.Time().IsZero() {
-		return false
-	}
-
-	return onlineBuild.BuildDate.Time().After(localBuild.BuildDate.Time())
-}
