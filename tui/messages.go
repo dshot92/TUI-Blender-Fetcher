@@ -40,6 +40,3 @@ type (
 	// UI refresh message
 	forceRenderMsg struct{} // Message used just to force UI rendering
 )
-
-// Implement the error interface for errMsg
-func (e errMsg) Error() string { return e.err.Error() }

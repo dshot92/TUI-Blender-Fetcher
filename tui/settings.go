@@ -24,7 +24,7 @@ func (m *Model) renderSettingsContent(availableHeight int) string {
 		Foreground(primaryColor).
 		Bold(true)
 
-	labelStyleFocused := labelStyle.Copy().
+	labelStyleFocused := labelStyle.
 		Foreground(lp.Color(highlightColor)).
 		Background(highlightBg).
 		Padding(0, 1).
@@ -34,7 +34,7 @@ func (m *Model) renderSettingsContent(availableHeight int) string {
 	inputStyle := lp.NewStyle().
 		MarginLeft(2)
 
-	inputStyleFocused := inputStyle.Copy().
+	inputStyleFocused := inputStyle.
 		Foreground(lp.Color(textColor))
 
 	// Description styling

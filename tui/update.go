@@ -25,11 +25,6 @@ func (m *Model) Init() tea.Cmd {
 	// Start a ticker for continuous UI updates to show download progress
 	cmds = append(cmds, cmdManager.StartTicker())
 
-	// Also start a regular UI refresh ticker using built-in tea.Tick
-	cmds = append(cmds, tea.Tick(time.Millisecond*500, func(t time.Time) tea.Msg {
-		return tickMsg(t)
-	}))
-
 	return tea.Batch(cmds...)
 }
 
@@ -92,7 +87,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmdManager.DoDownload(msg.build))
 
 		// Make sure the ticker is running with a faster initial tick for responsiveness
-		cmds = append(cmds, tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+		cmds = append(cmds, tea.Tick(time.Millisecond*10, func(t time.Time) tea.Msg {
 			return tickMsg(t)
 		}))
 

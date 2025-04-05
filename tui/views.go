@@ -8,8 +8,8 @@ import (
 
 func (m *Model) renderPageForView() string {
 	// Define fixed heights
-	headerHeight := 2 // 1 line
-	footerHeight := 2 // 2 lines
+	headerHeight := 2
+	footerHeight := 2
 
 	// Fixed items: header, footer, 2 separator lines
 	fixedHeightItems := headerHeight + footerHeight + 2
