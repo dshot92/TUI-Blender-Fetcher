@@ -43,8 +43,8 @@ func FetchBuilds(versionFilter string, buildType string) ([]model.BlenderBuild, 
 	case "experimental":
 		apiURL = experimentalBlenderAPIURL
 	default:
-		// Default to patch builds if not specified or invalid
-		apiURL = patchBlenderAPIURL
+		// Default to daily builds if not specified or invalid
+		apiURL = dailyBlenderAPIURL
 	}
 
 	resp, err := http.Get(apiURL)
@@ -124,7 +124,7 @@ func FetchBuilds(versionFilter string, buildType string) ([]model.BlenderBuild, 
 	}
 
 	// --- Filtering Loop ---
-	var filteredBuilds []model.BlenderBuild
+	var platformFilteredBuilds []model.BlenderBuild
 	for _, build := range allBuildEntries {
 		// Check OS
 		if build.OperatingSystem != currentOS {
@@ -154,21 +154,8 @@ func FetchBuilds(versionFilter string, buildType string) ([]model.BlenderBuild, 
 
 		// Passed all filters
 		build.Status = model.StateOnline
-		filteredBuilds = append(filteredBuilds, build)
+		platformFilteredBuilds = append(platformFilteredBuilds, build)
 	}
 
-	// DEBUG: Duplicate builds multiple times for testing
-	// duplicatedBuilds := make([]model.BlenderBuild, 0, len(filteredBuilds)*5)
-	// for i := 0; i < 5; i++ {
-	// 	for _, build := range filteredBuilds {
-	// 		// Create a copy of the build to avoid pointer issues
-	// 		buildCopy := build
-	// 		// Add a suffix to make each copy unique
-	// 		buildCopy.Version = fmt.Sprintf("%s (Copy %d)", build.Version, i+1)
-	// 		duplicatedBuilds = append(duplicatedBuilds, buildCopy)
-	// 	}
-	// }
-	// filteredBuilds = duplicatedBuilds
-
-	return filteredBuilds, nil
+	return platformFilteredBuilds, nil
 }
