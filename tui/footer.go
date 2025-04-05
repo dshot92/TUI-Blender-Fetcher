@@ -35,7 +35,14 @@ func (m *Model) renderBuildFooter() string {
 			contextualCommands = append(contextualCommands,
 				fmt.Sprintf("%s Delete", keyStyle.Render("x")),
 			)
-		} else if build.Status == model.StateOnline || build.Status == model.StateUpdate {
+		} else if build.Status == model.StateUpdate {
+			contextualCommands = append(contextualCommands,
+				fmt.Sprintf("%s Download", keyStyle.Render("d")),
+				fmt.Sprintf("%s Launch", keyStyle.Render("enter")),
+				fmt.Sprintf("%s Open Dir", keyStyle.Render("o")),
+				fmt.Sprintf("%s Delete", keyStyle.Render("x")),
+			)
+		} else if build.Status == model.StateOnline {
 			contextualCommands = append(contextualCommands,
 				fmt.Sprintf("%s Download", keyStyle.Render("d")),
 			)

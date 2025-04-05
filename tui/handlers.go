@@ -39,9 +39,8 @@ func (m *Model) updateInputs(msg tea.Msg) tea.Cmd {
 func (m *Model) handleLaunchBlender() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
-		// Only attempt to launch if it's a local build
-		if selectedBuild.Status == model.StateLocal {
-			// Add launch logic here
+		// Only attempt to launch if it's a local build or has an update available
+		if selectedBuild.Status == model.StateLocal || selectedBuild.Status == model.StateUpdate {
 			cmd := local.LaunchBlenderCmd(m.config.DownloadDir, selectedBuild.Version)
 			return m, cmd
 		}

@@ -359,7 +359,7 @@ func (m *Model) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				case CmdDeleteBuild:
 					build := m.builds[m.cursor]
-					if build.Status == model.StateLocal {
+					if build.Status == model.StateLocal || build.Status == model.StateUpdate {
 						// Delete the build
 						return m.handleDeleteBuild()
 					} else if build.Status == model.StateDownloading || build.Status == model.StateExtracting {
