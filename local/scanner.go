@@ -195,7 +195,7 @@ func LaunchBlenderCmd(downloadDir string, version string) tea.Cmd {
 			}
 		}
 
-		return fmt.Errorf("Blender version %s not found", version)
+		return fmt.Errorf("blender version %s not found", version)
 	}
 }
 
@@ -269,7 +269,7 @@ func findBlenderExecutable(installDir string) string {
 // Exported version of openFileExplorer to be used from other packages.
 func OpenFileExplorer(dir string) error {
 	var cmd *exec.Cmd
-	
+
 	if runtime.GOOS == "windows" {
 		cmd = exec.Command("explorer", dir)
 	} else {
@@ -395,9 +395,4 @@ func CheckUpdateAvailable(localBuild, onlineBuild model.BlenderBuild) bool {
 
 	// Compare build dates - if online is newer, an update is available
 	return onlineBuild.BuildDate.Time().After(localBuild.BuildDate.Time())
-}
-
-// wrapper function for backward compatibility
-func readBuildInfo(dirPath string) (*model.BlenderBuild, error) {
-	return ReadBuildInfo(dirPath)
 }
