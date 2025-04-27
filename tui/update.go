@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"TUI-Blender-Launcher/local"
 	"TUI-Blender-Launcher/model"
+	"fmt"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -207,6 +209,19 @@ func (m *Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 					updateFocusStyles(m, m.focusIndex)
 					return m, nil
+
+				case CmdCleanOldBuilds:
+					// Clean old builds from .oldbuilds directory
+					return m, func() tea.Msg {
+						count, err := local.CleanOldBuilds(m.config.DownloadDir)
+						if err != nil {
+							return errMsg{err}
+						}
+						if count == 0 {
+							return errMsg{fmt.Errorf("no old builds to clean")}
+						}
+						return errMsg{fmt.Errorf("successfully cleaned %d old build(s)", count)}
+					}
 
 				case CmdMoveUp:
 					if !m.editMode {

@@ -236,3 +236,36 @@ func OpenFileExplorer(dir string) error {
 func openFileExplorer(dir string) error {
 	return OpenFileExplorer(dir)
 }
+
+// CleanOldBuilds removes all builds from the .oldbuilds directory.
+// Returns the number of cleaned builds and any error encountered.
+func CleanOldBuilds(downloadDir string) (int, error) {
+	oldBuildsDir := filepath.Join(downloadDir, ".oldbuilds")
+
+	// Check if the old builds directory exists
+	if _, err := os.Stat(oldBuildsDir); os.IsNotExist(err) {
+		// If it doesn't exist, there's nothing to clean
+		return 0, nil
+	}
+
+	// Read the contents of the old builds directory
+	entries, err := os.ReadDir(oldBuildsDir)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read .oldbuilds directory: %w", err)
+	}
+
+	cleanedCount := 0
+
+	// Delete each old build
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirPath := filepath.Join(oldBuildsDir, entry.Name())
+			if err := os.RemoveAll(dirPath); err != nil {
+				return cleanedCount, fmt.Errorf("failed to delete old build %s: %w", entry.Name(), err)
+			}
+			cleanedCount++
+		}
+	}
+
+	return cleanedCount, nil
+}

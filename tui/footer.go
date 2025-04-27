@@ -3,6 +3,8 @@ package tui
 import (
 	"TUI-Blender-Launcher/model"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	lp "github.com/charmbracelet/lipgloss"
@@ -84,11 +86,30 @@ func (m *Model) renderSettingsFooter() string {
 	separator := sepStyle.Render(" · ")
 	newlineStyle := lp.NewStyle().Render("\n")
 
-	line2 := strings.Join([]string{
+	// Check if old builds exist to clean
+	oldBuildsDir := filepath.Join(m.config.DownloadDir, ".oldbuilds")
+	showCleanOption := false
+
+	// Check if the directory exists and has contents
+	if _, err := os.Stat(oldBuildsDir); !os.IsNotExist(err) {
+		if entries, err := os.ReadDir(oldBuildsDir); err == nil && len(entries) > 0 {
+			showCleanOption = true
+		}
+	}
+
+	commands := []string{
 		fmt.Sprintf("%s Edit setting", keyStyle.Render("enter")),
 		fmt.Sprintf("%s Save and exit", keyStyle.Render("s")),
-		fmt.Sprintf("%s Quit", keyStyle.Render("q")),
-	}, separator)
+	}
+
+	// Only add the clean option if there are old builds
+	if showCleanOption {
+		commands = append(commands, fmt.Sprintf("%s Clean old Builds Dir", keyStyle.Render("c")))
+	}
+
+	commands = append(commands, fmt.Sprintf("%s Quit", keyStyle.Render("q")))
+
+	line2 := strings.Join(commands, separator)
 
 	// Combine lines with styled newline
 	footerContent := newlineStyle + line2

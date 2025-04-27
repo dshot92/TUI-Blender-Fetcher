@@ -43,10 +43,11 @@ const (
 	CmdSaveSettings
 	CmdToggleEditMode
 	CmdCancelDownload
-	CmdPageUp   // Add PageUp command
-	CmdPageDown // Add PageDown command
-	CmdHome     // Add Home command
-	CmdEnd      // Add End command
+	CmdPageUp         // Add PageUp command
+	CmdPageDown       // Add PageDown command
+	CmdHome           // Add Home command
+	CmdEnd            // Add End command
+	CmdCleanOldBuilds // Add command for cleaning old builds
 )
 
 // KeyCommand defines a keyboard command with its key binding and description
@@ -90,6 +91,7 @@ var (
 		{Type: CmdMoveDown, Keys: []string{"down", "j"}, Description: "Move cursor down"},
 		{Type: CmdMoveLeft, Keys: []string{"left", "h"}, Description: "Select previous option"},
 		{Type: CmdMoveRight, Keys: []string{"right", "l"}, Description: "Select next option"},
+		{Type: CmdCleanOldBuilds, Keys: []string{"c"}, Description: "Clean old builds"},
 	}
 )
 
