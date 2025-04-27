@@ -65,33 +65,30 @@ go build -o tui-blender-launcher
 
 The application uses keyboard shortcuts for navigation:
 
+- <kbd>⬆</kbd> / <kbd>k</kbd>: Move cursor up
+- <kbd>⬇</kbd> / <kbd>j</kbd>: Move cursor down
+- <kbd>⬅</kbd> / <kbd>h</kbd>: Previous sort column
+- <kbd>⮕</kbd> / <kbd>l</kbd>: Next sort column
+
 #### Builds Page
-- `q`: Quit application
-- `s`: Settings
-- `r`: Reverse sort order
-- `f`: Fetch online builds
-- `d`: Download selected build (only for online/update builds)
-- `Enter`: Launch selected build
-- `o`: Open build directory
-- `x`: Delete build (local builds) / Cancel download (for in-progress downloads)
-- `↑/k`: Move cursor up
-- `↓/j`: Move cursor down
-- `←/h`: Previous sort column
-- `→/l`: Next sort column
-- `Page Up`: Scroll page up
-- `Page Down`: Scroll page down
-- `Home`: Go to first item
-- `End`: Go to last item
+
+- <kbd>f</kbd>: Fetch online builds
+
+- <kbd>Enter</kbd>: Launch selected build
+- <kbd>o</kbd>: Open build directory
+- <kbd>x</kbd>: Delete build (local builds) / Cancel download (for in-progress downloads)
+- <kbd>d</kbd>: Download selected build (only for online/update builds)
+
+- <kbd>r</kbd>: Reverse sort order
+- <kbd>s</kbd>: Settings
+- <kbd>q</kbd>: Quit application
 
 #### Settings Page
-- `s`: Save and return to builds page
-- `q`: Quit application
-- `Enter`: Edit selected setting
-- `↑/k`: Move cursor up
-- `↓/j`: Move cursor down
-- `←/h`: Select previous option
-- `→/l`: Select next option
-- `c`: Clean up old builds
+- <kbd>Enter</kbd>: Edit selected setting
+- <kbd>s</kbd>: Save and return to builds page
+
+- <kbd>c</kbd>: Clean up old builds
+- <kbd>q</kbd>: Quit application
 
 ## Configuration
 
