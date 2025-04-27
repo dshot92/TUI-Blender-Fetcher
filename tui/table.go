@@ -43,6 +43,12 @@ var (
 		"Size":       {width: 0, priority: 7, flex: 1.0},
 		"Build Date": {width: 0, priority: 3, flex: 1.0},
 	}
+
+	selectedHeaderCellStyle = lp.NewStyle().
+				Background(lp.Color(backgroundColor)).
+				Foreground(lp.Color(textColor)).
+				Bold(true).
+				Align(lp.Center)
 )
 
 // Render renders a single row with the given column configuration
@@ -357,22 +363,23 @@ func (m *Model) renderBuildContent(availableHeight int) string {
 				headerText += " ↑"
 			}
 		}
-		// Use base styling first, add bold/underline separately
-		headerContent := headerText
-		headerCells = append(headerCells, col.Style(headerContent))
+		if col.Index == m.sortColumn {
+			headerCells = append(headerCells, selectedHeaderCellStyle.Width(col.Width).Render(headerText))
+		} else {
+			headerCells = append(headerCells, lp.NewStyle().Bold(true).Align(lp.Center).Width(col.Width).Render(headerText))
+		}
 	}
 
 	// Join header cells horizontally
 	headerRow := lp.JoinHorizontal(lp.Left, headerCells...)
 
-	// Now apply bold and underline to the entire row to keep alignment consistent
-	styledHeader := lp.NewStyle().Bold(true).Underline(true).Render(headerRow)
-	if !strings.HasSuffix(styledHeader, "\n") {
-		styledHeader += newlineStyle
+	// Add a newline if needed
+	if !strings.HasSuffix(headerRow, "\n") {
+		headerRow += newlineStyle
 	}
 
 	// Add the styled header to output
-	output.WriteString(styledHeader)
+	output.WriteString(headerRow)
 
 	// Calculate how many rows can be displayed in the available height
 	// Subtract 1 for the header row
