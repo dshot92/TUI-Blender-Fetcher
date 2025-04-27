@@ -2,6 +2,8 @@
 
 A Terminal User Interface (TUI) application written in Go for finding, downloading, managing, and launching Blender builds.
 
+![Video Example](readme_assets/example.gif)
+
 ## Features
 
 - Browse available Blender builds (daily, patch, and experimental builds)
