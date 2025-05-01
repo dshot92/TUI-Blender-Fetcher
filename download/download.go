@@ -272,12 +272,14 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 	}
 
 	var entryCount int
+
+extractLoop:
 	for {
 		// Check for cancellation before processing next entry
 		select {
 		case <-cancelCh:
 			setFirstError(ErrCancelled)
-			goto cleanup // Jump to cleanup section
+			break extractLoop
 		default:
 		}
 
@@ -299,7 +301,7 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 			} else {
 				setFirstError(fmt.Errorf("error reading tar entry: %w", err))
 			}
-			break
+			break extractLoop
 		}
 		entryCount++
 
@@ -310,7 +312,7 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 		case tar.TypeDir:
 			if err := os.MkdirAll(targetPath, os.FileMode(header.Mode)); err != nil {
 				setFirstError(fmt.Errorf("failed to create dir %s: %w", targetPath, err))
-				break
+				break extractLoop
 			}
 		case tar.TypeReg:
 			if header.Size > 0 {
@@ -322,7 +324,7 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 						} else {
 							setFirstError(fmt.Errorf("failed to read file contents for %s: %w", targetPath, err))
 						}
-						break
+						break extractLoop
 					}
 
 					wg.Add(1)
@@ -349,13 +351,13 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 				} else {
 					if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
 						setFirstError(fmt.Errorf("failed to create parent dir for file %s: %w", targetPath, err))
-						break
+						break extractLoop
 					}
 
 					outFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY, os.FileMode(header.Mode))
 					if err != nil {
 						setFirstError(fmt.Errorf("failed to create file %s: %w", targetPath, err))
-						break
+						break extractLoop
 					}
 
 					// Wrap tarReader with cancellation check
@@ -369,50 +371,50 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 						} else {
 							setFirstError(fmt.Errorf("failed to write file %s: %w", targetPath, err))
 						}
-						break
+						break extractLoop
 					}
 
 					if err := bufferedWriter.Flush(); err != nil {
 						outFile.Close()
 						setFirstError(fmt.Errorf("failed to flush buffers for %s: %w", targetPath, err))
-						break
+						break extractLoop
 					}
 
 					if err := outFile.Close(); err != nil {
 						setFirstError(fmt.Errorf("failed to close file %s: %w", targetPath, err))
-						break
+						break extractLoop
 					}
 				}
 			} else {
 				if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
 					setFirstError(fmt.Errorf("failed to create parent dir for empty file %s: %w", targetPath, err))
-					break
+					break extractLoop
 				}
 
 				if err := os.WriteFile(targetPath, []byte{}, os.FileMode(header.Mode)); err != nil {
 					setFirstError(fmt.Errorf("failed to create empty file %s: %w", targetPath, err))
-					break
+					break extractLoop
 				}
 			}
 		case tar.TypeSymlink:
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
 				setFirstError(fmt.Errorf("failed to create parent dir for symlink %s: %w", targetPath, err))
-				break
+				break extractLoop
 			}
 			if _, err := os.Lstat(targetPath); err == nil {
 				if err := os.Remove(targetPath); err != nil {
 					setFirstError(fmt.Errorf("failed to remove existing file/link at %s: %w", targetPath, err))
-					break
+					break extractLoop
 				}
 			}
 			if err := os.Symlink(header.Linkname, targetPath); err != nil {
 				setFirstError(fmt.Errorf("failed to create symlink %s -> %s: %w", targetPath, header.Linkname, err))
-				break
+				break extractLoop
 			}
 		}
 	}
 
-cleanup:
+	// Remove the cleanup label and just have the cleanup code
 	wg.Wait()
 	close(errChan)
 	for err := range errChan {
