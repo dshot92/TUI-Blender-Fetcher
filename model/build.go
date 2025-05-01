@@ -19,13 +19,14 @@ const (
 	StateOnline
 	StateUpdate
 	StateFailed
+	StateCancelled
 )
 
 // String returns the string representation of the BuildState
 func (s BuildState) String() string {
 	switch s {
 	case StateNone:
-		return "Cancelled"
+		return "None"
 	case StateDownloading:
 		return "Downloading"
 	case StateExtracting:
@@ -38,6 +39,8 @@ func (s BuildState) String() string {
 		return "Update"
 	case StateFailed:
 		return "Failed"
+	case StateCancelled:
+		return "Cancelled"
 	default:
 		return "Unknown"
 	}

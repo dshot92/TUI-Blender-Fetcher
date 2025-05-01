@@ -60,6 +60,8 @@ func (r Row) Render(columns []ColumnConfig) string {
 	isExtracting := r.Build.Status == model.StateExtracting && r.Status != nil
 	isLocal := r.Build.Status == model.StateLocal
 	isUpdate := r.Build.Status == model.StateUpdate
+	isFailed := r.Build.Status == model.StateFailed
+	isCancelled := r.Build.Status == model.StateCancelled // StateNone is "Cancelled"
 
 	// Handle special case for download/extract - we'll render empty cells for Type, Hash, Size, Build Date
 	// and only display content in Version, Status, and Branch columns
@@ -188,6 +190,14 @@ func (r Row) Render(columns []ColumnConfig) string {
 	if r.IsSelected {
 		// Use selected style with explicit width to ensure alignment
 		return selectedRowStyle.Width(sumColumnWidths(columns)).Render(rowString)
+	}
+
+	// Apply red text style for failed downloads
+	if isFailed || isCancelled {
+		return lp.NewStyle().
+			Foreground(lp.Color(redColor)).
+			Width(sumColumnWidths(columns)).
+			Render(rowString)
 	}
 
 	// Apply orange text style for local builds

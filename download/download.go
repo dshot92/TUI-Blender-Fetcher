@@ -24,6 +24,7 @@ import (
 
 // Error constants
 var ErrCancelled = errors.New("operation cancelled")
+var ErrIdleTimeout = errors.New("download timed out: connection idle for too long")
 
 // versionMetaFilename is the name of the metadata file saved in the extracted directory.
 const versionMetaFilename = "version.json"
@@ -55,7 +56,19 @@ func downloadFile(url, downloadPath string, progressCb ProgressCallback, cancelC
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	client := &http.Client{}
+	// Create HTTP client with timeouts to detect network failures faster
+	client := &http.Client{
+		Timeout: 5 * time.Second, // Overall timeout for the request
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: 10 * time.Second, // Timeout for server response headers
+			IdleConnTimeout:       5 * time.Second,  // Idle connection timeout
+			TLSHandshakeTimeout:   5 * time.Second,  // TLS handshake timeout
+			ExpectContinueTimeout: 1 * time.Second,  // Expect-continue timeout
+			DisableKeepAlives:     false,            // Keep connections alive for efficiency
+			MaxIdleConnsPerHost:   10,               // Maximum idle connections per host
+		},
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -86,12 +99,14 @@ func downloadFile(url, downloadPath string, progressCb ProgressCallback, cancelC
 	}
 	defer out.Close()
 
-	// Create a progress reader
+	// Create a progress reader with idle timeout
 	progressReader := &ProgressReader{
-		Reader:   resp.Body,
-		Callback: progressCb,
-		Total:    totalSize,
-		CancelCh: cancelCh,
+		Reader:           resp.Body,
+		Callback:         progressCb,
+		Total:            totalSize,
+		CancelCh:         cancelCh,
+		idleTimeout:      5 * time.Second, // Add idle timeout to detect stalled connections
+		lastProgressTime: time.Now(),      // Initialize the last progress time
 	}
 
 	// Trigger initial callback
@@ -107,7 +122,6 @@ func downloadFile(url, downloadPath string, progressCb ProgressCallback, cancelC
 		if errors.Is(err, ErrCancelled) {
 			return ErrCancelled
 		}
-		return fmt.Errorf("failed during download/save: %w", err)
 	}
 
 	// Ensure final callback is called if not cancelled
@@ -121,14 +135,16 @@ func downloadFile(url, downloadPath string, progressCb ProgressCallback, cancelC
 // ProgressReader wraps an io.Reader to report progress via a callback.
 type ProgressReader struct {
 	io.Reader
-	Callback       ProgressCallback
-	Current        int64
-	Total          int64
-	lastCallbackAt int64           // Last reported byte count
-	minReportBytes int64           // Minimum bytes changed before reporting again
-	lastReportTime time.Time       // Last time progress was reported
-	minReportRate  time.Duration   // Minimum time between reports
-	CancelCh       <-chan struct{} // Added cancel channel
+	Callback         ProgressCallback
+	Current          int64
+	Total            int64
+	lastCallbackAt   int64           // Last reported byte count
+	minReportBytes   int64           // Minimum bytes changed before reporting again
+	lastReportTime   time.Time       // Last time progress was reported
+	minReportRate    time.Duration   // Minimum time between reports
+	CancelCh         <-chan struct{} // Added cancel channel
+	idleTimeout      time.Duration   // Added idle timeout
+	lastProgressTime time.Time       // Added last progress time
 }
 
 func (pr *ProgressReader) Read(p []byte) (n int, err error) {
@@ -142,6 +158,11 @@ func (pr *ProgressReader) Read(p []byte) (n int, err error) {
 
 	n, err = pr.Reader.Read(p)
 	pr.Current += int64(n)
+
+	// If we actually read data, update the last progress time
+	if n > 0 {
+		pr.lastProgressTime = time.Now()
+	}
 
 	// Initialize throttling values if not set
 	if pr.minReportBytes == 0 {
@@ -174,6 +195,12 @@ func (pr *ProgressReader) Read(p []byte) (n int, err error) {
 	default:
 		// Continue
 	}
+
+	// Check for idle timeout - only if we have an active timeout set
+	if pr.idleTimeout > 0 && !pr.lastProgressTime.IsZero() && time.Since(pr.lastProgressTime) > pr.idleTimeout {
+		return n, ErrIdleTimeout
+	}
+
 	return
 }
 
@@ -182,14 +209,12 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 	// Get file info to calculate rough progress based on archive size
 	fileInfo, err := os.Stat(archivePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to stat archive file: %v\n", err)
 		return fmt.Errorf("failed to stat archive file: %w", err)
 	}
 	archiveSize := fileInfo.Size()
 
 	file, err := os.Open(archivePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to open archive: %v\n", err)
 		return fmt.Errorf("failed to open archive: %w", err)
 	}
 	defer file.Close()
@@ -218,7 +243,6 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 
 	xzReader, err := xz.NewReader(progressReader)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create xz reader: %v\n", err)
 		return fmt.Errorf("failed to create xz reader: %w", err)
 	}
 
@@ -273,7 +297,6 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 			if errors.Is(err, ErrCancelled) {
 				setFirstError(ErrCancelled)
 			} else {
-				fmt.Fprintf(os.Stderr, "Error reading tar entry: %v\n", err)
 				setFirstError(fmt.Errorf("error reading tar entry: %w", err))
 			}
 			break
@@ -286,7 +309,6 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(targetPath, os.FileMode(header.Mode)); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to create dir %s: %v\n", targetPath, err)
 				setFirstError(fmt.Errorf("failed to create dir %s: %w", targetPath, err))
 				break
 			}
@@ -298,7 +320,6 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 						if errors.Is(err, ErrCancelled) {
 							setFirstError(ErrCancelled)
 						} else {
-							fmt.Fprintf(os.Stderr, "Failed to read file contents for %s: %v\n", targetPath, err)
 							setFirstError(fmt.Errorf("failed to read file contents for %s: %w", targetPath, err))
 						}
 						break
@@ -316,27 +337,23 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 						}
 
 						if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
-							fmt.Fprintf(os.Stderr, "Failed to create parent dir for file %s: %v\n", targetPath, err)
 							errChan <- fmt.Errorf("failed to create parent dir for file %s: %w", targetPath, err)
 							return
 						}
 
 						if err := os.WriteFile(targetPath, contents, os.FileMode(fileMode)); err != nil {
-							fmt.Fprintf(os.Stderr, "Failed to write file %s: %v\n", targetPath, err)
 							errChan <- fmt.Errorf("failed to write file %s: %w", targetPath, err)
 							return
 						}
 					}(targetPath, header.Mode, fileContents)
 				} else {
 					if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
-						fmt.Fprintf(os.Stderr, "Failed to create parent dir for file %s: %v\n", targetPath, err)
 						setFirstError(fmt.Errorf("failed to create parent dir for file %s: %w", targetPath, err))
 						break
 					}
 
 					outFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY, os.FileMode(header.Mode))
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "Failed to create file %s: %v\n", targetPath, err)
 						setFirstError(fmt.Errorf("failed to create file %s: %w", targetPath, err))
 						break
 					}
@@ -350,7 +367,6 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 						if errors.Is(err, ErrCancelled) {
 							setFirstError(ErrCancelled)
 						} else {
-							fmt.Fprintf(os.Stderr, "Failed to write file %s: %v\n", targetPath, err)
 							setFirstError(fmt.Errorf("failed to write file %s: %w", targetPath, err))
 						}
 						break
@@ -358,45 +374,38 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 
 					if err := bufferedWriter.Flush(); err != nil {
 						outFile.Close()
-						fmt.Fprintf(os.Stderr, "Failed to flush buffers for %s: %v\n", targetPath, err)
 						setFirstError(fmt.Errorf("failed to flush buffers for %s: %w", targetPath, err))
 						break
 					}
 
 					if err := outFile.Close(); err != nil {
-						fmt.Fprintf(os.Stderr, "Failed to close file %s: %v\n", targetPath, err)
 						setFirstError(fmt.Errorf("failed to close file %s: %w", targetPath, err))
 						break
 					}
 				}
 			} else {
 				if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to create parent dir for empty file %s: %v\n", targetPath, err)
 					setFirstError(fmt.Errorf("failed to create parent dir for empty file %s: %w", targetPath, err))
 					break
 				}
 
 				if err := os.WriteFile(targetPath, []byte{}, os.FileMode(header.Mode)); err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to create empty file %s: %v\n", targetPath, err)
 					setFirstError(fmt.Errorf("failed to create empty file %s: %w", targetPath, err))
 					break
 				}
 			}
 		case tar.TypeSymlink:
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0750); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to create parent dir for symlink %s: %v\n", targetPath, err)
 				setFirstError(fmt.Errorf("failed to create parent dir for symlink %s: %w", targetPath, err))
 				break
 			}
 			if _, err := os.Lstat(targetPath); err == nil {
 				if err := os.Remove(targetPath); err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to remove existing file/link at %s: %v\n", targetPath, err)
 					setFirstError(fmt.Errorf("failed to remove existing file/link at %s: %w", targetPath, err))
 					break
 				}
 			}
 			if err := os.Symlink(header.Linkname, targetPath); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to create symlink %s -> %s: %v\n", targetPath, header.Linkname, err)
 				setFirstError(fmt.Errorf("failed to create symlink %s -> %s: %w", targetPath, header.Linkname, err))
 				break
 			}
@@ -705,7 +714,6 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 	// Defer cleanup of the downloaded archive file
 	defer func() {
 		if err := os.Remove(downloadPath); err != nil && !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Warning: failed to delete archive %s: %v\n", downloadPath, err)
 		}
 	}()
 
@@ -752,9 +760,7 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		oldBuildName := fmt.Sprintf("%s_%s", filepath.Base(existingBuildDir), timestamp)
 		oldBuildPath := filepath.Join(oldBuildsDir, oldBuildName)
 		if err := os.Rename(existingBuildDir, oldBuildPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: couldn't move old build to backup dir: %v\n", err)
 			if errRem := os.RemoveAll(existingBuildDir); errRem != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to remove old build dir after failed move: %v\n", errRem)
 				return "", fmt.Errorf("failed to replace old build dir: %w", err)
 			}
 		}
@@ -803,7 +809,6 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		// Attempt to clean up partially extracted directory
 		if extractedRootDir != "" {
 			if remErr := os.RemoveAll(extractedRootDir); remErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup partial extraction dir %s: %v\n", extractedRootDir, remErr)
 			}
 		}
 		if errors.Is(extractErr, ErrCancelled) {

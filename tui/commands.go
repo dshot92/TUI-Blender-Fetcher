@@ -6,6 +6,7 @@ import (
 	"TUI-Blender-Launcher/download"
 	"TUI-Blender-Launcher/local"
 	"TUI-Blender-Launcher/model"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,9 +51,15 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 		buildID = build.Version + "-" + build.Hash[:8]
 	}
 
-	// Don't start if already downloading
-	if _, exists := dm.states[buildID]; exists {
-		return nil
+	// Clean up previous state if it was Failed or Cancelled before starting anew
+	if state, exists := dm.states[buildID]; exists {
+		if state.BuildState == model.StateFailed || state.BuildState == model.StateCancelled {
+			// Remove the old failed/cancelled state to allow restart
+			delete(dm.states, buildID)
+		} else if state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting {
+			// If already downloading/extracting this exact build, don't start another one
+			return nil
+		}
 	}
 
 	// Setup download state
@@ -128,12 +135,23 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 		}
 
 		if err != nil {
-			state.BuildState = model.StateFailed
-			// Clean up partial download after showing error
+			// Check if this was a cancellation
+			if errors.Is(err, download.ErrCancelled) {
+				state.BuildState = model.StateCancelled
+			} else {
+				// Any other error (including network timeouts) should mark as failed
+				state.BuildState = model.StateFailed
+				state.Progress = 0.0 // Reset progress to indicate failure
+
+				// Log the error to help with diagnostics
+				// fmt.Fprintf(os.Stderr, "Download failed for %s: %v\n", buildID, err)
+			}
+
+			// Clean up partial download
 			go func() {
-				time.Sleep(3 * time.Second)
-				deletePath := filepath.Join(dm.cfg.DownloadDir, ".downloading", build.Version)
-				os.RemoveAll(deletePath)
+				time.Sleep(500 * time.Millisecond) // Brief delay to allow UI update
+				deletePath := filepath.Join(dm.cfg.DownloadDir, ".downloading", filepath.Base(build.DownloadURL))
+				_ = os.RemoveAll(deletePath)
 			}()
 		} else {
 			state.BuildState = model.StateLocal
@@ -159,8 +177,11 @@ func (dm *DownloadManager) CancelDownload(buildID string) {
 	}
 
 	close(state.CancelCh)
-	state.BuildState = model.StateNone
-	delete(dm.states, buildID)
+	state.BuildState = model.StateCancelled
+	state.Progress = 0.0 // Reset progress
+
+	// Don't delete the state so we can track that it was cancelled
+	// Keep it so it can be displayed with "Cancelled" status
 }
 
 // Commands generates tea commands for the TUI
@@ -180,6 +201,19 @@ func NewCommands(cfg config.Config) *Commands {
 // FetchBuilds fetches the list of builds from the API.
 func (c *Commands) FetchBuilds() tea.Cmd {
 	return func() tea.Msg {
+		// Create a new map containing only states we want to preserve across fetch
+		// (e.g., potentially active downloads/extractions if fetch could be triggered during one)
+		newStates := make(map[string]*model.DownloadState)
+		if c.downloads != nil && c.downloads.states != nil {
+			for id, state := range c.downloads.states {
+				// Only keep states that are actively in progress, discard terminal states like Failed/Cancelled.
+				if state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting {
+					newStates[id] = state
+				}
+			}
+			c.downloads.states = newStates // Atomically replace the map
+		}
+
 		builds, err := api.FetchBuilds(c.cfg.VersionFilter, c.cfg.BuildType)
 		return buildsFetchedMsg{builds, err}
 	}
@@ -255,16 +289,20 @@ func (c *Commands) UpdateBuildStatus(onlineBuilds []model.BlenderBuild) tea.Cmd 
 			}
 
 			var status model.BuildState
+
+			// Determine status based *only* on comparison with local builds on disk
 			if localBuild == nil {
+				// Not found locally -> Online
 				status = model.StateOnline
 			} else {
+				// Found locally -> Check for Update or just Local
 				switch CheckUpdateAvailable(*localBuild, onlineBuild) {
 				case model.StateUpdate:
 					status = model.StateUpdate
 				case model.StateLocal:
 					status = model.StateLocal
-				default:
-					status = model.StateOnline
+				default: // Should not happen, default to Local
+					status = model.StateLocal
 				}
 			}
 

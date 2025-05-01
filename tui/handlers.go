@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -93,15 +94,18 @@ func (m *Model) handleOpenBuildDir() (tea.Model, tea.Cmd) {
 func (m *Model) handleStartDownload() (tea.Model, tea.Cmd) {
 	if len(m.builds) > 0 && m.cursor < len(m.builds) {
 		selectedBuild := m.builds[m.cursor]
-		// Allow downloading both Online builds and Updates
-		if selectedBuild.Status == model.StateOnline || selectedBuild.Status == model.StateUpdate {
+		// Allow downloading Online, Update, Failed, and Cancelled builds
+		if selectedBuild.Status == model.StateOnline ||
+			selectedBuild.Status == model.StateUpdate ||
+			selectedBuild.Status == model.StateFailed ||
+			selectedBuild.Status == model.StateCancelled { // StateNone == Cancelled
 			// Generate a unique build ID using version and hash
 			buildID := selectedBuild.Version
 			if selectedBuild.Hash != "" {
 				buildID = selectedBuild.Version + "-" + selectedBuild.Hash[:8]
 			}
 
-			// Update status to avoid duplicate downloads
+			// Update status to Downloading immediately for UI feedback
 			selectedBuild.Status = model.StateDownloading
 			m.builds[m.cursor] = selectedBuild
 
@@ -121,22 +125,38 @@ func (m *Model) handleCancelDownload() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Use activeDownloadID if set; otherwise, recreate using the selected build
+	// Create buildID for the selected build first
+	selectedBuild := m.builds[m.cursor]
+	selectedBuildID := selectedBuild.Version
+	if selectedBuild.Hash != "" {
+		selectedBuildID = selectedBuild.Version + "-" + selectedBuild.Hash[:8]
+	}
+
+	// Use activeDownloadID if set; otherwise, use the selected build ID
 	buildID := m.activeDownloadID
 	if buildID == "" {
-		selectedBuild := m.builds[m.cursor]
-		buildID = selectedBuild.Version
-		if selectedBuild.Hash != "" {
-			buildID = selectedBuild.Version + "-" + selectedBuild.Hash[:8]
-		}
+		buildID = selectedBuildID
 	}
 
 	// Cancel the download using the download manager
 	m.commands.downloads.CancelDownload(buildID)
 
-	// Optionally update the build status to online after cancellation
-	if m.builds[m.cursor].Status == model.StateDownloading || m.builds[m.cursor].Status == model.StateExtracting {
-		m.builds[m.cursor].Status = model.StateOnline
+	// Update the build status to Cancelled (StateNone) after cancellation
+	// so it shows as cancelled until next fetch
+	for i, build := range m.builds {
+		buildID := build.Version
+		if build.Hash != "" {
+			buildID = build.Version + "-" + build.Hash[:8]
+		}
+
+		// Update the status of both the selected build and any build matching the active download
+		if buildID == m.activeDownloadID || buildID == selectedBuildID {
+			// Only update if it's in a downloading or extracting state
+			if m.builds[i].Status == model.StateDownloading ||
+				m.builds[i].Status == model.StateExtracting {
+				m.builds[i].Status = model.StateCancelled // Set to Cancelled
+			}
+		}
 	}
 
 	// Clear the active download ID
@@ -277,7 +297,8 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Clear previous builds and only keep local ones
+	// Preserve only local builds from the current list.
+	// Failed/Cancelled states are reset by the fetch command itself.
 	var localBuilds []model.BlenderBuild
 	for _, build := range m.builds {
 		if build.Status == model.StateLocal {
@@ -285,54 +306,31 @@ func (m *Model) handleBuildsFetched(msg buildsFetchedMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Start with only local builds
+	// Start with local builds + newly fetched builds.
 	m.builds = localBuilds
+	m.builds = append(m.builds, msg.builds...)
 
-	// Create maps for tracking existing builds by hash and version
-	existingHashMap := make(map[string]bool)
-	existingVersionMap := make(map[string]bool)
+	// Deduplicate and sort (will be handled by UpdateBuildStatus)
+	// We call UpdateBuildStatus which will determine the final statuses (Local, Online, Update)
+	// based on comparison between local and the combined list.
 
-	// Populate maps from existing builds (local only)
-	for _, build := range m.builds {
-		if build.Hash != "" {
-			existingHashMap[build.Hash] = true
-		}
-		existingVersionMap[build.Version] = true
-
-	}
-
-	// Add only builds that don't already exist or would provide new information
-	for _, build := range msg.builds {
-		// Skip if hash already exists (more precise duplicate detection)
-		if build.Hash != "" && existingHashMap[build.Hash] {
-			continue
-		}
-
-		// Add the build to our list
-		m.builds = append(m.builds, build)
-
-		// Mark hash as seen to prevent future duplicates
-		if build.Hash != "" {
-			existingHashMap[build.Hash] = true
-		}
-		existingVersionMap[build.Version] = true
-	}
-
-	// Apply version filter if set
+	// Apply version filter if set *before* updating status
 	if m.config.VersionFilter != "" {
 		m.builds = m.applyVersionFilter(m.builds)
 	}
-
-	// Sort the builds after merging
-	m.builds = model.SortBuilds(m.builds, m.sortColumn, m.sortReversed)
 
 	// Reset cursor and startIndex for a consistent view
 	if len(m.builds) > 0 {
 		m.cursor = 0
 		m.startIndex = 0
+	} else {
+		m.cursor = 0
+		m.startIndex = 0
 	}
 
-	// Update the status based on what's available locally
+	// Update the status based on what's available locally vs online.
+	// This command now receives the combined list (local + fetched)
+	// and should correctly assign Local, Online, or Update status.
 	return m, m.commands.UpdateBuildStatus(m.builds)
 }
 
@@ -363,6 +361,27 @@ func (m *Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
 	// Replace builds with updated ones that have correct status
 	m.builds = msg.builds
 
+	// Create a set of build IDs that are currently downloading or extracting
+	// according to the *final* build list we just received.
+	activeDownloadIDs := make(map[string]bool)
+	for _, build := range m.builds {
+		if build.Status == model.StateDownloading || build.Status == model.StateExtracting {
+			buildID := build.Version
+			if build.Hash != "" {
+				buildID = build.Version + "-" + build.Hash[:8]
+			}
+			activeDownloadIDs[buildID] = true
+		}
+	}
+	// Remove any state from m.downloadStates that isn't in the active set.
+	// This ensures Failed/Cancelled states lingering in the TUI cache are removed
+	// once the fetch/update cycle completes.
+	for id := range m.downloadStates {
+		if !activeDownloadIDs[id] {
+			delete(m.downloadStates, id)
+		}
+	}
+
 	// Apply version filter if set
 	if m.config.VersionFilter != "" {
 		m.builds = m.applyVersionFilter(m.builds)
@@ -391,8 +410,7 @@ func (m *Model) handleBuildsUpdated(msg buildsUpdatedMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Start the downloads manager to handle any existing downloads
-	// No need for a command manager, use the model's DownloadManager
+	// No further commands needed here, just update the UI state.
 	return m, nil
 }
 
@@ -436,6 +454,20 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 			// For downloads and extractions, always update state to ensure UI reflects latest
 			if state.BuildState == model.StateDownloading || state.BuildState == model.StateExtracting {
 				m.downloadStates[id] = state
+
+				// Check for stalled downloads - detect if a download hasn't progressed in 15 seconds
+				if state.BuildState == model.StateDownloading && time.Since(state.LastUpdated) > 15*time.Second {
+					// Mark as stalled (will transition to failed)
+					stalledDownloads = append(stalledDownloads, id)
+
+					// Set the state to failed
+					state.BuildState = model.StateFailed
+					state.Progress = 0.0
+					m.downloadStates[id] = state
+
+					// Cancel the download in the download manager
+					m.commands.downloads.CancelDownload(id)
+				}
 			} else {
 				// For other states, only update when changed significantly
 				existingState, exists := m.downloadStates[id]
@@ -458,7 +490,7 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 		if state.BuildState == model.StateLocal || strings.HasPrefix(state.BuildState.String(), "Failed") {
 			// Download completed or failed
 			completedDownloads = append(completedDownloads, id)
-		} else if state.BuildState == model.StateNone {
+		} else if state.BuildState == model.StateCancelled {
 			// Download was cancelled
 			cancelledDownloads = append(cancelledDownloads, id)
 		} else if state.BuildState == model.StateDownloading ||
@@ -568,7 +600,9 @@ func (m *Model) handleDownloadProgress(msg tickMsg) (tea.Model, tea.Cmd) {
 
 			for i := range m.builds {
 				if m.builds[i].Version == version {
-					m.builds[i].Status = state.BuildState
+					// Keep the build with Cancelled status (StateNone)
+					// Don't convert to online immediately - wait for explicit fetch
+					m.builds[i].Status = model.StateCancelled
 					needsSort = true
 					break
 				}

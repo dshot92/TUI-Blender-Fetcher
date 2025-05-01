@@ -44,7 +44,9 @@ func (m *Model) renderBuildFooter() string {
 				fmt.Sprintf("%s Open Dir", keyStyle.Render("o")),
 				fmt.Sprintf("%s Delete", keyStyle.Render("x")),
 			)
-		} else if build.Status == model.StateOnline {
+		} else if build.Status == model.StateOnline ||
+			build.Status == model.StateCancelled ||
+			build.Status == model.StateFailed {
 			contextualCommands = append(contextualCommands,
 				fmt.Sprintf("%s Download", keyStyle.Render("d")),
 			)
