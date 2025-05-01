@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"syscall"
 )
 
 // BlenderInNewTerminal launches Blender in a new terminal window
@@ -20,17 +21,23 @@ func BlenderInNewTerminal(blenderExe string) error {
 			name string
 			args []string
 		}{
-			{"x-terminal-emulator", []string{"-e", blenderExe}},
-			{"gnome-terminal", []string{"--", blenderExe}},
-			{"alacritty", []string{"-e", blenderExe}},
-			{"xterm", []string{"-e", blenderExe}},
-			{"konsole", []string{"-e", blenderExe}},
+			{"x-terminal-emulator", []string{"-e", "nohup", blenderExe, "&"}},
+			{"gnome-terminal", []string{"--", "bash", "-c", "exec " + blenderExe}},
+			{"alacritty", []string{"-e", "bash", "-c", "exec " + blenderExe}},
+			{"xterm", []string{"-e", "bash", "-c", "exec " + blenderExe}},
+			{"konsole", []string{"-e", "bash", "-c", "exec " + blenderExe}},
 		}
 
 		for _, term := range terminals {
 			cmd = exec.Command(term.name, term.args...)
-			err := cmd.Run()
+			// Set process group to detach from parent
+			cmd.SysProcAttr = &syscall.SysProcAttr{
+				Setpgid: true,
+			}
+			err := cmd.Start()
 			if err == nil {
+				// Detach from the process so it's not killed when parent exits
+				cmd.Process.Release()
 				return nil // Successfully launched
 			}
 			// Continue to next terminal if this one failed
@@ -43,9 +50,9 @@ func BlenderInNewTerminal(blenderExe string) error {
 		cmd = exec.Command("open", "-a", "Terminal", blenderExe)
 
 	case "windows":
-		// On Windows, launch Blender directly with console mode
-		// This runs Blender with its console window visible without opening multiple terminals
-		cmd = exec.Command(blenderExe, "-con")
+		// On Windows, launch Blender directly with console mode and detached
+		// Use start command which creates a new cmd window
+		cmd = exec.Command("cmd", "/C", "start", blenderExe, "-con")
 
 	default:
 		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
@@ -55,6 +62,11 @@ func BlenderInNewTerminal(blenderExe string) error {
 	err := cmd.Start()
 	if err != nil {
 		return fmt.Errorf("error launching Blender: %v", err)
+	}
+
+	// Detach from the process so it can run independently
+	if err := cmd.Process.Release(); err != nil {
+		return fmt.Errorf("error detaching from Blender process: %v", err)
 	}
 
 	return nil
