@@ -188,15 +188,48 @@ func SortBuilds(builds []BlenderBuild, column int, reverse bool) []BlenderBuild 
 		},
 	}
 
-	// Check if we have a sort function for this column
-	if sortFunc, ok := sortFuncs[column]; ok {
-		sort.SliceStable(sortedBuilds, func(i, j int) bool {
+	// Order of columns to compare for stability (use all columns as secondary sort criteria)
+	allColumns := []int{0, 1, 2, 3, 4, 5, 6}
+
+	// Sort using the primary column and then all other columns as tiebreakers
+	sort.SliceStable(sortedBuilds, func(i, j int) bool {
+		a, b := sortedBuilds[i], sortedBuilds[j]
+
+		// First compare using the primary column
+		primaryFunc := sortFuncs[column]
+		aLessB := primaryFunc(a, b)
+		bLessA := primaryFunc(b, a)
+
+		// If values are different, use the primary comparison result
+		if aLessB != bLessA {
 			if reverse {
-				return !sortFunc(sortedBuilds[i], sortedBuilds[j])
+				return !aLessB
 			}
-			return sortFunc(sortedBuilds[i], sortedBuilds[j])
-		})
-	}
+			return aLessB
+		}
+
+		// Values are equal, use secondary columns as tiebreakers
+		for _, secondaryCol := range allColumns {
+			// Skip the primary column as we've already compared it
+			if secondaryCol == column {
+				continue
+			}
+
+			secondaryFunc := sortFuncs[secondaryCol]
+			aLessB = secondaryFunc(a, b)
+			bLessA = secondaryFunc(b, a)
+
+			// If secondary values differ, use this as the tiebreaker
+			if aLessB != bLessA {
+				// Always use ascending order for tiebreakers regardless of reverse flag
+				// This ensures a stable sort that doesn't "flash"
+				return aLessB
+			}
+		}
+
+		// If all values are equal, maintain original order for stability
+		return i < j
+	})
 
 	return sortedBuilds
 }

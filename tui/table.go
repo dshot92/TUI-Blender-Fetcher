@@ -81,10 +81,19 @@ func (r Row) Render(columns []ColumnConfig) string {
 			case "Branch":
 				// Show download speed in Branch column when downloading
 				if isDownloading && r.Status.Speed > 0 {
-					cellContent = fmt.Sprintf("%.1f MB/s", r.Status.Speed/1024/1024)
+					// Format speed with fixed width and precision to prevent flickering
+					// Only show 1 decimal place with fixed width
+					speedMBps := r.Status.Speed / 1024 / 1024
+					if speedMBps < 100 {
+						// For speeds under 100 MB/s, show 1 decimal place with fixed width
+						cellContent = fmt.Sprintf("%6.1f MB/s", speedMBps)
+					} else {
+						// For very high speeds, don't show decimal places
+						cellContent = fmt.Sprintf("%6.0f MB/s", speedMBps)
+					}
 				} else if isExtracting {
-					// Show percentage in Branch column for extraction
-					cellContent = fmt.Sprintf("%.1f%%", r.Status.Progress*100)
+					// Show percentage in Branch column for extraction with consistent formatting
+					cellContent = fmt.Sprintf("%6.1f%%", r.Status.Progress*100)
 				}
 			case "Type", "Hash", "Size", "Build Date":
 				// These columns will be replaced by progress bar

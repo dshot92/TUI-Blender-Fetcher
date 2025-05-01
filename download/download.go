@@ -5,20 +5,19 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bufio"
-	"context" // Import context package
+	"context"
 	"encoding/json"
-	"errors" // Import errors package
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv" // Added for Content-Length parsing
 	"strings"
 	"sync"
 	"time"
 
-	// Added for potential speed calculation later
+	"github.com/cavaliergopher/grab/v3"
 	"github.com/ulikunitz/xz"
 )
 
@@ -39,169 +38,95 @@ type ExtractionProgressCallback func(estimatedProgress float64)
 
 // downloadFile downloads a file, reporting progress via the callback.
 func downloadFile(url, downloadPath string, progressCb ProgressCallback, cancelCh <-chan struct{}) error {
+	// Create a context that can be cancelled
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Set up cancellation through context
 	go func() {
 		select {
 		case <-cancelCh:
-			cancel() // Cancel the context if the channel is closed
+			cancel()
 		case <-ctx.Done():
-			// Context finished normally
+			// Context was cancelled or completed normally
 		}
 	}()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil) // Use request with context
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
+	// Create the download client with extended timeouts
+	client := grab.NewClient()
+	client.UserAgent = "TUI-Blender-Launcher"
 
-	// Create HTTP client with timeouts to detect network failures faster
-	client := &http.Client{
-		Timeout: 5 * time.Second, // Overall timeout for the request
+	// Set custom HTTP client with timeouts
+	httpClient := &http.Client{
+		Timeout: 5 * time.Minute,
 		Transport: &http.Transport{
-			ResponseHeaderTimeout: 10 * time.Second, // Timeout for server response headers
-			IdleConnTimeout:       5 * time.Second,  // Idle connection timeout
-			TLSHandshakeTimeout:   5 * time.Second,  // TLS handshake timeout
-			ExpectContinueTimeout: 1 * time.Second,  // Expect-continue timeout
-			DisableKeepAlives:     false,            // Keep connections alive for efficiency
-			MaxIdleConnsPerHost:   10,               // Maximum idle connections per host
+			IdleConnTimeout:     2 * time.Minute,
+			DisableCompression:  false,
+			TLSHandshakeTimeout: 1 * time.Minute,
 		},
 	}
+	client.HTTPClient = httpClient
 
-	resp, err := client.Do(req)
+	// Create the request
+	req, err := grab.NewRequest(downloadPath, url)
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return ErrCancelled
-		}
-		return fmt.Errorf("http request failed: %w", err)
+		return fmt.Errorf("failed to create download request: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("bad status: %s", resp.Status)
-	}
-
-	totalSizeStr := resp.Header.Get("Content-Length")
-	totalSize, err := strconv.ParseInt(totalSizeStr, 10, 64)
-	if err != nil || totalSize <= 0 {
-		return fmt.Errorf("could not determine file size from Content-Length header: %s", totalSizeStr)
-	}
+	req = req.WithContext(ctx)
 
 	// Ensure download directory exists
 	if err := os.MkdirAll(filepath.Dir(downloadPath), 0750); err != nil {
 		return fmt.Errorf("failed to create download dir: %w", err)
 	}
 
-	out, err := os.Create(downloadPath)
-	if err != nil {
-		return fmt.Errorf("failed to create download file: %w", err)
-	}
-	defer out.Close()
+	// Start the download
+	resp := client.Do(req)
 
-	// Create a progress reader with idle timeout
-	progressReader := &ProgressReader{
-		Reader:           resp.Body,
-		Callback:         progressCb,
-		Total:            totalSize,
-		CancelCh:         cancelCh,
-		idleTimeout:      5 * time.Second, // Add idle timeout to detect stalled connections
-		lastProgressTime: time.Now(),      // Initialize the last progress time
-	}
+	// Start progress reporting in a goroutine
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
 
-	// Trigger initial callback
-	if progressCb != nil {
-		progressCb(0, totalSize)
-	}
-
-	// Use a buffer for copying
-	copyBuffer := make([]byte, 32*1024)
-
-	_, err = io.CopyBuffer(out, progressReader, copyBuffer)
-	if err != nil {
-		if errors.Is(err, ErrCancelled) {
+	// Monitor download progress
+	for {
+		select {
+		case <-ticker.C:
+			if progressCb != nil {
+				progressCb(resp.BytesComplete(), resp.Size())
+			}
+		case <-cancelCh:
+			cancel()
 			return ErrCancelled
+		case <-resp.Done:
+			// Download is complete or failed
+			if err := resp.Err(); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return ErrCancelled
+				}
+				return fmt.Errorf("download failed: %w", err)
+			}
+
+			// Final progress update
+			if progressCb != nil {
+				progressCb(resp.BytesComplete(), resp.Size())
+			}
+			return nil
 		}
 	}
-
-	// Ensure final callback is called if not cancelled
-	if progressCb != nil {
-		progressCb(progressReader.Current, totalSize)
-	}
-
-	return nil
 }
 
-// ProgressReader wraps an io.Reader to report progress via a callback.
-type ProgressReader struct {
+// CancelableReader wraps an io.Reader and checks a cancel channel.
+type CancelableReader struct {
 	io.Reader
-	Callback         ProgressCallback
-	Current          int64
-	Total            int64
-	lastCallbackAt   int64           // Last reported byte count
-	minReportBytes   int64           // Minimum bytes changed before reporting again
-	lastReportTime   time.Time       // Last time progress was reported
-	minReportRate    time.Duration   // Minimum time between reports
-	CancelCh         <-chan struct{} // Added cancel channel
-	idleTimeout      time.Duration   // Added idle timeout
-	lastProgressTime time.Time       // Added last progress time
+	CancelCh <-chan struct{}
 }
 
-func (pr *ProgressReader) Read(p []byte) (n int, err error) {
-	// Check for cancellation before reading
+func (r *CancelableReader) Read(p []byte) (n int, err error) {
 	select {
-	case <-pr.CancelCh:
+	case <-r.CancelCh:
 		return 0, ErrCancelled
 	default:
-		// Continue
+		return r.Reader.Read(p)
 	}
-
-	n, err = pr.Reader.Read(p)
-	pr.Current += int64(n)
-
-	// If we actually read data, update the last progress time
-	if n > 0 {
-		pr.lastProgressTime = time.Now()
-	}
-
-	// Initialize throttling values if not set
-	if pr.minReportBytes == 0 {
-		pr.minReportBytes = 100 * 1024
-	}
-	if pr.minReportRate == 0 {
-		pr.minReportRate = 100 * time.Millisecond
-	}
-	if pr.lastReportTime.IsZero() {
-		pr.lastReportTime = time.Now()
-	}
-
-	if pr.Callback != nil {
-		bytesSinceLastCallback := pr.Current - pr.lastCallbackAt
-		timeSinceLastCallback := time.Since(pr.lastReportTime)
-
-		if bytesSinceLastCallback >= pr.minReportBytes ||
-			timeSinceLastCallback >= pr.minReportRate ||
-			pr.Current == pr.Total || err == io.EOF {
-			pr.Callback(pr.Current, pr.Total)
-			pr.lastCallbackAt = pr.Current
-			pr.lastReportTime = time.Now()
-		}
-	}
-
-	// Check for cancellation again after reading, in case it happened during the read
-	select {
-	case <-pr.CancelCh:
-		return n, ErrCancelled
-	default:
-		// Continue
-	}
-
-	// Check for idle timeout - only if we have an active timeout set
-	if pr.idleTimeout > 0 && !pr.lastProgressTime.IsZero() && time.Since(pr.lastProgressTime) > pr.idleTimeout {
-		return n, ErrIdleTimeout
-	}
-
-	return
 }
 
 // extractTarXz extracts a .tar.xz archive with progress updates.
@@ -223,16 +148,12 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 	const bufferSize = 4 * 1024 * 1024 // 4MB buffer for better throughput
 	bufferedFile := bufio.NewReaderSize(file, bufferSize)
 
-	// Create a reader that will track read progress with throttling
-	progressReader := &ProgressReader{
-		Reader:         bufferedFile,
-		Total:          archiveSize,
-		Current:        0,
-		lastCallbackAt: 0,
-		minReportBytes: 256 * 1024,             // Report every 256KB during extraction
-		minReportRate:  200 * time.Millisecond, // Report at most 5 times per second
-		CancelCh:       cancelCh,               // Pass cancel channel
-		Callback: func(read, total int64) {
+	// Create a reader that will track read progress
+	progressBuffer := &progressTracker{
+		reader:   bufferedFile,
+		total:    archiveSize,
+		cancelCh: cancelCh,
+		callback: func(read, total int64) {
 			if progressCb != nil {
 				// Convert to estimated extraction progress (0.0-1.0)
 				estimatedProgress := float64(read) / float64(total)
@@ -241,7 +162,7 @@ func extractTarXz(archivePath, destDir string, progressCb ExtractionProgressCall
 		},
 	}
 
-	xzReader, err := xz.NewReader(progressReader)
+	xzReader, err := xz.NewReader(progressBuffer)
 	if err != nil {
 		return fmt.Errorf("failed to create xz reader: %w", err)
 	}
@@ -428,19 +349,28 @@ extractLoop:
 	return firstErr
 }
 
-// CancelableReader wraps an io.Reader and checks a cancel channel.
-type CancelableReader struct {
-	io.Reader
-	CancelCh <-chan struct{}
+// progressTracker implements io.Reader for tracking extraction progress
+type progressTracker struct {
+	reader   io.Reader
+	current  int64
+	total    int64
+	callback func(int64, int64)
+	cancelCh <-chan struct{}
 }
 
-func (r *CancelableReader) Read(p []byte) (n int, err error) {
+func (pt *progressTracker) Read(p []byte) (n int, err error) {
 	select {
-	case <-r.CancelCh:
+	case <-pt.cancelCh:
 		return 0, ErrCancelled
 	default:
-		return r.Reader.Read(p)
 	}
+
+	n, err = pt.reader.Read(p)
+	if n > 0 {
+		pt.current += int64(n)
+		pt.callback(pt.current, pt.total)
+	}
+	return
 }
 
 // saveVersionMetadata saves the build info as version.json inside the extracted directory.
