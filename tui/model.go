@@ -70,14 +70,12 @@ func InitialModel(cfg config.Config, needsSetup bool) *Model {
 	if needsSetup {
 		m.currentView = viewInitialSetup
 		m.settingsInputs = make([]textinput.Model, 2) // Only need 2 inputs now (download dir and version filter)
-		m.editMode = true                             // Enable edit mode immediately for initial setup
 
 		var t textinput.Model
 		// Download Dir input
 		t = textinput.New()
 		t.Placeholder = cfg.DownloadDir // Show default as placeholder
 		t.SetValue(cfg.DownloadDir)     // Set initial value
-		t.Focus()
 		t.CharLimit = 256
 		t.Width = 50
 		m.settingsInputs[0] = t
@@ -120,6 +118,17 @@ func (m *Model) SyncDownloadStates() {
 	for id, state := range states {
 		m.downloadStates[id] = state
 	}
+}
+
+// SaveSettings saves the current settings to the configuration file
+func (m *Model) SaveSettings() error {
+	// Update config values from settings inputs
+	m.config.DownloadDir = m.settingsInputs[0].Value()
+	m.config.VersionFilter = m.settingsInputs[1].Value()
+	m.config.BuildType = m.buildType
+
+	// Save the config
+	return config.SaveConfig(m.config)
 }
 
 func (m *Model) View() string {

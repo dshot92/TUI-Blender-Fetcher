@@ -11,8 +11,7 @@ func (m *Model) renderSettingsContent(availableHeight int) string {
 	var b strings.Builder
 
 	// Define global styles for the settings rendering
-	normalTextStyle := lp.NewStyle()
-	welcomeStyle := lp.NewStyle().Bold(true).Foreground(lp.Color(highlightColor))
+	normalTextStyle := lp.NewStyle().Width(m.terminalWidth).Align(lp.Center).Bold(true)
 
 	primaryColor := lp.Color(highlightColor) // Use highlight color (blue) from constants
 	subtleColor := lp.Color(highlightColor)  // Use text color (white) from constants
@@ -36,11 +35,13 @@ func (m *Model) renderSettingsContent(availableHeight int) string {
 		Foreground(lp.Color(textColor)).
 		MarginRight(1)
 
-	// Display welcome messages if in the initial setup view
+	// Display welcome messages and prompt if in the initial setup view
 	if m.currentView == viewInitialSetup {
-		b.WriteString(welcomeStyle.Render("Welcome to TUI Blender Launcher"))
 		b.WriteString("\n\n")
-		b.WriteString(normalTextStyle.Render("Please configure the following settings to get started:"))
+		b.WriteString(normalTextStyle.Render("Initial Setup"))
+		b.WriteString("\n\n")
+		b.WriteString(normalTextStyle.Render("Press Enter to edit any setting, or press 's' t started:"))
+		b.WriteString("\n\n")
 		b.WriteString("\n\n")
 	}
 
