@@ -80,6 +80,10 @@ build_type = "daily"
 uuid = "e9b26094-0ecc-4177-8d9e-d13a440ab51e" # Random UUID generated on first run
 ```
 
+Downloading builds will be stored in `[download_dir]/.downloading`.
+
+Old builds after an update will be stored in `[download_dir]/.oldbuilds`.
+
 ## Usage
 
 ### Navigation
