@@ -18,7 +18,7 @@ type Config struct {
 	DownloadDir   string `toml:"download_dir"`
 	VersionFilter string `toml:"version_filter"` // e.g., "4.0", "3.6", or empty for no filter
 	BuildType     string `toml:"build_type"`     // "daily", "patch", or "experimental"
-	UUID          string `toml:"uuid"`          // Unique identifier for this instance
+	UUID          string `toml:"uuid"`           // Unique identifier for this instance
 }
 
 var (
@@ -50,14 +50,13 @@ func DefaultConfig() Config {
 
 	return Config{
 		DownloadDir:   defaultDownloadPath,
-		VersionFilter: "",      // No filter by default
-		BuildType:     "daily", // Default to patch builds
+		VersionFilter: "",                  // No filter by default
+		BuildType:     "daily",             // Default to patch builds
 		UUID:          uuid.New().String(), // Generate a new UUID
 	}
 }
 
 // GetConfigPath returns the full path to the config file.
-// Exported version of getConfigPath.
 func GetConfigPath() (string, error) {
 	configDir, err := os.UserConfigDir() // Gets ~/.config on Linux, appropriate paths on other OS
 	if err != nil {

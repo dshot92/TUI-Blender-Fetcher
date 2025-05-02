@@ -59,6 +59,27 @@ go build -o tui-blender-launcher
 ./tui-blender-launcher
 ```
 
+## Configuration
+
+On first run, the application will guide you through an initial setup. You can configure:
+
+- Download directory for Blender builds
+- Version filter (e.g., "4.0", "3.6", or empty for no filter)
+- Build type (daily, patch, experimental)
+
+Settings are saved in your system's user configuration directory:
+- **Linux**: `~/.config/tui-blender-launcher/config.toml`
+- **macOS**: `~/Library/Application Support/tui-blender-launcher/config.toml`
+- **Windows**: `%AppData%\tui-blender-launcher\config.toml`
+
+Default config.toml:
+```toml
+download_dir = [HOME-DIR]"/blender/blender-build"
+version_filter = ""
+build_type = "daily"
+uuid = "e9b26094-0ecc-4177-8d9e-d13a440ab51e" # Random UUID generated on first run
+```
+
 ## Usage
 
 ### Navigation
@@ -89,14 +110,4 @@ The application uses keyboard shortcuts for navigation:
 
 - <kbd>c</kbd>: Clean up old builds
 - <kbd>q</kbd>: Quit application
-
-## Configuration
-
-On first run, the application will guide you through an initial setup. You can configure:
-
-- Download directory for Blender builds
-- Version filter (e.g., "4.0", "3.6", or empty for no filter)
-- Build type (daily, patch, experimental)
-
-Settings are saved in your system's user configuration directory.
 
