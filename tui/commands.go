@@ -78,7 +78,7 @@ func (dm *DownloadManager) StartDownload(build model.BlenderBuild) tea.Msg {
 	}
 
 	// Create a temporary directory for downloads if it doesn't exist
-	downloadTempDir := filepath.Join(dm.cfg.DownloadDir, ".downloading")
+	downloadTempDir := filepath.Join(dm.cfg.DownloadDir, download.DownloadingDir)
 	if err := os.MkdirAll(downloadTempDir, 0750); err != nil {
 		// Handle error creating download directory
 		dm.states[buildID].BuildState = model.StateFailed

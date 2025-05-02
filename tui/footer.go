@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"TUI-Blender-Launcher/download"
 	"TUI-Blender-Launcher/model"
 	"fmt"
 	"os"
@@ -89,7 +90,7 @@ func (m *Model) renderSettingsFooter() string {
 	newlineStyle := lp.NewStyle().Render("\n")
 
 	// Check if old builds exist to clean
-	oldBuildsDir := filepath.Join(m.config.DownloadDir, ".oldbuilds")
+	oldBuildsDir := filepath.Join(m.config.DownloadDir, download.OldBuildsDir)
 	showCleanOption := false
 
 	// Check if the directory exists and has contents

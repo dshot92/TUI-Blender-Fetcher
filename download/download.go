@@ -21,6 +21,9 @@ import (
 	"github.com/ulikunitz/xz"
 )
 
+const DownloadingDir = ".downloading"
+const OldBuildsDir = ".oldbuilds"
+
 // Error constants
 var ErrCancelled = errors.New("operation cancelled")
 var ErrIdleTimeout = errors.New("download timed out: connection idle for too long")
@@ -637,7 +640,7 @@ func findRootDirInTarXz(archivePath string) (string, error) {
 func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, progressCb ProgressCallback, cancelCh <-chan struct{}) (string, error) {
 	// 1. Download
 	downloadFileName := filepath.Base(build.DownloadURL)
-	downloadTempDir := filepath.Join(downloadBaseDir, ".downloading")
+	downloadTempDir := filepath.Join(downloadBaseDir, DownloadingDir)
 	if err := os.MkdirAll(downloadTempDir, 0750); err != nil {
 		return "", fmt.Errorf("failed to create download temp dir: %w", err)
 	}
@@ -672,7 +675,7 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 		// Find any directories that might contain this version
 		version := build.Version
 		for _, entry := range entries {
-			if entry.IsDir() && entry.Name() != ".downloading" && entry.Name() != ".oldbuilds" {
+			if entry.IsDir() && entry.Name() != DownloadingDir && entry.Name() != OldBuildsDir {
 				// Check if this directory contains the version we're downloading
 				if strings.Contains(entry.Name(), version) {
 					existingBuildDir = filepath.Join(downloadBaseDir, entry.Name())
@@ -684,9 +687,9 @@ func DownloadAndExtractBuild(build model.BlenderBuild, downloadBaseDir string, p
 
 	// If we found an existing build directory, back it up
 	if existingBuildDir != "" {
-		oldBuildsDir := filepath.Join(downloadBaseDir, ".oldbuilds")
+		oldBuildsDir := filepath.Join(downloadBaseDir, OldBuildsDir)
 		if err := os.MkdirAll(oldBuildsDir, 0750); err != nil {
-			return "", fmt.Errorf("failed to create .oldbuilds directory: %w", err)
+			return "", fmt.Errorf("failed to create %s directory: %w", OldBuildsDir, err)
 		}
 		timestamp := time.Now().Format("20060102_150405")
 		oldBuildName := fmt.Sprintf("%s_%s", filepath.Base(existingBuildDir), timestamp)

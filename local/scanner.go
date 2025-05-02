@@ -1,6 +1,7 @@
 package local
 
 import (
+	"TUI-Blender-Launcher/download"
 	"TUI-Blender-Launcher/model"
 	"encoding/json"
 	"fmt"
@@ -48,7 +49,7 @@ func ScanLocalBuilds(downloadDir string) ([]model.BlenderBuild, error) {
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != ".oldbuilds" {
+		if entry.IsDir() && entry.Name() != download.OldBuildsDir {
 			dirPath := filepath.Join(downloadDir, entry.Name())
 			buildInfo, err := ReadBuildInfo(dirPath)
 			if err != nil {
@@ -80,7 +81,7 @@ func BuildLocalLookupMap(downloadDir string) (map[string]bool, error) {
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != ".oldbuilds" {
+		if entry.IsDir() && entry.Name() != download.OldBuildsDir {
 			dirPath := filepath.Join(downloadDir, entry.Name())
 			buildInfo, err := ReadBuildInfo(dirPath)
 			if err != nil {
@@ -240,7 +241,7 @@ func openFileExplorer(dir string) error {
 // CleanOldBuilds removes all builds from the .oldbuilds directory.
 // Returns the number of cleaned builds and any error encountered.
 func CleanOldBuilds(downloadDir string) (int, error) {
-	oldBuildsDir := filepath.Join(downloadDir, ".oldbuilds")
+	oldBuildsDir := filepath.Join(downloadDir, download.OldBuildsDir)
 
 	// Check if the old builds directory exists
 	if _, err := os.Stat(oldBuildsDir); os.IsNotExist(err) {
@@ -251,7 +252,7 @@ func CleanOldBuilds(downloadDir string) (int, error) {
 	// Read the contents of the old builds directory
 	entries, err := os.ReadDir(oldBuildsDir)
 	if err != nil {
-		return 0, fmt.Errorf("failed to read .oldbuilds directory: %w", err)
+		return 0, fmt.Errorf("failed to read %s directory: %w", download.OldBuildsDir, err)
 	}
 
 	cleanedCount := 0

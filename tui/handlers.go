@@ -2,6 +2,7 @@ package tui
 
 import (
 	"TUI-Blender-Launcher/config"
+	"TUI-Blender-Launcher/download"
 	"TUI-Blender-Launcher/launch"
 	"TUI-Blender-Launcher/local"
 	"TUI-Blender-Launcher/model"
@@ -64,7 +65,7 @@ func (m *Model) handleOpenBuildDir() (tea.Model, tea.Cmd) {
 
 				version := selectedBuild.Version
 				for _, entry := range entries {
-					if entry.IsDir() && entry.Name() != ".downloading" && entry.Name() != ".oldbuilds" {
+					if entry.IsDir() && entry.Name() != download.DownloadingDir && entry.Name() != download.OldBuildsDir {
 						dirPath := filepath.Join(m.config.DownloadDir, entry.Name())
 						buildInfo, err := local.ReadBuildInfo(dirPath)
 						if err != nil {
