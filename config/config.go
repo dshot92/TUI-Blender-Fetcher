@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/BurntSushi/toml"
+	"github.com/google/uuid"
 )
 
 // AppName is used for the config directory
@@ -16,6 +18,27 @@ type Config struct {
 	DownloadDir   string `toml:"download_dir"`
 	VersionFilter string `toml:"version_filter"` // e.g., "4.0", "3.6", or empty for no filter
 	BuildType     string `toml:"build_type"`     // "daily", "patch", or "experimental"
+	UUID          string `toml:"uuid"`          // Unique identifier for this instance
+}
+
+var (
+	instance *Config
+	once     sync.Once
+)
+
+// GetConfigInstance returns the singleton config instance
+func GetConfigInstance() *Config {
+	// Initialize the config instance if it doesn't exist
+	once.Do(func() {
+		cfg, err := LoadConfig()
+		if err != nil {
+			// Log error but continue with default config
+			fmt.Printf("Warning: Failed to load config: %v\n", err)
+		}
+		instance = &cfg
+	})
+
+	return instance
 }
 
 // DefaultConfig returns a Config struct with default values.
@@ -29,6 +52,7 @@ func DefaultConfig() Config {
 		DownloadDir:   defaultDownloadPath,
 		VersionFilter: "",      // No filter by default
 		BuildType:     "daily", // Default to patch builds
+		UUID:          uuid.New().String(), // Generate a new UUID
 	}
 }
 

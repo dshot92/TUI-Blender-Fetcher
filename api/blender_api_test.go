@@ -15,6 +15,11 @@ func TestFetchBuilds(t *testing.T) {
 
 	// Setup a mock HTTP server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify UUID header
+		if uuid := r.Header.Get("X-Client-UUID"); uuid == "" {
+			t.Errorf("Expected X-Client-UUID header, got none")
+		}
+
 		// Check the request method and path
 		if r.Method != http.MethodGet {
 			t.Errorf("Expected GET request, got %s", r.Method)
@@ -152,10 +157,12 @@ func TestFetchBuilds(t *testing.T) {
 		},
 	}
 
+	a := NewAPI()
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Call the function
-			builds, err := FetchBuilds(tc.versionFilter, tc.buildType)
+			builds, err := a.FetchBuilds(tc.versionFilter, tc.buildType)
 
 			// Check error result
 			if tc.expectError && err == nil {
@@ -187,9 +194,10 @@ func TestFetchBuildsServerError(t *testing.T) {
 	// Setup a mock HTTP server that returns an error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Internal Server Error"))
 	}))
-	defer server.Close()
+
+	// Create API instance
+	a := NewAPI()
 
 	// Create a custom client that redirects requests to our test server
 	http.DefaultClient = &http.Client{
@@ -200,7 +208,7 @@ func TestFetchBuildsServerError(t *testing.T) {
 	}
 
 	// Call the function
-	builds, err := FetchBuilds("", "daily")
+	builds, err := a.FetchBuilds("", "daily")
 
 	// Should return an error
 	if err == nil {
@@ -222,9 +230,11 @@ func TestFetchBuildsInvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("This is not valid JSON"))
+		fmt.Fprintf(w, "invalid json")
 	}))
-	defer server.Close()
+
+	// Create API instance
+	a := NewAPI()
 
 	// Create a custom client that redirects requests to our test server
 	http.DefaultClient = &http.Client{
@@ -235,7 +245,7 @@ func TestFetchBuildsInvalidJSON(t *testing.T) {
 	}
 
 	// Call the function
-	builds, err := FetchBuilds("", "daily")
+	builds, err := a.FetchBuilds("", "daily")
 
 	// Should return an error
 	if err == nil {

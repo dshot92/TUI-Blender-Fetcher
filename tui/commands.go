@@ -346,8 +346,7 @@ func NewCommands(cfg config.Config) *Commands {
 // FetchBuilds fetches the list of builds from the API.
 func (c *Commands) FetchBuilds() tea.Cmd {
 	return func() tea.Msg {
-		// Create a new map containing only states we want to preserve across fetch
-		// (e.g., potentially active downloads/extractions if fetch could be triggered during one)
+		// Clean up download states, keeping only active ones
 		newStates := make(map[string]*model.DownloadState)
 		if c.downloads != nil && c.downloads.states != nil {
 			for id, state := range c.downloads.states {
@@ -359,7 +358,9 @@ func (c *Commands) FetchBuilds() tea.Cmd {
 			c.downloads.states = newStates // Atomically replace the map
 		}
 
-		builds, err := api.FetchBuilds(c.cfg.VersionFilter, c.cfg.BuildType)
+		// Create API instance
+		a := api.NewAPI()
+		builds, err := a.FetchBuilds(c.cfg.VersionFilter, c.cfg.BuildType)
 		return buildsFetchedMsg{builds, err}
 	}
 }

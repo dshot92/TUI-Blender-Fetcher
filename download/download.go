@@ -2,10 +2,10 @@ package download
 
 import (
 	"TUI-Blender-Launcher/model"
+	"TUI-Blender-Launcher/config"
 	"archive/tar"
 	"archive/zip"
 	"bufio"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,80 +40,49 @@ type ProgressCallback func(downloadedBytes, totalBytes int64)
 type ExtractionProgressCallback func(estimatedProgress float64)
 
 // downloadFile downloads a file, reporting progress via the callback.
-func downloadFile(url, downloadPath string, progressCb ProgressCallback, cancelCh <-chan struct{}) error {
-	// Create a context that can be cancelled
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func downloadFile(url string, downloadDir string, progressCb ProgressCallback, cancelCh <-chan struct{}) error {
+	// Create download directory if it doesn't exist
+	if err := os.MkdirAll(downloadDir, 0755); err != nil {
+		return fmt.Errorf("failed to create download directory: %w", err)
+	}
 
-	// Set up cancellation through context
-	go func() {
-		select {
-		case <-cancelCh:
-			cancel()
-		case <-ctx.Done():
-			// Context was cancelled or completed normally
-		}
-	}()
+	// Create downloading directory
+	downloadingDir := filepath.Join(downloadDir, DownloadingDir)
+	if err := os.MkdirAll(downloadingDir, 0755); err != nil {
+		return fmt.Errorf("failed to create downloading directory: %w", err)
+	}
 
-	// Create the download client with extended timeouts
+	// Create download client
 	client := grab.NewClient()
+	client.HTTPClient = &http.Client{
+		Timeout: 30 * time.Second,
+	}
 	client.UserAgent = "TUI-Blender-Launcher"
 
-	// Set custom HTTP client with timeouts
-	httpClient := &http.Client{
-		Timeout: 5 * time.Minute,
-		Transport: &http.Transport{
-			IdleConnTimeout:     2 * time.Minute,
-			DisableCompression:  false,
-			TLSHandshakeTimeout: 1 * time.Minute,
-		},
-	}
-	client.HTTPClient = httpClient
-
-	// Create the request
-	req, err := grab.NewRequest(downloadPath, url)
+	// Create request
+	req, err := grab.NewRequest(url, downloadingDir)
 	if err != nil {
 		return fmt.Errorf("failed to create download request: %w", err)
 	}
-	req = req.WithContext(ctx)
 
-	// Ensure download directory exists
-	if err := os.MkdirAll(filepath.Dir(downloadPath), 0750); err != nil {
-		return fmt.Errorf("failed to create download dir: %w", err)
-	}
+	// Set headers
+	req.HTTPRequest.Header.Set("X-Download-ID", config.GetConfigInstance().UUID)
+	req.HTTPRequest.Header.Set("User-Agent", "TUI-Blender-Launcher")
 
-	// Start the download
+	// Start download
 	resp := client.Do(req)
 
-	// Start progress reporting in a goroutine
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-
-	// Monitor download progress
-	for {
-		select {
-		case <-ticker.C:
-			if progressCb != nil {
-				progressCb(resp.BytesComplete(), resp.Size())
-			}
-		case <-cancelCh:
-			cancel()
-			return ErrCancelled
-		case <-resp.Done:
-			// Download is complete or failed
-			if err := resp.Err(); err != nil {
-				if errors.Is(err, context.Canceled) {
-					return ErrCancelled
-				}
-				return fmt.Errorf("download failed: %w", err)
-			}
-
-			// Final progress update
-			if progressCb != nil {
-				progressCb(resp.BytesComplete(), resp.Size())
-			}
-			return nil
+	// Wait for completion
+	select {
+	case <-resp.Done:
+		if err := resp.Err(); err != nil {
+			return fmt.Errorf("download failed: %w", err)
 		}
+		return nil
+	case <-cancelCh:
+		return ErrCancelled
+	case <-time.After(10 * time.Minute):
+		return ErrIdleTimeout
 	}
 }
 
