@@ -186,9 +186,11 @@ func (m *Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Quit
 
 				case CmdSaveSettings:
-					// Save settings and return to main view
-					m.currentView = viewList
-					return saveSettings(m)
+					if !m.editMode {
+						// Save settings and return to main view
+						m.currentView = viewList
+						return saveSettings(m)
+					}
 
 				case CmdToggleEditMode:
 					// Toggle edit mode for the focused setting
@@ -211,16 +213,18 @@ func (m *Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 
 				case CmdCleanOldBuilds:
-					// Clean old builds from .oldbuilds directory
-					return m, func() tea.Msg {
-						count, err := local.CleanOldBuilds(m.config.DownloadDir)
-						if err != nil {
-							return errMsg{err}
+					if !m.editMode {
+						// Clean old builds from .oldbuilds directory
+						return m, func() tea.Msg {
+							count, err := local.CleanOldBuilds(m.config.DownloadDir)
+							if err != nil {
+								return errMsg{err}
+							}
+							if count == 0 {
+								return errMsg{fmt.Errorf("no old builds to clean")}
+							}
+							return errMsg{fmt.Errorf("successfully cleaned %d old build(s)", count)}
 						}
-						if count == 0 {
-							return errMsg{fmt.Errorf("no old builds to clean")}
-						}
-						return errMsg{fmt.Errorf("successfully cleaned %d old build(s)", count)}
 					}
 
 				case CmdMoveUp:
@@ -229,11 +233,8 @@ func (m *Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 						oldFocus := m.focusIndex
 						m.focusIndex = (m.focusIndex - 1 + totalItems) % totalItems
 						updateFocusStyles(m, oldFocus)
-					} else if m.focusIndex == len(m.settingsInputs) {
-						// We're on the build type selector
-						// Do nothing as up/down is handled by navigation
+						return m, nil
 					}
-					return m, nil
 
 				case CmdMoveDown:
 					if !m.editMode {
@@ -241,31 +242,32 @@ func (m *Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 						oldFocus := m.focusIndex
 						m.focusIndex = (m.focusIndex + 1) % totalItems
 						updateFocusStyles(m, oldFocus)
-					} else if m.focusIndex == len(m.settingsInputs) {
-						// We're on the build type selector
-						// Do nothing as up/down is handled by navigation
+						return m, nil
 					}
-					return m, nil
 
 				case CmdMoveLeft:
-					// Add left navigation for build type horizontal selector
-					if m.focusIndex == len(m.settingsInputs) {
-						// Navigate horizontal build type options whether in edit mode or not
-						newIndex := (m.buildTypeIndex - 1 + len(m.buildTypeOptions)) % len(m.buildTypeOptions)
-						m.buildTypeIndex = newIndex
-						m.buildType = m.buildTypeOptions[newIndex]
+					if !m.editMode {
+						// Add left navigation for build type horizontal selector
+						if m.focusIndex == len(m.settingsInputs) {
+							// Navigate horizontal build type options whether in edit mode or not
+							newIndex := (m.buildTypeIndex - 1 + len(m.buildTypeOptions)) % len(m.buildTypeOptions)
+							m.buildTypeIndex = newIndex
+							m.buildType = m.buildTypeOptions[newIndex]
+						}
+						return m, nil
 					}
-					return m, nil
 
 				case CmdMoveRight:
-					// Add right navigation for build type horizontal selector
-					if m.focusIndex == len(m.settingsInputs) {
-						// Navigate horizontal build type options whether in edit mode or not
-						newIndex := (m.buildTypeIndex + 1) % len(m.buildTypeOptions)
-						m.buildTypeIndex = newIndex
-						m.buildType = m.buildTypeOptions[newIndex]
+					if !m.editMode {
+						// Add right navigation for build type horizontal selector
+						if m.focusIndex == len(m.settingsInputs) {
+							// Navigate horizontal build type options whether in edit mode or not
+							newIndex := (m.buildTypeIndex + 1) % len(m.buildTypeOptions)
+							m.buildTypeIndex = newIndex
+							m.buildType = m.buildTypeOptions[newIndex]
+						}
+						return m, nil
 					}
-					return m, nil
 				}
 			}
 		}
