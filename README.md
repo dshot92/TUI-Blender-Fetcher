@@ -74,7 +74,7 @@ Settings are saved in your system's user configuration directory:
 
 Default config.toml:
 ```toml
-download_dir = [HOME-DIR]"/blender/blender-build"
+download_dir = "[HOME-DIR]/blender/blender-build"
 version_filter = ""
 build_type = "daily"
 uuid = "e9b26094-0ecc-4177-8d9e-d13a440ab51e" # Random UUID generated on first run
