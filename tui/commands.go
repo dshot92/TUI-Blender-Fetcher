@@ -421,34 +421,21 @@ func (c *Commands) UpdateBuildStatus(onlineBuilds []model.BlenderBuild) tea.Cmd 
 		grouped := make(map[string]model.BlenderBuild)
 		for _, onlineBuild := range onlineBuilds {
 			var localBuild *model.BlenderBuild
-			// Try to find a matching local build by hash
+			status := model.StateOnline
+
+			// First try to find exact match by hash
 			if onlineBuild.Hash != "" {
 				if lb, found := localBuildHashMap[onlineBuild.Hash]; found {
 					localBuild = &lb
+					status = model.StateLocal
 				}
 			}
-			// Fallback to matching by version
+
+			// If no exact hash match, check for version match and update status
 			if localBuild == nil {
 				if lb, found := localBuildMap[onlineBuild.Version]; found {
 					localBuild = &lb
-				}
-			}
-
-			var status model.BuildState
-
-			// Determine status based *only* on comparison with local builds on disk
-			if localBuild == nil {
-				// Not found locally -> Online
-				status = model.StateOnline
-			} else {
-				// Found locally -> Check for Update or just Local
-				switch CheckUpdateAvailable(*localBuild, onlineBuild) {
-				case model.StateUpdate:
-					status = model.StateUpdate
-				case model.StateLocal:
-					status = model.StateLocal
-				default: // Should not happen, default to Local
-					status = model.StateLocal
+					status = CheckUpdateAvailable(*localBuild, onlineBuild)
 				}
 			}
 
@@ -460,7 +447,7 @@ func (c *Commands) UpdateBuildStatus(onlineBuilds []model.BlenderBuild) tea.Cmd 
 
 			// If an entry already exists, prefer the one with StateUpdate over StateLocal
 			if existing, exists := grouped[key]; exists {
-				if existing.Status == model.StateLocal && updated.Status == model.StateUpdate {
+				if existing.Status == model.StateUpdate || status == model.StateUpdate {
 					grouped[key] = updated
 				}
 			} else {
