@@ -1,8 +1,8 @@
 package download
 
 import (
-	"TUI-Blender-Launcher/model"
 	"TUI-Blender-Launcher/config"
+	"TUI-Blender-Launcher/model"
 	"archive/tar"
 	"archive/zip"
 	"bufio"
@@ -40,27 +40,22 @@ type ProgressCallback func(downloadedBytes, totalBytes int64)
 type ExtractionProgressCallback func(estimatedProgress float64)
 
 // downloadFile downloads a file, reporting progress via the callback.
-func downloadFile(url string, downloadDir string, progressCb ProgressCallback, cancelCh <-chan struct{}) error {
+func downloadFile(url string, destFilePath string, progressCb ProgressCallback, cancelCh <-chan struct{}) error {
 	// Create download directory if it doesn't exist
+	downloadDir := filepath.Dir(destFilePath)
 	if err := os.MkdirAll(downloadDir, 0755); err != nil {
 		return fmt.Errorf("failed to create download directory: %w", err)
-	}
-
-	// Create downloading directory
-	downloadingDir := filepath.Join(downloadDir, DownloadingDir)
-	if err := os.MkdirAll(downloadingDir, 0755); err != nil {
-		return fmt.Errorf("failed to create downloading directory: %w", err)
 	}
 
 	// Create download client
 	client := grab.NewClient()
 	client.HTTPClient = &http.Client{
-		Timeout: 30 * time.Second,
+		// Timeout: 30 * time.Second,
 	}
 	client.UserAgent = "TUI-Blender-Launcher"
 
 	// Create request
-	req, err := grab.NewRequest(url, downloadingDir)
+	req, err := grab.NewRequest(destFilePath, url)
 	if err != nil {
 		return fmt.Errorf("failed to create download request: %w", err)
 	}
