@@ -272,6 +272,40 @@ func (m *Model) updateSettingsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Handle Tab key for download dir autocomplete (must come BEFORE updateInputs)
+		if m.editMode && m.focusIndex == 0 {
+			keyMsg := msg // msg is already tea.KeyMsg in this case
+			if keyMsg.Type == tea.KeyTab {
+				input := m.settingsInputs[0].Value()
+				matches, err := DirCompletions(input)
+				if err == nil && len(matches) > 0 {
+					if len(matches) == 1 {
+						m.settingsInputs[0].SetValue(matches[0] + "/")
+						// Move cursor to end
+						m.settingsInputs[0].CursorEnd()
+					} else {
+						// Find common prefix
+						prefix := matches[0]
+						for _, mpath := range matches[1:] {
+							max := len(prefix)
+							if len(mpath) < max {
+								max = len(mpath)
+							}
+							for i := 0; i < max; i++ {
+								if prefix[i] != mpath[i] {
+									prefix = prefix[:i]
+									break
+								}
+							}
+						}
+						m.settingsInputs[0].SetValue(prefix)
+						m.settingsInputs[0].CursorEnd()
+					}
+				}
+				return m, nil
+			}
+		}
+
 		// Pass other keys to the input field if in edit mode
 		if m.editMode {
 			// If we're editing a text input, pass the key to it
