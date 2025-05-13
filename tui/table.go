@@ -58,7 +58,7 @@ func (r Row) Render(columns []ColumnConfig) string {
 	// Special handling for downloads and extractions
 	isDownloading := r.Build.Status == model.StateDownloading && r.Status != nil
 	isExtracting := r.Build.Status == model.StateExtracting && r.Status != nil
-	isLocal := r.Build.Status == model.StateLocal
+	isOnline := r.Build.Status == model.StateOnline
 	isUpdate := r.Build.Status == model.StateUpdate
 	isFailed := r.Build.Status == model.StateFailed
 	isCancelled := r.Build.Status == model.StateCancelled // StateNone is "Cancelled"
@@ -210,7 +210,7 @@ func (r Row) Render(columns []ColumnConfig) string {
 	}
 
 	// Apply orange text style for local builds
-	if isLocal {
+	if isOnline {
 		return lp.NewStyle().
 			Foreground(lp.Color(orangeColor)).
 			Width(sumColumnWidths(columns)).
